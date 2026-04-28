@@ -6,6 +6,7 @@ import {
   CandlestickSeries,
   HistogramSeries,
   LineSeries,
+  createSeriesMarkers,
   type IChartApi,
   type ISeriesApi,
   type CandlestickData,
@@ -445,6 +446,8 @@ function ChartPanel({
   const stochChartRef = useRef<IChartApi | null>(null)
   const atrChartRef = useRef<IChartApi | null>(null)
   const obvChartRef = useRef<IChartApi | null>(null)
+  // lightweight-charts v5: markers are managed via createSeriesMarkers(), not series.setMarkers()
+  const markersInstanceRef = useRef<ReturnType<typeof createSeriesMarkers> | null>(null)
 
 
   const [crosshairData, setCrosshairData] = useState<{
@@ -506,7 +509,11 @@ function ChartPanel({
     })
     candleSeries.setData(sorted.map(c => ({ time: c.time as Time, open: c.open, high: c.high, low: c.low, close: c.close })))
 
-    // Strategy markers (buy/sell signals)
+    // Strategy markers — lightweight-charts v5 uses createSeriesMarkers(), not series.setMarkers()
+    if (markersInstanceRef.current) {
+      try { markersInstanceRef.current.detach() } catch { /* already detached */ }
+      markersInstanceRef.current = null
+    }
     if (markers.length > 0) {
       const validTimes = new Set(sorted.map(c => c.time))
       const lwtMarkers = markers
@@ -519,7 +526,7 @@ function ChartPanel({
           shape: m.shape,
           text: m.text ?? '',
         }))
-      candleSeries.setMarkers(lwtMarkers)
+      markersInstanceRef.current = createSeriesMarkers(candleSeries, lwtMarkers)
     }
 
     // MA
@@ -1586,19 +1593,37 @@ export default function ChartPage() {
             <button
               onClick={() => setStrategyDropdownOpen(p => !p)}
               style={{
-                display: 'flex', alignItems: 'center', gap: 5,
-                padding: '4px 10px', borderRadius: 6, fontSize: 12, fontWeight: 600,
-                border: `1px solid ${activeStrategy ? 'var(--up)' : 'var(--border)'}`,
-                background: activeStrategy ? 'rgba(38,166,154,0.12)' : 'transparent',
-                color: activeStrategy ? 'var(--up)' : 'var(--text-mute)',
+                display: 'flex', alignItems: 'center', gap: 6,
+                padding: '5px 13px', borderRadius: 7, fontSize: 12, fontWeight: 700,
+                border: activeStrategy
+                  ? '1.5px solid var(--up)'
+                  : '1.5px solid rgba(247,147,26,0.7)',
+                background: activeStrategy
+                  ? 'rgba(38,166,154,0.15)'
+                  : 'rgba(247,147,26,0.1)',
+                color: activeStrategy ? 'var(--up)' : '#F7931A',
                 cursor: strategyLoading ? 'not-allowed' : 'pointer',
                 opacity: strategyLoading ? 0.6 : 1,
+                boxShadow: activeStrategy
+                  ? '0 0 8px rgba(38,166,154,0.25)'
+                  : '0 0 8px rgba(247,147,26,0.2)',
                 transition: 'all 0.15s',
+                whiteSpace: 'nowrap',
+              }}
+              onMouseEnter={e => {
+                if (!strategyLoading) e.currentTarget.style.boxShadow = activeStrategy
+                  ? '0 0 16px rgba(38,166,154,0.45)'
+                  : '0 0 16px rgba(247,147,26,0.45)'
+              }}
+              onMouseLeave={e => {
+                e.currentTarget.style.boxShadow = activeStrategy
+                  ? '0 0 8px rgba(38,166,154,0.25)'
+                  : '0 0 8px rgba(247,147,26,0.2)'
               }}
             >
-              <span style={{ fontStyle: 'italic', fontFamily: 'serif', fontSize: 13 }}>ƒx</span>
-              {strategyLoading ? '运行中…' : activeStrategy ? BUILTIN_STRATEGIES.find(s => s.id === activeStrategy)?.name : '策略'}
-              <span style={{ fontSize: 9, marginLeft: 2 }}>{strategyDropdownOpen ? '▲' : '▼'}</span>
+              <span style={{ fontStyle: 'italic', fontFamily: 'Georgia, serif', fontSize: 14, lineHeight: 1 }}>ƒx</span>
+              <span>{strategyLoading ? '运行中…' : activeStrategy ? BUILTIN_STRATEGIES.find(s => s.id === activeStrategy)?.name : '策略库'}</span>
+              <span style={{ fontSize: 9, opacity: 0.7 }}>{strategyDropdownOpen ? '▲' : '▼'}</span>
             </button>
 
             {strategyDropdownOpen && (
