@@ -18,6 +18,7 @@ import {
   type BacktestMetrics,
   type StreamMsg,
 } from "@/lib/freqtrade-api";
+import ChatSidebar from "@/components/ChatSidebar";
 
 // Monaco loads client-side only
 const Editor = dynamic(() => import("@monaco-editor/react"), { ssr: false });
@@ -123,6 +124,12 @@ export default function EditorPage() {
 
   // Quota
   const [quota, setQuota] = useState<{ plan: string; backtests_used: number; backtests_limit: number | null } | null>(null);
+
+  // AI sidebar toggle
+  const [showAI, setShowAI] = useState(false);
+  // AI report state
+  const [aiReport, setAiReport] = useState("");
+  const [aiReporting, setAiReporting] = useState(false);
 
   const wsRef = useRef<WebSocket | null>(null);
 
@@ -326,9 +333,21 @@ export default function EditorPage() {
             {quota.plan === "pro" ? "Pro" : `免费 ${quota.backtests_used}/${quota.backtests_limit}`}
           </span>
         )}
+
+        {/* AI sidebar toggle */}
+        <button
+          onClick={() => setShowAI(v => !v)}
+          className={`text-sm px-3 py-1 rounded border transition-colors ${
+            showAI
+              ? "border-[var(--primary)] text-[var(--primary)] bg-[rgba(0,168,100,0.1)]"
+              : "border-[var(--border)] text-[var(--text-mute)] hover:text-[var(--text)]"
+          }`}
+        >
+          🤖 AI
+        </button>
       </div>
 
-      {/* ── Main area: editor + right panel ── */}
+      {/* ── Main area: editor + right panel + AI sidebar ── */}
       <div className="flex flex-1 overflow-hidden">
         {/* Left: Monaco Editor */}
         <div className="flex-1 overflow-hidden">
@@ -547,6 +566,64 @@ export default function EditorPage() {
             </div>
           )}
 
+          {/* AI report section */}
+          {btResult && (
+            <div className="p-4 border-t border-[var(--border)]">
+              <button
+                onClick={async () => {
+                  const key = localStorage.getItem("btcstation_openai_key");
+                  if (!key) { setShowAI(true); return; }
+                  setAiReporting(true);
+                  setAiReport("");
+                  try {
+                    const { createClient } = await import("@/lib/supabase/client");
+                    const sb = createClient();
+                    const { data } = await sb.auth.getSession();
+                    const auth = `Bearer ${data.session?.access_token ?? ""}`;
+                    const res = await fetch("/py-api/api/ai/report", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json", Authorization: auth },
+                      body: JSON.stringify({ api_key: key, metrics: btResult }),
+                    });
+                    if (!res.ok || !res.body) throw new Error("请求失败");
+                    const reader = res.body.getReader();
+                    const dec = new TextDecoder();
+                    let buf = "";
+                    while (true) {
+                      const { done, value } = await reader.read();
+                      if (done) break;
+                      buf += dec.decode(value, { stream: true });
+                      const lines = buf.split("\n"); buf = lines.pop() ?? "";
+                      for (const line of lines) {
+                        if (!line.startsWith("data: ")) continue;
+                        const d = line.slice(6).trim();
+                        if (d === "[DONE]") break;
+                        try {
+                          const p = JSON.parse(d);
+                          if (p.delta) setAiReport(prev => prev + p.delta);
+                        } catch { /* skip */ }
+                      }
+                    }
+                  } catch (e: unknown) {
+                    setAiReport(`生成失败: ${(e as Error).message}`);
+                  } finally {
+                    setAiReporting(false);
+                  }
+                }}
+                disabled={aiReporting}
+                className="w-full py-2 rounded border border-purple-500/50 text-purple-400 hover:bg-purple-500/10 text-xs font-medium transition-colors disabled:opacity-50"
+              >
+                {aiReporting ? "AI 分析中…" : "🤖 AI 解读报告"}
+              </button>
+
+              {aiReport && (
+                <div className="mt-3 p-3 rounded bg-[var(--bg)] border border-[var(--border)] text-xs text-[var(--text)] leading-relaxed ai-markdown overflow-y-auto max-h-64">
+                  <AiReportRenderer content={aiReport} streaming={aiReporting} />
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Empty state */}
           {btStatus === "idle" && !btResult && (
             <div className="flex-1 flex flex-col items-center justify-center p-6 text-center">
@@ -559,6 +636,13 @@ export default function EditorPage() {
             </div>
           )}
         </div>
+
+        {/* AI Sidebar */}
+        {showAI && (
+          <div className="w-72 flex-shrink-0 border-l border-[var(--border)] overflow-hidden">
+            <ChatSidebar codeContext={code} />
+          </div>
+        )}
       </div>
     </div>
   );
@@ -582,4 +666,9 @@ function MetricRow({ label, value }: { label: string; value: string }) {
       <span className="text-[var(--text)] font-medium num">{value}</span>
     </div>
   );
+}
+
+function AiReportRenderer({ content, streaming }: { content: string; streaming: boolean }) {
+  const ReactMarkdown = dynamic(() => import("react-markdown"), { ssr: false });
+  return <ReactMarkdown>{content + (streaming ? "▌" : "")}</ReactMarkdown>;
 }

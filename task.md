@@ -56,10 +56,10 @@
 
 ## 🤖 阶段 5：AI 辅助系统 (BYOK 模式)
 
-- `[ ]` **API Key 安全存储**
-  - `[ ]` 数据库增加字段安全存储用户提供的 OpenAI / Claude API Key
-- `[ ]` **策略开发辅助**
-  - `[ ]` Monaco Editor 侧边栏集成 AI 对话窗口
-  - `[ ]` 实现代码查错、指标写法指导等 Prompt 工程
-- `[ ]` **回测报告解读**
-  - `[ ]` 将 Freqtrade JSON 摘要传入大模型，生成文字版盈利/风险分析报告
+- `[x]` **AI 后端流式服务 (backend/api_v31.py & ai_agent.py)**
+  - `[x]` 编写 `stream_chat` 与 `analyze_backtest` 的大模型调用逻辑 (SSE 流式返回)
+  - `[x]` 新增 `POST /api/ai/chat` (用于写代码) 和 `POST /api/ai/report` (用于读回测) 接口
+- `[x]` **前端 BYOK 模式与 UI (Next.js)**
+  - `[x]` 使用 `localStorage` (而非数据库) 存储 OpenAI API Key，确保 0 泄露风险
+  - `[x]` Monaco Editor 集成 AI 侧边栏 (ChatSidebar) 支持流式打字机效果 + 停止按钮
+  - `[x]` 回测详情页新增【AI 解读报告】按钮，流式渲染 Markdown 报告

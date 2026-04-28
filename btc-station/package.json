@@ -23,6 +23,7 @@
     "plotly.js": "^3.5.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "react-markdown": "^10.1.0",
     "react-plotly.js": "^2.6.0",
     "tailwind-merge": "^2.5.4",
     "technicalindicators": "^3.1.0"

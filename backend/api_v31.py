@@ -787,3 +787,99 @@ async def hyperopt_status(task_id: str, user_id: str = Depends(current_user)):
         resp["error"] = task.get("error")
 
     return resp
+
+
+# ── AI Assistant (Phase 5 — BYOK) ────────────────────────────────────────────
+
+class AiChatRequest(BaseModel):
+    api_key: str
+    messages: list[dict]          # [{"role": "user"|"assistant"|"system", "content": "..."}]
+    model: str = "gpt-4o-mini"
+    base_url: str = "https://api.openai.com/v1"
+
+    @field_validator("api_key")
+    @classmethod
+    def key_not_empty(cls, v):
+        if not v.strip():
+            raise ValueError("api_key 不能为空")
+        return v.strip()
+
+    @field_validator("messages")
+    @classmethod
+    def has_messages(cls, v):
+        if not v:
+            raise ValueError("messages 不能为空")
+        return v
+
+
+class AiReportRequest(BaseModel):
+    api_key: str
+    metrics: dict                  # Freqtrade backtest metrics dict
+    model: str = "gpt-4o-mini"
+    base_url: str = "https://api.openai.com/v1"
+
+    @field_validator("api_key")
+    @classmethod
+    def key_not_empty(cls, v):
+        if not v.strip():
+            raise ValueError("api_key 不能为空")
+        return v.strip()
+
+
+@router.post("/ai/chat")
+async def ai_chat(body: AiChatRequest, user_id: str = Depends(current_user)):
+    """
+    Stream an AI coding assistant response via Server-Sent Events.
+    The api_key is forwarded to OpenAI and never stored.
+    """
+    from fastapi.responses import StreamingResponse as _SR
+    from ai_agent import stream_chat, _CODING_SYSTEM
+
+    # Prepend coding system prompt if not already present
+    messages = body.messages
+    if not messages or messages[0].get("role") != "system":
+        messages = [{"role": "system", "content": _CODING_SYSTEM}] + messages
+
+    async def _event_stream():
+        try:
+            async for chunk in stream_chat(body.api_key, messages, model=body.model, base_url=body.base_url):
+                # SSE format: "data: <chunk>\n\n"
+                yield f"data: {json.dumps({'delta': chunk})}\n\n"
+        except ValueError as e:
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+        except Exception as e:
+            logger.error(f"[AI CHAT {user_id[:8]}] {e}")
+            yield f"data: {json.dumps({'error': '模型请求失败，请检查 API Key 和网络'})}\n\n"
+        finally:
+            yield "data: [DONE]\n\n"
+
+    return _SR(_event_stream(), media_type="text/event-stream", headers={
+        "Cache-Control": "no-cache",
+        "X-Accel-Buffering": "no",   # disable nginx buffering on Railway
+    })
+
+
+@router.post("/ai/report")
+async def ai_report(body: AiReportRequest, user_id: str = Depends(current_user)):
+    """
+    Stream a structured backtest analysis report via Server-Sent Events.
+    """
+    from fastapi.responses import StreamingResponse as _SR
+    from ai_agent import analyze_backtest
+
+    async def _event_stream():
+        try:
+            async for chunk in analyze_backtest(body.api_key, body.metrics, model=body.model, base_url=body.base_url):
+                yield f"data: {json.dumps({'delta': chunk})}\n\n"
+        except ValueError as e:
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+        except Exception as e:
+            logger.error(f"[AI REPORT {user_id[:8]}] {e}")
+            yield f"data: {json.dumps({'error': '报告生成失败，请检查 API Key'})}\n\n"
+        finally:
+            yield "data: [DONE]\n\n"
+
+    return _SR(_event_stream(), media_type="text/event-stream", headers={
+        "Cache-Control": "no-cache",
+        "X-Accel-Buffering": "no",
+    })
