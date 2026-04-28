@@ -19,6 +19,7 @@ import {
   type StreamMsg,
 } from "@/lib/freqtrade-api";
 import ChatSidebar from "@/components/ChatSidebar";
+import StrategyTesterPanel, { type BacktestSummary, type TradeRecord } from "@/components/StrategyTesterPanel";
 
 // Monaco loads client-side only
 const Editor = dynamic(() => import("@monaco-editor/react"), { ssr: false });
@@ -72,6 +73,59 @@ class MyCrossStrategy(IStrategy):
         return dataframe
 `;
 
+// ── Demo strategy code (matches backend/strategies/MaCrossStrategy.py) ───────
+const DEMO_CODE = `"""
+MA 双均线交叉策略 — BTC Station 内置演示
+
+逻辑：
+  快线上穿慢线 → 买入做多  |  快线下穿慢线 → 平多出场
+  适合趋势行情，横盘时可能出现频繁假信号
+
+提示：修改 fast_period / slow_period 找最优周期组合
+"""
+from freqtrade.strategy import IStrategy, IntParameter, CategoricalParameter
+from pandas import DataFrame
+import talib.abstract as ta
+import freqtrade.vendor.qtpylib.indicators as qtpylib
+
+
+class MaCrossStrategy(IStrategy):
+    INTERFACE_VERSION = 3
+    timeframe = "4h"
+    stake_currency = "USDT"
+    minimal_roi = {"0": 100}
+    stoploss = -0.15
+    trailing_stop = False
+    process_only_new_candles = True
+    use_exit_signal = True
+    exit_profit_only = False
+    can_short = False
+
+    fast_period = IntParameter(5, 60, default=20, space="buy", optimize=True)
+    slow_period = IntParameter(20, 200, default=50, space="buy", optimize=True)
+    ma_type = CategoricalParameter(["SMA", "EMA"], default="EMA", space="buy", optimize=True)
+
+    def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        ma_func = ta.SMA if self.ma_type.value == "SMA" else ta.EMA
+        dataframe["fast_ma"] = ma_func(dataframe, timeperiod=self.fast_period.value)
+        dataframe["slow_ma"] = ma_func(dataframe, timeperiod=self.slow_period.value)
+        return dataframe
+
+    def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        dataframe.loc[
+            qtpylib.crossed_above(dataframe["fast_ma"], dataframe["slow_ma"]),
+            "enter_long",
+        ] = 1
+        return dataframe
+
+    def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        dataframe.loc[
+            qtpylib.crossed_below(dataframe["fast_ma"], dataframe["slow_ma"]),
+            "exit_long",
+        ] = 1
+        return dataframe
+`;
+
 // ── Backtest status helpers ───────────────────────────────────���───────────────
 type BtStatus = "idle" | "pending" | "running" | "completed" | "failed";
 
@@ -94,7 +148,7 @@ const STATUS_COLOR: Record<BtStatus, string> = {
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function EditorPage() {
-  const [code, setCode] = useState(DEFAULT_CODE);
+  const [code, setCode] = useState(DEMO_CODE);
   const [strategyName, setStrategyName] = useState("我的策略");
   const [savedId, setSavedId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -251,6 +305,83 @@ export default function EditorPage() {
 
   const isRunning = btStatus === "pending" || btStatus === "running";
 
+  // ── Demo: one-click save + submit with preset config ─────────────────────
+  const [demoLoading, setDemoLoading] = useState(false);
+  const [demoFlash, setDemoFlash] = useState(false);
+
+  const handleRunDemo = useCallback(async () => {
+    setDemoLoading(true);
+    setDemoFlash(true);
+    setBtError("");
+    setBtLogs([]);
+    setBtResult(null);
+    // Flash effect lasts 600ms
+    setTimeout(() => setDemoFlash(false), 600);
+
+    try {
+      // Step 1: Save with demo name
+      const saved = await saveStrategy({
+        id: savedId ?? undefined,
+        name: "演示：MA 双均线交叉",
+        code: DEMO_CODE,
+      });
+      setSavedId(saved.id);
+      setStrategyName("演示：MA 双均线交叉");
+      setCode(DEMO_CODE);
+      listMyStrategies().then(setMyStrategies);
+
+      // Step 2: Submit backtest — last 3 months, futures, sensible defaults
+      setBtStatus("pending");
+      const res = await submitBacktest({
+        strategy_id: saved.id,
+        timeframe: "4h",
+        timerange: "20250901-20260101",
+        market: "futures",
+        initial_capital: 10000,
+        leverage: 1,
+        fee_pct: 0.05,
+      });
+      setCurrentBtId(res.backtest_id);
+
+      const ws = connectBacktestStream(
+        res.backtest_id,
+        (msg: StreamMsg) => {
+          if (msg.type === "status") setBtStatus(msg.value as BtStatus);
+          else if (msg.type === "log") setBtLogs(prev => [...prev.slice(-99), msg.line]);
+          else if (msg.type === "result") { setBtResult(msg.result); setBtStatus("completed"); }
+          else if (msg.type === "error") { setBtError(msg.message); setBtStatus("failed"); }
+        },
+        () => {
+          const poll = setInterval(async () => {
+            const d = await getBacktest(res.backtest_id).catch(() => null);
+            if (!d) return;
+            setBtStatus(d.status as BtStatus);
+            if (d.status === "completed") { clearInterval(poll); if (d.result?.metrics) setBtResult(d.result.metrics); }
+            if (d.status === "failed") { clearInterval(poll); setBtError(d.error ?? "回测失败"); }
+          }, 3000);
+        },
+      );
+      wsRef.current = ws;
+    } catch (e: unknown) {
+      setBtError((e as Error).message ?? "演示失败");
+      setBtStatus("failed");
+    } finally {
+      setDemoLoading(false);
+    }
+  }, [savedId, listMyStrategies]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Build StrategyTesterPanel props from backtest result
+  const testerSummary: BacktestSummary | null = btResult ? {
+    net_profit_pct:  btResult.net_profit_pct,
+    max_drawdown_pct: btResult.max_drawdown_pct,
+    win_rate_pct:    btResult.win_rate_pct,
+    total_trades:    btResult.total_trades,
+    sharpe:          btResult.sharpe ?? undefined,
+    sortino:         btResult.sortino ?? undefined,
+    profit_factor:   btResult.profit_factor ?? undefined,
+    initial_capital: 10000,
+  } : null;
+
   return (
     <div className="flex flex-col h-[calc(100vh-48px)] overflow-hidden">
       {/* ── Top Toolbar ── */}
@@ -259,6 +390,40 @@ export default function EditorPage() {
           ← 策略库
         </Link>
         <span className="text-[var(--border-hi)]">|</span>
+
+        {/* ✨ DEMO BUTTON */}
+        <button
+          onClick={handleRunDemo}
+          disabled={demoLoading || isRunning}
+          style={{
+            position: "relative",
+            padding: "5px 14px",
+            borderRadius: 8,
+            fontSize: 12,
+            fontWeight: 700,
+            border: "none",
+            cursor: (demoLoading || isRunning) ? "not-allowed" : "pointer",
+            opacity: (demoLoading || isRunning) ? 0.7 : 1,
+            background: demoFlash
+              ? "rgba(255,255,255,0.9)"
+              : "linear-gradient(135deg, #f7931a, #00c864)",
+            color: demoFlash ? "#000" : "#fff",
+            boxShadow: demoFlash
+              ? "0 0 0 6px rgba(247,147,26,0.4), 0 0 24px rgba(0,200,100,0.5)"
+              : "0 2px 12px rgba(247,147,26,0.4)",
+            transition: "background 0.15s, box-shadow 0.15s",
+            animation: (!demoLoading && !isRunning) ? "demo-pulse 2.5s ease-in-out infinite" : "none",
+          }}
+        >
+          {demoLoading ? "⏳ 启动演示…" : "✨ 运行演示策略 (双均线交叉)"}
+        </button>
+
+        <style>{`
+          @keyframes demo-pulse {
+            0%, 100% { box-shadow: 0 2px 12px rgba(247,147,26,0.4); }
+            50%       { box-shadow: 0 2px 20px rgba(247,147,26,0.7), 0 0 32px rgba(0,200,100,0.35); }
+          }
+        `}</style>
 
         {/* Template selector */}
         <div className="relative">
@@ -644,6 +809,18 @@ export default function EditorPage() {
           </div>
         )}
       </div>
+
+      {/* ── Strategy Tester Panel ── */}
+      <StrategyTesterPanel
+        visible
+        summary={testerSummary}
+        trades={[]}
+        equity={[]}
+        csvDownloadUrl={currentBtId ? csvDownloadUrl(currentBtId) : null}
+        strategyName={strategyName}
+        logs={btLogs}
+        running={isRunning}
+      />
     </div>
   );
 }
