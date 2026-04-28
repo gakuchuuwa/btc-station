@@ -18,7 +18,7 @@ import freqtrade.vendor.qtpylib.indicators as qtpylib
 
 class MaCrossStrategy(IStrategy):
     INTERFACE_VERSION = 3
-    timeframe = "4h"
+    # timeframe is injected by the backtest config; do not hardcode here
     stake_currency = "USDT"
     minimal_roi = {"0": 100}
     stoploss = -0.15

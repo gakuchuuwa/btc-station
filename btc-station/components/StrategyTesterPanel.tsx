@@ -67,6 +67,8 @@ interface Props {
   logs?: string[];
   /** Whether backtest is currently running */
   running?: boolean;
+  /** Called when user clicks the settings gear */
+  onOpenSettings?: () => void;
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -346,6 +348,7 @@ export default function StrategyTesterPanel({
   strategyName,
   logs = [],
   running = false,
+  onOpenSettings,
 }: Props) {
   const [activeTab, setActiveTab] = useState<Tab>("回测控制台");
   const [height, setHeight] = useState(DEFAULT_HEIGHT);
@@ -450,6 +453,16 @@ export default function StrategyTesterPanel({
         >
           {collapsed ? "▲" : "▼"}
         </button>
+
+        {onOpenSettings && (
+          <button
+            onClick={onOpenSettings}
+            title="回测设置"
+            style={{ padding: "4px 10px", background: "none", border: "none", cursor: "pointer", color: "var(--text-mute)", fontSize: 13 }}
+          >
+            ⚙️
+          </button>
+        )}
 
         {onClose && (
           <button

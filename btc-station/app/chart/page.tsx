@@ -1404,6 +1404,13 @@ export default function ChartPage() {
   const [testerRunning, setTesterRunning] = useState(false)
   const strategyDropdownRef = useRef<HTMLDivElement>(null)
 
+  // ── Strategy settings modal ──────────────────────────────────────────────
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [settingsStrategyId, setSettingsStrategyId] = useState<string | null>(null)
+  const [settingsCapital, setSettingsCapital] = useState(10000)
+  const [settingsDateFrom, setSettingsDateFrom] = useState('20230101')
+  const [settingsDateTo, setSettingsDateTo] = useState('20260101')
+
   // Close dropdown on outside click
   useEffect(() => {
     function handleClick(e: MouseEvent) {
@@ -1415,8 +1422,12 @@ export default function ChartPage() {
     return () => document.removeEventListener('mousedown', handleClick)
   }, [])
 
-  const handleApplyStrategy = useCallback(async (strategyId: string) => {
+  const handleApplyStrategy = useCallback(async (
+    strategyId: string,
+    opts?: { capital?: number; dateFrom?: string; dateTo?: string }
+  ) => {
     setStrategyDropdownOpen(false)
+    setSettingsOpen(false)
     setStrategyLoading(true)
     setTesterRunning(true)
     setTesterLogs([])
@@ -1425,6 +1436,11 @@ export default function ChartPage() {
     setChartMarkers([])
     setActiveStrategy(strategyId)
     setTesterVisible(true)
+
+    const capital  = opts?.capital  ?? settingsCapital
+    const dateFrom = opts?.dateFrom ?? settingsDateFrom
+    const dateTo   = opts?.dateTo   ?? settingsDateTo
+    const timerange = `${dateFrom}-${dateTo}`
 
     try {
       // Get auth token
@@ -1456,17 +1472,17 @@ export default function ChartPage() {
         strategyDbId = found.id
       }
 
-      // Step 2: submit backtest
-      setTesterLogs(['▶ 提交回测任务...'])
+      // Step 2: submit backtest — use current chart timeframe (tf) and user-chosen settings
+      setTesterLogs([`▶ 提交回测：${tf} | ${dateFrom}~${dateTo} | $${capital.toLocaleString()}`])
       const btRes = await fetch('/py-api/api/backtests', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: authHeader },
         body: JSON.stringify({
           strategy_id: strategyDbId,
-          timeframe: tf,
-          timerange: '20250901-20260101',
+          timeframe: tf,          // ← always from the chart's current timeframe selector
+          timerange,
           market: 'futures',
-          initial_capital: 10000,
+          initial_capital: capital,
           leverage: 1,
           fee_pct: 0.05,
         }),
@@ -1488,7 +1504,7 @@ export default function ChartPage() {
           done = true
           const m = d.result?.metrics
           if (m) {
-            setTesterSummary({ ...m, initial_capital: 10000 })
+            setTesterSummary({ ...m, initial_capital: capital })
             // Build buy/sell markers from trades
             const trades: import('@/components/StrategyTesterPanel').TradeRecord[] = (d.result?.trades ?? []).map((t: Record<string, unknown>) => ({
               entry_time:  t.open_timestamp ? Math.floor((t.open_timestamp as number) / 1000) : 0,
@@ -1521,7 +1537,7 @@ export default function ChartPage() {
       setStrategyLoading(false)
       setTesterRunning(false)
     }
-  }, [tf])
+  }, [tf, settingsCapital, settingsDateFrom, settingsDateTo])
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
@@ -1831,6 +1847,7 @@ export default function ChartPage() {
         strategyName={activeStrategy ? BUILTIN_STRATEGIES.find(s => s.id === activeStrategy)?.name : undefined}
         logs={testerLogs}
         running={testerRunning}
+        onOpenSettings={activeStrategy ? () => { setSettingsStrategyId(activeStrategy); setSettingsOpen(true) } : undefined}
       />
 
       {/* Re-open tester if closed */}
@@ -1846,6 +1863,128 @@ export default function ChartPage() {
           >
             ▲ Strategy Tester
           </button>
+        </div>
+      )}
+
+      {/* ====== Settings Modal ====== */}
+      {settingsOpen && settingsStrategyId && (
+        <div
+          style={{
+            position: 'fixed', inset: 0, zIndex: 200,
+            background: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(4px)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}
+          onClick={e => { if (e.target === e.currentTarget) setSettingsOpen(false) }}
+        >
+          <div style={{
+            background: '#0d1117', border: '1px solid var(--border)',
+            borderRadius: 12, padding: '24px 28px', width: 380, maxWidth: '95vw',
+            boxShadow: '0 24px 60px rgba(0,0,0,0.7)',
+          }}>
+            {/* Header */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+              <div>
+                <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text)' }}>
+                  ⚙️ 回测设置
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--text-mute)', marginTop: 2 }}>
+                  {BUILTIN_STRATEGIES.find(s => s.id === settingsStrategyId)?.name} · {tf}
+                </div>
+              </div>
+              <button
+                onClick={() => setSettingsOpen(false)}
+                style={{ background: 'none', border: 'none', color: 'var(--text-mute)', cursor: 'pointer', fontSize: 18, lineHeight: 1 }}
+              >×</button>
+            </div>
+
+            {/* Fields */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+              <div>
+                <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: 'var(--text-mute)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                  初始资金 (USDT)
+                </label>
+                <input
+                  type="number" min={100} step={1000} value={settingsCapital}
+                  onChange={e => setSettingsCapital(Number(e.target.value))}
+                  style={{
+                    width: '100%', padding: '9px 12px', borderRadius: 7, fontSize: 14,
+                    border: '1px solid var(--border)', background: '#0a0f16',
+                    color: 'var(--text)', outline: 'none', boxSizing: 'border-box',
+                  }}
+                />
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: 'var(--text-mute)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                    开始日期
+                  </label>
+                  <input
+                    type="date"
+                    value={`${settingsDateFrom.slice(0,4)}-${settingsDateFrom.slice(4,6)}-${settingsDateFrom.slice(6,8)}`}
+                    onChange={e => setSettingsDateFrom(e.target.value.replace(/-/g, ''))}
+                    style={{
+                      width: '100%', padding: '9px 10px', borderRadius: 7, fontSize: 13,
+                      border: '1px solid var(--border)', background: '#0a0f16',
+                      color: 'var(--text)', outline: 'none', colorScheme: 'dark',
+                    }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: 'var(--text-mute)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                    结束日期
+                  </label>
+                  <input
+                    type="date"
+                    value={`${settingsDateTo.slice(0,4)}-${settingsDateTo.slice(4,6)}-${settingsDateTo.slice(6,8)}`}
+                    onChange={e => setSettingsDateTo(e.target.value.replace(/-/g, ''))}
+                    style={{
+                      width: '100%', padding: '9px 10px', borderRadius: 7, fontSize: 13,
+                      border: '1px solid var(--border)', background: '#0a0f16',
+                      color: 'var(--text)', outline: 'none', colorScheme: 'dark',
+                    }}
+                  />
+                </div>
+              </div>
+
+              <div style={{ padding: '10px 12px', borderRadius: 8, background: 'rgba(38,166,154,0.06)', border: '1px solid rgba(38,166,154,0.2)', fontSize: 11, color: 'var(--text-mute)' }}>
+                周期：<strong style={{ color: 'var(--text)' }}>{tf}</strong>（由图表顶栏控制）
+                　· 市场：<strong style={{ color: 'var(--text)' }}>永续合约</strong>
+              </div>
+            </div>
+
+            {/* Footer buttons */}
+            <div style={{ display: 'flex', gap: 10, marginTop: 22 }}>
+              <button
+                onClick={() => setSettingsOpen(false)}
+                style={{
+                  flex: 1, padding: '10px 0', borderRadius: 8, fontSize: 13, fontWeight: 600,
+                  background: 'transparent', border: '1px solid var(--border)',
+                  color: 'var(--text-mute)', cursor: 'pointer',
+                }}
+              >
+                取消
+              </button>
+              <button
+                onClick={() => {
+                  if (settingsStrategyId) {
+                    handleApplyStrategy(settingsStrategyId, {
+                      capital: settingsCapital,
+                      dateFrom: settingsDateFrom,
+                      dateTo: settingsDateTo,
+                    })
+                  }
+                }}
+                style={{
+                  flex: 2, padding: '10px 0', borderRadius: 8, fontSize: 13, fontWeight: 700,
+                  background: 'var(--up)', border: 'none', color: '#fff', cursor: 'pointer',
+                  boxShadow: '0 2px 12px rgba(38,166,154,0.4)',
+                }}
+              >
+                ▶ 运行回测
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
