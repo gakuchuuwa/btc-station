@@ -85,17 +85,19 @@ def _write_freqtrade_config(
     """
     # 永远用现货 pair，避免 funding_rate 数据问题
     pair = "BTC/USDT"
-    effective_stake = initial_capital * leverage if market == "futures" else initial_capital
+    # effective_wallet = 杠杆后总钱包，dry_run_wallet 决定可用余额上限
+    # stake_amount = "unlimited" → 全仓复利滚动，每次把全部余额投入一笔
+    effective_wallet = initial_capital * leverage if market == "futures" else initial_capital
 
     config = {
         "max_open_trades": 1,
         "stake_currency": "USDT",
-        "stake_amount": effective_stake,
+        "stake_amount": "unlimited",
         "tradable_balance_ratio": 1.0,
         "fiat_display_currency": "USD",
         "timeframe": timeframe,
         "dry_run": True,
-        "dry_run_wallet": initial_capital,
+        "dry_run_wallet": effective_wallet,
         "cancel_open_orders_on_exit": False,
         "trading_mode": "spot",  # 强制 spot，永续靠 stake_amount 倍数模拟
         "exchange": {
