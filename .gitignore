@@ -1,0 +1,23 @@
+# === Python ===
+backend/venv/
+backend/__pycache__/
+backend/*.pyc
+backend/.env
+backend/custom_strategy.py
+backend/data/*.csv
+
+# === Node.js ===
+frontend/node_modules/
+frontend/dist/
+
+# === OS / Editor ===
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
+.vscode/
+
+# === Sensitive ===
+*.env
+!.env.example

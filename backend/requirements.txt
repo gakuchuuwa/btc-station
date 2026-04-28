@@ -1,6 +1,16 @@
-fastapi==0.110.0
-uvicorn==0.29.0
-ccxt==4.2.80
-pandas==2.2.1
-vectorbt==0.26.0
-plotly==5.20.0
+fastapi
+uvicorn[standard]
+ccxt
+pandas
+numpy
+vectorbt
+plotly
+python-dotenv
+requests
+pydantic
+
+# Phase 3.1
+celery[redis]
+redis
+PyJWT
+websockets
