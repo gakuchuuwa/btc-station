@@ -63,3 +63,15 @@
   - `[x]` 使用 `localStorage` (而非数据库) 存储 OpenAI API Key，确保 0 泄露风险
   - `[x]` Monaco Editor 集成 AI 侧边栏 (ChatSidebar) 支持流式打字机效果 + 停止按钮
   - `[x]` 回测详情页新增【AI 解读报告】按钮，流式渲染 Markdown 报告
+
+## 🧹 阶段 8：UI 极简重构 (对标 TradingView Strategy Tester)
+
+> **目标**：砍掉一切无用的技术指标画线功能，将所有 UI 空间让渡给“策略选择”与“量化回测结果展示”。
+
+- `[x]` **剥离冗余指标**
+  - `[x]` 删除 `IndicatorSidebar` 组件（MA/EMA/BB/RSI/MACD/Stoch/ATR/OBV 控制面板整体移除）
+  - `[x]` 所有指标默认关闭 (`enabled: false`)，主图只渲染裸 K 线 + 成交量
+- `[x]` **构建 Strategy Tester 底栏**
+  - `[x]` `StrategyTesterPanel` 组件，拖拽 handle 调高度 (48–600px)，可折叠/关闭
+  - `[x]` 四个 Tab：回测控制台 (绿色日志终端 + 指标摘要)、资金曲线 (Plotly 折线)、交易明细 (可排序表格)、量化导出
+  - `[x]` 量化导出 Tab 提供最醒目绿色 CTA 按钮，直接触发 CSV 下载

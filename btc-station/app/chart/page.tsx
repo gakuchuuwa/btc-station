@@ -15,6 +15,7 @@ import {
 } from 'lightweight-charts'
 import { formatUsd, formatPercent } from '@/lib/format'
 import type { Market } from '@/lib/okx'
+import StrategyTesterPanel from '@/components/StrategyTesterPanel'
 
 // ============================
 // 指标计算（客户端 JS）
@@ -145,7 +146,7 @@ interface IndicatorParams {
 }
 
 const DEFAULT_INDICATOR_PARAMS: IndicatorParams = {
-  ma:         { enabled: true,  periods: [20, 50], colors: ['#F7931A', '#2962FF'] },
+  ma:         { enabled: false, periods: [20, 50], colors: ['#F7931A', '#2962FF'] },
   ema:        { enabled: false, periods: [20, 50], colors: ['#00BCD4', '#E91E63'] },
   bollinger:  { enabled: false, period: 20, stdDev: 2.0 },
   rsi:        { enabled: false, period: 14, overbought: 70, oversold: 30 },
@@ -1062,190 +1063,8 @@ function ChartPanel({
   )
 }
 
-// ============================
-// 右侧常驻指标面板
-// ============================
-interface IndicatorSidebarProps {
-  params: IndicatorParams
-  onChange: (params: IndicatorParams) => void
-}
-
-function IndicatorSidebar({ params, onChange }: IndicatorSidebarProps) {
-  const [expanded, setExpanded] = useState<string | null>(null)
-
-  // 即时更新：直接写入父级 params，不需要「应用」按钮
-  const update = <K extends keyof IndicatorParams>(key: K, val: Partial<IndicatorParams[K]>) => {
-    onChange({ ...params, [key]: { ...params[key], ...val } })
-  }
-
-  const toggle = (key: keyof IndicatorParams) => {
-    update(key, { enabled: !(params[key] as { enabled: boolean }).enabled } as Partial<IndicatorParams[typeof key]>)
-  }
-
-  const numInput = (label: string, value: number, onVal: (v: number) => void, min = 1, max = 500) => (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 11, marginBottom: 4 }}>
-      <span style={{ color: 'var(--text-dim)' }}>{label}</span>
-      <input
-        type="number" value={value} min={min} max={max}
-        style={{ background: '#0d1117', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: 3, padding: '1px 4px', width: 56, fontSize: 11 }}
-        onChange={e => onVal(parseInt(e.target.value) || min)}
-      />
-    </div>
-  )
-
-  const floatInput = (label: string, value: number, onVal: (v: number) => void, min = 0.5, max = 4, step = 0.5) => (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 11, marginBottom: 4 }}>
-      <span style={{ color: 'var(--text-dim)' }}>{label}</span>
-      <input
-        type="number" value={value} min={min} max={max} step={step}
-        style={{ background: '#0d1117', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: 3, padding: '1px 4px', width: 56, fontSize: 11 }}
-        onChange={e => onVal(parseFloat(e.target.value) || min)}
-      />
-    </div>
-  )
-
-  const colorDot = (color: string, onVal: (v: string) => void) => (
-    <label style={{ position: 'relative', cursor: 'pointer' }}>
-      <div style={{ width: 14, height: 14, borderRadius: '50%', background: color, border: '1px solid rgba(255,255,255,0.2)' }} />
-      <input type="color" value={color} onChange={e => onVal(e.target.value)}
-        style={{ position: 'absolute', opacity: 0, width: 0, height: 0 }} />
-    </label>
-  )
-
-  const INDICATORS: { key: keyof IndicatorParams; label: string; shortLabel: string }[] = [
-    { key: 'ma',         label: 'MA',         shortLabel: 'MA' },
-    { key: 'ema',        label: 'EMA',         shortLabel: 'EMA' },
-    { key: 'bollinger',  label: 'BB',          shortLabel: 'BB' },
-    { key: 'rsi',        label: 'RSI',         shortLabel: 'RSI' },
-    { key: 'macd',       label: 'MACD',        shortLabel: 'MACD' },
-    { key: 'stochastic', label: 'STOCH',       shortLabel: 'KD' },
-    { key: 'atr',        label: 'ATR',         shortLabel: 'ATR' },
-    { key: 'obv',        label: 'OBV',         shortLabel: 'OBV' },
-    { key: 'volume_ma',  label: 'VOL MA',      shortLabel: 'VMA' },
-  ]
-
-  return (
-    <div style={{
-      width: 180, flexShrink: 0,
-      background: 'var(--card)', borderLeft: '1px solid var(--border)',
-      display: 'flex', flexDirection: 'column',
-      fontSize: 12,
-    }}>
-      {/* 标题栏 */}
-      <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border)', fontWeight: 600, fontSize: 11, color: 'var(--text-dim)', letterSpacing: '0.05em' }}>
-        指标
-      </div>
-
-      {/* 指标列表 */}
-      <div style={{ overflowY: 'auto', flex: 1 }}>
-        {INDICATORS.map(({ key, label }) => {
-          const enabled = (params[key] as { enabled: boolean }).enabled
-          const isOpen = expanded === key && enabled
-          return (
-            <div key={key} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
-              {/* 指标行：checkbox + 名称 + 展开箭头 */}
-              <div style={{
-                display: 'flex', alignItems: 'center', gap: 8, padding: '7px 12px',
-                cursor: 'pointer',
-                background: enabled ? 'rgba(247,147,26,0.05)' : 'transparent',
-              }}>
-                <input
-                  type="checkbox"
-                  checked={enabled}
-                  onChange={() => toggle(key)}
-                  onClick={e => e.stopPropagation()}
-                  style={{ accentColor: '#F7931A', width: 13, height: 13, cursor: 'pointer', flexShrink: 0 }}
-                />
-                <span
-                  onClick={() => toggle(key)}
-                  style={{ flex: 1, color: enabled ? 'var(--text)' : 'var(--text-mute)', fontWeight: enabled ? 600 : 400, userSelect: 'none' }}
-                >
-                  {label}
-                </span>
-                {/* 参数展开按钮（仅已启用时显示） */}
-                {enabled && (
-                  <button
-                    onClick={e => { e.stopPropagation(); setExpanded(isOpen ? null : key) }}
-                    style={{
-                      background: 'none', border: 'none', color: 'var(--text-dim)',
-                      cursor: 'pointer', fontSize: 10, padding: 0, lineHeight: 1,
-                    }}
-                  >
-                    {isOpen ? '▲' : '▼'}
-                  </button>
-                )}
-              </div>
-
-              {/* 参数子面板（展开时显示） */}
-              {isOpen && (
-                <div style={{ padding: '6px 12px 8px 32px', background: 'rgba(0,0,0,0.2)' }}>
-                  {key === 'ma' && <>
-                    {numInput('周期1', params.ma.periods[0], v => update('ma', { periods: [v, params.ma.periods[1]] }))}
-                    {numInput('周期2', params.ma.periods[1], v => update('ma', { periods: [params.ma.periods[0], v] }))}
-                    <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
-                      {colorDot(params.ma.colors[0], v => update('ma', { colors: [v, params.ma.colors[1]] }))}
-                      {colorDot(params.ma.colors[1], v => update('ma', { colors: [params.ma.colors[0], v] }))}
-                    </div>
-                  </>}
-                  {key === 'ema' && <>
-                    {numInput('周期1', params.ema.periods[0], v => update('ema', { periods: [v, params.ema.periods[1]] }))}
-                    {numInput('周期2', params.ema.periods[1], v => update('ema', { periods: [params.ema.periods[0], v] }))}
-                    <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
-                      {colorDot(params.ema.colors[0], v => update('ema', { colors: [v, params.ema.colors[1]] }))}
-                      {colorDot(params.ema.colors[1], v => update('ema', { colors: [params.ema.colors[0], v] }))}
-                    </div>
-                  </>}
-                  {key === 'bollinger' && <>
-                    {numInput('周期', params.bollinger.period, v => update('bollinger', { period: v }))}
-                    {floatInput('标准差', params.bollinger.stdDev, v => update('bollinger', { stdDev: v }))}
-                  </>}
-                  {key === 'rsi' && <>
-                    {numInput('周期', params.rsi.period, v => update('rsi', { period: v }))}
-                    {numInput('超买', params.rsi.overbought, v => update('rsi', { overbought: v }), 50, 100)}
-                    {numInput('超卖', params.rsi.oversold, v => update('rsi', { oversold: v }), 1, 50)}
-                  </>}
-                  {key === 'macd' && <>
-                    {numInput('快线', params.macd.fast, v => update('macd', { fast: v }))}
-                    {numInput('慢线', params.macd.slow, v => update('macd', { slow: v }))}
-                    {numInput('信号', params.macd.signal, v => update('macd', { signal: v }))}
-                  </>}
-                  {key === 'stochastic' && <>
-                    {numInput('%K周期', params.stochastic.k_period, v => update('stochastic', { k_period: v }))}
-                    {numInput('%K平滑', params.stochastic.k_smooth, v => update('stochastic', { k_smooth: v }))}
-                    {numInput('%D周期', params.stochastic.d_period, v => update('stochastic', { d_period: v }))}
-                  </>}
-                  {key === 'atr' && numInput('周期', params.atr.period, v => update('atr', { period: v }))}
-                  {key === 'obv' && <>
-                    {numInput('MA周期', params.obv.ma_period, v => update('obv', { ma_period: v }), 0, 200)}
-                    <div style={{ fontSize: 10, color: 'var(--text-dim)', marginBottom: 4 }}>0 = 不显示MA</div>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 11 }}>
-                      <span style={{ color: 'var(--text-dim)' }}>颜色</span>
-                      {colorDot(params.obv.color, v => update('obv', { color: v }))}
-                    </div>
-                  </>}
-                  {key === 'volume_ma' && numInput('周期', params.volume_ma.period, v => update('volume_ma', { period: v }))}
-                </div>
-              )}
-            </div>
-          )
-        })}
-      </div>
-
-      {/* 底部：恢复默认 */}
-      <div style={{ padding: '8px 12px', borderTop: '1px solid var(--border)' }}>
-        <button
-          onClick={() => onChange(JSON.parse(JSON.stringify(DEFAULT_INDICATOR_PARAMS)))}
-          style={{
-            width: '100%', background: 'transparent', border: '1px solid var(--border)',
-            color: 'var(--text-dim)', borderRadius: 4, padding: '4px 0', cursor: 'pointer', fontSize: 11,
-          }}
-        >
-          恢复默认
-        </button>
-      </div>
-    </div>
-  )
-}
+// IndicatorSidebar removed — Phase 8 UI simplification.
+// All indicators disabled by default; chart shows clean K-lines only.
 
 // ============================
 // 永続情報パネル
@@ -1535,6 +1354,8 @@ export default function ChartPage() {
     { tool: 'delete',     label: '✕', title: '删除选中' },
   ]
 
+  const [testerVisible, setTesterVisible] = useState(true)
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
       {/* ====== 顶部工具栏 ====== */}
@@ -1748,12 +1569,31 @@ export default function ChartPage() {
           )}
         </div>
 
-        {/* 右侧常驻指标面板 */}
-        <IndicatorSidebar
-          params={indicatorParams}
-          onChange={setIndicatorParams}
-        />
       </div>
+
+      {/* ====== Strategy Tester Bottom Panel ====== */}
+      <StrategyTesterPanel
+        visible={testerVisible}
+        onClose={() => setTesterVisible(false)}
+        logs={[]}
+        running={false}
+      />
+
+      {/* Re-open tester if closed */}
+      {!testerVisible && (
+        <div style={{ borderTop: '1px solid var(--border)', padding: '6px 12px' }}>
+          <button
+            onClick={() => setTesterVisible(true)}
+            style={{
+              fontSize: 11, padding: '3px 12px', borderRadius: 4,
+              background: 'transparent', border: '1px solid var(--border)',
+              color: 'var(--text-mute)', cursor: 'pointer',
+            }}
+          >
+            ▲ Strategy Tester
+          </button>
+        </div>
+      )}
     </div>
   )
 }
