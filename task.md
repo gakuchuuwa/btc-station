@@ -25,13 +25,13 @@
   - `[x]` 废弃旧版 `live_engine.py` 的自研逻辑（已由 `live_runner.py` 取代）
   - `[x]` 新增 `/api/live/start`、`/api/live/stop`、`/api/live/status` 接口
   - `[x]` 使用 `subprocess.Popen` 拉起 `freqtrade trade`，PID 文件管理生命周期，支持 `dry_run: true/false`
-- `[ ]` **后端安全代理层 (api_v31.py)**
-  - `[ ]` 新增 `GET /api/live/metrics` 接口
-  - `[ ]` 引入 `httpx`，后端携带内部 credentials 将请求转发给 Freqtrade 内部 API (获取 profit, status 等)
-- `[ ]` **前端实盘工作台 (Next.js)**
-  - `[ ]` 搭建独立大屏：包含启停控制表单 (选择策略、投资额、输入API Key)
-  - `[ ]` 轮询 `/api/live/metrics`，渲染 PnL (未结盈亏)、胜率等数据大盘
-  - `[ ]` 基于 `log_tail` 渲染黑客风日志终端
+- `[x]` **后端安全代理层 (api_v31.py)**
+  - `[x]` 新增 `GET /api/live/metrics` 接口
+  - `[x]` 引入 `httpx`，后端携带内部 credentials 将请求转发给 Freqtrade 内部 API (获取 profit, status 等)
+- `[x]` **前端实盘工作台 (Next.js)**
+  - `[x]` 搭建独立大屏：包含启停控制表单 (选择策略、投资额、输入API Key)
+  - `[x]` 轮询 `/api/live/metrics`，渲染 PnL (未结盈亏)、胜率等数据大盘
+  - `[x]` 基于 `log_tail` 渲染黑客风日志终端
 
 ## 🧊 阶段 4：商业化与支付流 (暂缓：全部免费开放)
 
