@@ -653,3 +653,137 @@ async def live_metrics(user_id: str = Depends(current_user)):
         "open_trades": open_trades,
         "bot_status": bot_st,
     }
+
+
+# ── Hyperopt (Phase 3.3) ──────────────────────────────────────────────────────
+
+# In-memory store: task_id → {status, progress, result, error}
+# For production, replace with Redis or Supabase; this is sufficient for single-process Railway.
+_hyperopt_tasks: dict = {}
+
+
+class HyperoptSubmit(BaseModel):
+    strategy_id: str
+    timeframe: str = "4h"
+    timerange: str = "20230101-20260101"
+    epochs: int = 100
+    spaces: list[str] = ["buy", "sell"]
+    loss_function: str = "SharpeHyperOptLoss"
+    min_trades: int = 30
+
+    @field_validator("epochs")
+    @classmethod
+    def valid_epochs(cls, v):
+        if not (10 <= v <= 1000):
+            raise ValueError("epochs 必须在 10–1000 之间")
+        return v
+
+    @field_validator("spaces")
+    @classmethod
+    def valid_spaces(cls, v):
+        allowed = {"buy", "sell", "roi", "stoploss", "trailing", "protection"}
+        bad = [s for s in v if s not in allowed]
+        if bad:
+            raise ValueError(f"无效 space: {bad}，允许: {allowed}")
+        return v
+
+
+@router.post("/hyperopt/start", status_code=202)
+async def hyperopt_start(body: HyperoptSubmit, user_id: str = Depends(current_user)):
+    """Submit a Freqtrade hyperopt job. Runs in a background thread; poll /hyperopt/{task_id}."""
+    import threading
+
+    # Fetch strategy
+    rows = _sb("get", f"strategies?id=eq.{body.strategy_id}&user_id=eq.{user_id}&limit=1")
+    if not rows:
+        raise HTTPException(404, "策略未找到")
+    strategy = rows[0]
+    code = strategy["code"]
+    class_name = strategy.get("class_name") or _extract_class_name(code)
+
+    plan = _get_user_plan(user_id)
+    task_id = str(uuid.uuid4())
+
+    _hyperopt_tasks[task_id] = {
+        "status": "running",
+        "progress": [],     # list of epoch dicts streamed so far
+        "result": None,
+        "error": None,
+        "user_id": user_id,
+        "strategy_id": body.strategy_id,
+        "epochs_total": body.epochs,
+    }
+
+    def _run():
+        from hyperopt_runner import run_hyperopt
+
+        def _on_progress(ep: dict):
+            _hyperopt_tasks[task_id]["progress"].append(ep)
+
+        try:
+            result = run_hyperopt(
+                user_id=user_id,
+                task_id=task_id,
+                strategy_class=class_name,
+                strategy_code=code,
+                timeframe=body.timeframe,
+                timerange=body.timerange,
+                epochs=body.epochs,
+                spaces=body.spaces,
+                loss_function=body.loss_function,
+                min_trades=body.min_trades,
+                plan=plan,
+                on_progress=_on_progress,
+            )
+            _hyperopt_tasks[task_id]["status"] = "completed"
+            _hyperopt_tasks[task_id]["result"] = result
+        except Exception as e:
+            import traceback
+            logger.error(f"[HOPT {task_id[:8]}] {e}\n{traceback.format_exc()}")
+            _hyperopt_tasks[task_id]["status"] = "failed"
+            _hyperopt_tasks[task_id]["error"] = str(e)[:1000]
+
+    threading.Thread(target=_run, daemon=True).start()
+
+    return {"task_id": task_id, "status": "running", "epochs_total": body.epochs}
+
+
+@router.get("/hyperopt/{task_id}")
+async def hyperopt_status(task_id: str, user_id: str = Depends(current_user)):
+    """
+    Poll hyperopt job status.
+    Returns streaming progress (epoch-by-epoch) while running,
+    and the full plot-ready dataset on completion.
+    """
+    task = _hyperopt_tasks.get(task_id)
+    if not task:
+        raise HTTPException(404, "任务未找到")
+    if task.get("user_id") != user_id:
+        raise HTTPException(403, "无权访问此任务")
+
+    progress = task.get("progress", [])
+    epochs_done = len(progress)
+    epochs_total = task.get("epochs_total", 0)
+    pct = round(epochs_done / epochs_total * 100) if epochs_total else 0
+
+    resp: dict = {
+        "task_id":      task_id,
+        "status":       task["status"],
+        "epochs_done":  epochs_done,
+        "epochs_total": epochs_total,
+        "progress_pct": pct,
+        "latest_epochs": progress[-20:],   # last 20 for live chart updates
+    }
+
+    if task["status"] == "completed" and task.get("result"):
+        r = task["result"]
+        resp["result"] = {
+            "total_epochs": r["total_epochs"],
+            "best":         r["best"],
+            "epochs":       r["epochs"],    # full dataset for Plotly
+        }
+
+    if task["status"] == "failed":
+        resp["error"] = task.get("error")
+
+    return resp
