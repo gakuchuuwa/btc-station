@@ -494,3 +494,81 @@ async def get_quota(user_id: str = Depends(current_user)):
         "backtests_limit": limit,
         "next_reset": next_reset,
     }
+
+
+# ── Live / Dry-run daemon (Phase 6) ──────────────────────────────────────────
+
+class LiveStartRequest(BaseModel):
+    strategy_id: str
+    dry_run: bool = True
+    timeframe: str = "4h"
+    stake_amount: float = 100.0
+    # OKX credentials — only required for live (dry_run=False)
+    # Never persisted; used only to write the on-disk config.json for Freqtrade.
+    okx_api_key: str = ""
+    okx_secret: str = ""
+    okx_password: str = ""
+
+    @field_validator("timeframe")
+    @classmethod
+    def valid_timeframe(cls, v):
+        allowed = {"1m", "5m", "15m", "1h", "4h", "1d"}
+        if v not in allowed:
+            raise ValueError(f"无效周期，允许: {allowed}")
+        return v
+
+    @field_validator("stake_amount")
+    @classmethod
+    def positive_stake(cls, v):
+        if v <= 0:
+            raise ValueError("stake_amount 必须大于 0")
+        return v
+
+
+@router.post("/live/start", status_code=202)
+async def live_start(body: LiveStartRequest, user_id: str = Depends(current_user)):
+    """Launch a Freqtrade `trade` daemon for this user (live or dry-run)."""
+    from live_runner import start_live, is_running
+
+    if is_running(user_id):
+        raise HTTPException(409, "实盘/模拟盘已在运行，请先调用 /api/live/stop")
+
+    if not body.dry_run and not (body.okx_api_key and body.okx_secret and body.okx_password):
+        raise HTTPException(400, "实盘模式需要提供 OKX API Key / Secret / Password")
+
+    # Fetch strategy code from Supabase
+    rows = _sb("get", f"strategies?id=eq.{body.strategy_id}&user_id=eq.{user_id}&limit=1")
+    if not rows:
+        raise HTTPException(404, "策略未找到")
+    strategy = rows[0]
+    code = strategy["code"]
+    class_name = strategy.get("class_name") or _extract_class_name(code)
+
+    result = start_live(
+        user_id=user_id,
+        strategy_class=class_name,
+        strategy_code=code,
+        dry_run=body.dry_run,
+        timeframe=body.timeframe,
+        stake_amount=body.stake_amount,
+        okx_api_key=body.okx_api_key,
+        okx_secret=body.okx_secret,
+        okx_password=body.okx_password,
+    )
+    return result
+
+
+@router.post("/live/stop", status_code=200)
+async def live_stop(user_id: str = Depends(current_user)):
+    """Gracefully stop the running Freqtrade trade daemon."""
+    from live_runner import stop_live
+    return stop_live(user_id)
+
+
+@router.get("/live/status")
+async def live_status(user_id: str = Depends(current_user)):
+    """Return current live session status, metadata, and last 50 log lines."""
+    from live_runner import get_status, tail_log
+    status = get_status(user_id)
+    status["log_tail"] = tail_log(user_id, lines=50)
+    return status
