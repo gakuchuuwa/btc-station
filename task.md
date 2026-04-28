@@ -21,10 +21,10 @@
 
 > **背景**：当前的 `live_engine.py` 仍为基于 Pandas 的旧版自研引擎。需要统一并入 Freqtrade 架构。
 
-- `[ ]` **后端接口改造**
-  - `[ ]` 废弃旧版 `live_engine.py` 的自研逻辑
-  - `[ ]` 新增 `/api/live/start` 和 `/api/live/stop` 接口
-  - `[ ]` 使用 `subprocess` 拉起 Freqtrade 容器，执行 `freqtrade trade` 命令 (分别处理 `dry-run: true` 和 `dry-run: false`)
+- `[x]` **后端接口改造**
+  - `[x]` 废弃旧版 `live_engine.py` 的自研逻辑（已由 `live_runner.py` 取代）
+  - `[x]` 新增 `/api/live/start`、`/api/live/stop`、`/api/live/status` 接口
+  - `[x]` 使用 `subprocess.Popen` 拉起 `freqtrade trade`，PID 文件管理生命周期，支持 `dry_run: true/false`
 - `[ ]` **前端实盘工作台**
   - `[ ]` 搭建独立的实盘/模拟盘管理页面
   - `[ ]` 通过 Freqtrade REST API 定时轮询当前持仓状态、未结盈亏 (PnL) 并渲染
