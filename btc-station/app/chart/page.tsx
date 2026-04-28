@@ -400,6 +400,14 @@ function DrawingLayer({
 // ============================
 // 単一チャートコンポーネント
 // ============================
+export interface ChartMarker {
+  time: number    // unix seconds
+  position: 'aboveBar' | 'belowBar'
+  color: string
+  shape: 'arrowUp' | 'arrowDown'
+  text?: string
+}
+
 interface ChartPanelProps {
   candles: Candle[]
   tf: string
@@ -413,11 +421,13 @@ interface ChartPanelProps {
   loadMoreCandles: () => void
   isMain?: boolean
   ticker: { lastPrice: number; change24h: number }
+  markers?: ChartMarker[]
 }
 
 function ChartPanel({
   candles, tf, market, indicatorParams, drawings, activeTool,
   onDrawingComplete, onDeleteDrawing, hasMore, loadMoreCandles, isMain = true, ticker,
+  markers = [],
 }: ChartPanelProps) {
   const mainContainerRef = useRef<HTMLDivElement>(null)
   const volumeContainerRef = useRef<HTMLDivElement>(null)
@@ -496,6 +506,22 @@ function ChartPanel({
     })
     candleSeries.setData(sorted.map(c => ({ time: c.time as Time, open: c.open, high: c.high, low: c.low, close: c.close })))
 
+    // Strategy markers (buy/sell signals)
+    if (markers.length > 0) {
+      const validTimes = new Set(sorted.map(c => c.time))
+      const lwtMarkers = markers
+        .filter(m => validTimes.has(m.time))
+        .sort((a, b) => a.time - b.time)
+        .map(m => ({
+          time: m.time as Time,
+          position: m.position,
+          color: m.color,
+          shape: m.shape,
+          text: m.text ?? '',
+        }))
+      candleSeries.setMarkers(lwtMarkers)
+    }
+
     // MA
     if (indicatorParams.ma.enabled) {
       indicatorParams.ma.periods.forEach((period, idx) => {
@@ -559,7 +585,7 @@ function ChartPanel({
         mainChartRef.current = null
       }
     }
-  }, [candles, indicatorParams, syncTimeScales])
+  }, [candles, indicatorParams, markers, syncTimeScales])
 
   // 成交量（含 Volume MA）：统一重建
   useEffect(() => {
@@ -1356,6 +1382,140 @@ export default function ChartPage() {
 
   const [testerVisible, setTesterVisible] = useState(true)
 
+  // ── Strategy selector state ──────────────────────────────────────────────
+  const BUILTIN_STRATEGIES = [
+    { id: 'MaCrossStrategy', name: 'MA 双均线交叉' },
+  ]
+  const [activeStrategy, setActiveStrategy] = useState<string | null>(null)
+  const [strategyDropdownOpen, setStrategyDropdownOpen] = useState(false)
+  const [strategyLoading, setStrategyLoading] = useState(false)
+  const [chartMarkers, setChartMarkers] = useState<ChartMarker[]>([])
+  const [testerSummary, setTesterSummary] = useState<import('@/components/StrategyTesterPanel').BacktestSummary | null>(null)
+  const [testerTrades, setTesterTrades] = useState<import('@/components/StrategyTesterPanel').TradeRecord[]>([])
+  const [testerLogs, setTesterLogs] = useState<string[]>([])
+  const [testerBtId, setTesterBtId] = useState<string | null>(null)
+  const [testerRunning, setTesterRunning] = useState(false)
+  const strategyDropdownRef = useRef<HTMLDivElement>(null)
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (strategyDropdownRef.current && !strategyDropdownRef.current.contains(e.target as Node)) {
+        setStrategyDropdownOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [])
+
+  const handleApplyStrategy = useCallback(async (strategyId: string) => {
+    setStrategyDropdownOpen(false)
+    setStrategyLoading(true)
+    setTesterRunning(true)
+    setTesterLogs([])
+    setTesterSummary(null)
+    setTesterTrades([])
+    setChartMarkers([])
+    setActiveStrategy(strategyId)
+    setTesterVisible(true)
+
+    try {
+      // Get auth token
+      const { createClient } = await import('@/lib/supabase/client')
+      const sb = createClient()
+      const { data } = await sb.auth.getSession()
+      const authHeader = `Bearer ${data.session?.access_token ?? ''}`
+
+      // Step 1: ensure strategy exists in DB (save from template)
+      const templateRes = await fetch(`/py-api/api/templates/${strategyId}/code`)
+      if (!templateRes.ok) throw new Error('无法加载策略模板')
+      const { code } = await templateRes.json()
+
+      const saveRes = await fetch('/py-api/api/strategies', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: authHeader },
+        body: JSON.stringify({ name: BUILTIN_STRATEGIES.find(s => s.id === strategyId)?.name ?? strategyId, code }),
+      })
+      let strategyDbId: string
+      if (saveRes.ok) {
+        const saved = await saveRes.json()
+        strategyDbId = Array.isArray(saved) ? saved[0].id : saved.id
+      } else {
+        // Strategy might already exist — list and find it
+        const listRes = await fetch('/py-api/api/strategies', { headers: { Authorization: authHeader } })
+        const list = listRes.ok ? await listRes.json() : []
+        const found = list.find((s: { class_name: string; id: string }) => s.class_name === strategyId)
+        if (!found) throw new Error('策略保存失败')
+        strategyDbId = found.id
+      }
+
+      // Step 2: submit backtest
+      setTesterLogs(['▶ 提交回测任务...'])
+      const btRes = await fetch('/py-api/api/backtests', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: authHeader },
+        body: JSON.stringify({
+          strategy_id: strategyDbId,
+          timeframe: tf,
+          timerange: '20250901-20260101',
+          market: 'futures',
+          initial_capital: 10000,
+          leverage: 1,
+          fee_pct: 0.05,
+        }),
+      })
+      if (!btRes.ok) throw new Error('回测提交失败')
+      const { backtest_id } = await btRes.json()
+      setTesterBtId(backtest_id)
+      setTesterLogs(p => [...p, `✓ 回测已提交 (ID: ${backtest_id.slice(0, 8)})`])
+
+      // Step 3: poll until done
+      let done = false
+      while (!done) {
+        await new Promise(r => setTimeout(r, 3000))
+        const pollRes = await fetch(`/py-api/api/backtests/${backtest_id}`, { headers: { Authorization: authHeader } })
+        if (!pollRes.ok) continue
+        const d = await pollRes.json()
+        if (d.status === 'running') setTesterLogs(p => [...p.slice(-30), '⏳ 回测运行中...'])
+        if (d.status === 'completed') {
+          done = true
+          const m = d.result?.metrics
+          if (m) {
+            setTesterSummary({ ...m, initial_capital: 10000 })
+            // Build buy/sell markers from trades
+            const trades: import('@/components/StrategyTesterPanel').TradeRecord[] = (d.result?.trades ?? []).map((t: Record<string, unknown>) => ({
+              entry_time:  t.open_timestamp ? Math.floor((t.open_timestamp as number) / 1000) : 0,
+              exit_time:   t.close_timestamp ? Math.floor((t.close_timestamp as number) / 1000) : undefined,
+              pair:        String(t.pair ?? 'BTC/USDT'),
+              direction:   'long' as const,
+              entry_price: Number(t.open_rate ?? 0),
+              exit_price:  Number(t.close_rate ?? 0),
+              pnl_pct:     Number(t.profit_ratio ?? 0),
+              pnl_abs:     Number(t.profit_abs ?? 0),
+            }))
+            setTesterTrades(trades)
+            const markers: ChartMarker[] = []
+            trades.forEach(t => {
+              if (t.entry_time) markers.push({ time: t.entry_time, position: 'belowBar', color: '#26a69a', shape: 'arrowUp', text: 'B' })
+              if (t.exit_time)  markers.push({ time: t.exit_time,  position: 'aboveBar', color: '#ef5350', shape: 'arrowDown', text: 'S' })
+            })
+            setChartMarkers(markers)
+            setTesterLogs(p => [...p, `✓ 回测完成 — 净收益 ${m.net_profit_pct >= 0 ? '+' : ''}${m.net_profit_pct.toFixed(2)}% | ${m.total_trades} 笔交易`])
+          }
+        }
+        if (d.status === 'failed') {
+          done = true
+          setTesterLogs(p => [...p, `✗ 回测失败: ${d.error ?? '未知错误'}`])
+        }
+      }
+    } catch (e: unknown) {
+      setTesterLogs(p => [...p, `✗ ${(e as Error).message}`])
+    } finally {
+      setStrategyLoading(false)
+      setTesterRunning(false)
+    }
+  }, [tf])
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
       {/* ====== 顶部工具栏 ====== */}
@@ -1411,13 +1571,75 @@ export default function ChartPage() {
           )}
         </div>
 
-        {/* 中：时间周期 */}
-        <div className="tf-group">
-          {TIMEFRAMES.map(t => (
-            <button key={t} className={`tf-btn${tf === t ? ' active' : ''}`} onClick={() => setTf(t)}>
-              {TF_LABELS[t]}
-            </button>
+        {/* 中：时间周期 + ƒx 策略库 */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div className="tf-group">
+            {TIMEFRAMES.map(t => (
+              <button key={t} className={`tf-btn${tf === t ? ' active' : ''}`} onClick={() => setTf(t)}>
+                {TF_LABELS[t]}
+              </button>
           ))}
+          </div>
+
+          {/* ƒx 策略库 下拉 */}
+          <div ref={strategyDropdownRef} style={{ position: 'relative' }}>
+            <button
+              onClick={() => setStrategyDropdownOpen(p => !p)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 5,
+                padding: '4px 10px', borderRadius: 6, fontSize: 12, fontWeight: 600,
+                border: `1px solid ${activeStrategy ? 'var(--up)' : 'var(--border)'}`,
+                background: activeStrategy ? 'rgba(38,166,154,0.12)' : 'transparent',
+                color: activeStrategy ? 'var(--up)' : 'var(--text-mute)',
+                cursor: strategyLoading ? 'not-allowed' : 'pointer',
+                opacity: strategyLoading ? 0.6 : 1,
+                transition: 'all 0.15s',
+              }}
+            >
+              <span style={{ fontStyle: 'italic', fontFamily: 'serif', fontSize: 13 }}>ƒx</span>
+              {strategyLoading ? '运行中…' : activeStrategy ? BUILTIN_STRATEGIES.find(s => s.id === activeStrategy)?.name : '策略'}
+              <span style={{ fontSize: 9, marginLeft: 2 }}>{strategyDropdownOpen ? '▲' : '▼'}</span>
+            </button>
+
+            {strategyDropdownOpen && (
+              <div style={{
+                position: 'absolute', top: '110%', left: 0, zIndex: 60, minWidth: 200,
+                background: 'var(--bg-card, #1a2232)', border: '1px solid var(--border)',
+                borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
+                overflow: 'hidden',
+              }}>
+                <div style={{ padding: '8px 12px 4px', fontSize: 10, color: 'var(--text-mute)', fontWeight: 600, letterSpacing: '0.06em' }}>
+                  内置策略
+                </div>
+                {BUILTIN_STRATEGIES.map(s => (
+                  <button
+                    key={s.id}
+                    onClick={() => handleApplyStrategy(s.id)}
+                    style={{
+                      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                      width: '100%', textAlign: 'left', padding: '9px 14px',
+                      background: activeStrategy === s.id ? 'rgba(38,166,154,0.1)' : 'none',
+                      border: 'none', cursor: 'pointer',
+                      color: activeStrategy === s.id ? 'var(--up)' : 'var(--text)',
+                      fontSize: 13,
+                    }}
+                    onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.06)')}
+                    onMouseLeave={e => (e.currentTarget.style.background = activeStrategy === s.id ? 'rgba(38,166,154,0.1)' : 'none')}
+                  >
+                    <span>{s.name}</span>
+                    {activeStrategy === s.id && <span style={{ fontSize: 10, color: 'var(--up)' }}>● 运行中</span>}
+                  </button>
+                ))}
+                <div style={{ height: 1, background: 'var(--border)', margin: '4px 0' }} />
+                <button
+                  onClick={() => { setStrategyDropdownOpen(false); setActiveStrategy(null); setChartMarkers([]); setTesterSummary(null); setTesterTrades([]); }}
+                  style={{ width: '100%', textAlign: 'left', padding: '8px 14px', background: 'none', border: 'none', color: 'var(--text-mute)', fontSize: 12, cursor: 'pointer' }}
+                >
+                  清除策略标记
+                </button>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* 右：ツールボタン */}
@@ -1497,8 +1719,8 @@ export default function ChartPage() {
             /* 分屏布局 */
             <div style={{ display: 'flex', gap: 0 }}>
               <div ref={mainChartContainerRef} className="card" style={{ flex: 1, minWidth: 0, overflow: 'hidden', borderRight: '1px solid var(--border)' }}>
-                {loading ? (
-                  <div style={{ height: 380, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-mute)', fontSize: 13 }}>图表加载中...</div>
+                {candles.length === 0 && loading ? (
+                  <div style={{ height: 380, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-mute)', fontSize: 13 }}>K线加载中...</div>
                 ) : (
                   <ChartPanel
                     candles={candles} tf={tf} market={market}
@@ -1511,6 +1733,7 @@ export default function ChartPage() {
                     loadMoreCandles={() => loadCandles(tf, market, candles[0]?.time)}
                     isMain={true}
                     ticker={ticker}
+                    markers={chartMarkers}
                   />
                 )}
               </div>
@@ -1549,8 +1772,8 @@ export default function ChartPage() {
           ) : (
             /* 单屏布局 */
             <div ref={mainChartContainerRef} className="card" style={{ overflow: 'hidden', position: 'relative' }}>
-              {loading ? (
-                <div style={{ height: 380, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-mute)', fontSize: 13 }}>图表加载中...</div>
+              {candles.length === 0 && loading ? (
+                <div style={{ height: 380, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-mute)', fontSize: 13 }}>K线加载中...</div>
               ) : (
                 <ChartPanel
                   candles={candles} tf={tf} market={market}
@@ -1563,6 +1786,7 @@ export default function ChartPage() {
                   loadMoreCandles={() => loadCandles(tf, market, candles[0]?.time)}
                   isMain={true}
                   ticker={ticker}
+                  markers={chartMarkers}
                 />
               )}
             </div>
@@ -1575,8 +1799,13 @@ export default function ChartPage() {
       <StrategyTesterPanel
         visible={testerVisible}
         onClose={() => setTesterVisible(false)}
-        logs={[]}
-        running={false}
+        summary={testerSummary}
+        trades={testerTrades}
+        equity={[]}
+        csvDownloadUrl={testerBtId ? `/py-api/api/backtests/${testerBtId}/csv` : null}
+        strategyName={activeStrategy ? BUILTIN_STRATEGIES.find(s => s.id === activeStrategy)?.name : undefined}
+        logs={testerLogs}
+        running={testerRunning}
       />
 
       {/* Re-open tester if closed */}
