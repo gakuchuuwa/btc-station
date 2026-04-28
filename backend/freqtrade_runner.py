@@ -93,7 +93,7 @@ def _write_freqtrade_config(
         "max_open_trades": 1,
         "stake_currency": "USDT",
         "stake_amount": "unlimited",
-        "tradable_balance_ratio": 1.0,
+        "tradable_balance_ratio": 0.99,
         "fiat_display_currency": "USD",
         "timeframe": timeframe,
         "dry_run": True,

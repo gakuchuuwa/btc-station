@@ -27,6 +27,7 @@ class MaCrossStrategy(IStrategy):
     use_exit_signal = True
     exit_profit_only = False
     can_short = False
+    startup_candle_count = 50
 
     fast_period = IntParameter(5, 60, default=20, space="buy", optimize=True)
     slow_period = IntParameter(20, 200, default=50, space="buy", optimize=True)
