@@ -148,6 +148,57 @@ export interface BacktestMetrics {
   profit_factor?: number;
 }
 
+// ── Live daemon ───────────────────────────────────────────────────────────────
+
+export interface LiveStartConfig {
+  strategy_id: string;
+  dry_run: boolean;
+  timeframe: string;
+  stake_amount: number;
+  okx_api_key?: string;
+  okx_secret?: string;
+  okx_password?: string;
+}
+
+export async function startLive(cfg: LiveStartConfig) {
+  const h = await authHeaders();
+  const r = await fetch(`${BASE}/live/start`, {
+    method: "POST",
+    headers: h,
+    body: JSON.stringify(cfg),
+  });
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({ detail: r.statusText }));
+    throw new Error(err.detail ?? "启动失败");
+  }
+  return r.json();
+}
+
+export async function stopLive() {
+  const h = await authHeaders();
+  const r = await fetch(`${BASE}/live/stop`, { method: "POST", headers: h });
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({ detail: r.statusText }));
+    throw new Error(err.detail ?? "停止失败");
+  }
+  return r.json();
+}
+
+export async function getLiveStatus() {
+  const h = await authHeaders();
+  const r = await fetch(`${BASE}/live/status`, { headers: h });
+  if (!r.ok) return null;
+  return r.json();
+}
+
+export async function getLiveMetrics() {
+  const h = await authHeaders();
+  const r = await fetch(`${BASE}/live/metrics`, { headers: h });
+  if (r.status === 503) return null; // not running
+  if (!r.ok) throw new Error("获取实盘数据失败");
+  return r.json();
+}
+
 export function connectBacktestStream(
   backtestId: string,
   onMessage: (msg: StreamMsg) => void,

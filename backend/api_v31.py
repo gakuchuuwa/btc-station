@@ -572,3 +572,84 @@ async def live_status(user_id: str = Depends(current_user)):
     status = get_status(user_id)
     status["log_tail"] = tail_log(user_id, lines=50)
     return status
+
+
+@router.get("/live/metrics")
+async def live_metrics(user_id: str = Depends(current_user)):
+    """
+    Secure reverse proxy to the Freqtrade internal REST API.
+    The frontend never touches the internal port directly — all requests go through here.
+    Returns combined data: profit summary + open trades + bot status.
+    """
+    import httpx
+    from live_runner import get_status, _live_dir
+    import json as _json
+    from pathlib import Path as _Path
+
+    st = get_status(user_id)
+    if not st.get("running"):
+        raise HTTPException(503, "实盘/模拟盘未在运行")
+
+    port = st.get("port")
+    if not port:
+        raise HTTPException(503, "内部端口信息缺失，请重启实盘")
+
+    # Read the per-session credentials written by live_runner into meta.json
+    meta_path = _Path(_live_dir(user_id)) / "meta.json"  # type: ignore[arg-type]
+    # Read Freqtrade API credentials from the live config file
+    from live_runner import _config_file
+    cfg_path = _config_file(user_id)
+    ft_user = "btcstation"
+    ft_pass = ""
+    if cfg_path.exists():
+        try:
+            cfg = _json.loads(cfg_path.read_text())
+            ft_pass = cfg.get("api_server", {}).get("password", "")
+        except Exception:
+            pass
+
+    base = f"http://127.0.0.1:{port}/api/v1"
+    auth = (ft_user, ft_pass)
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        try:
+            profit_r, status_r, trades_r = await asyncio.gather(
+                client.get(f"{base}/profit",     auth=auth),
+                client.get(f"{base}/status",     auth=auth),
+                client.get(f"{base}/trades",     auth=auth),
+                return_exceptions=True,
+            )
+        except Exception as e:
+            raise HTTPException(502, f"无法连接 Freqtrade 内部 API: {e}")
+
+    def _safe_json(resp):
+        if isinstance(resp, Exception):
+            return None
+        if not isinstance(resp, httpx.Response):
+            return None
+        try:
+            return resp.json() if resp.status_code == 200 else None
+        except Exception:
+            return None
+
+    profit  = _safe_json(profit_r)
+    bot_st  = _safe_json(status_r)
+    trades  = _safe_json(trades_r)
+
+    # Normalise open trades list
+    open_trades: list = []
+    if isinstance(trades, list):
+        open_trades = trades
+    elif isinstance(trades, dict):
+        open_trades = trades.get("trades", [])
+
+    return {
+        "running": True,
+        "dry_run": st.get("dry_run", True),
+        "strategy_class": st.get("strategy_class"),
+        "timeframe": st.get("timeframe"),
+        "stake_amount": st.get("stake_amount"),
+        "profit": profit,
+        "open_trades": open_trades,
+        "bot_status": bot_st,
+    }
