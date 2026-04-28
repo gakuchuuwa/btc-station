@@ -12,6 +12,7 @@
     "@monaco-editor/react": "^4.7.0",
     "@supabase/ssr": "^0.6.1",
     "@supabase/supabase-js": "^2.104.1",
+    "@types/react-plotly.js": "^2.6.4",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
     "fast-xml-parser": "^4.4.0",
@@ -19,8 +20,10 @@
     "lightweight-charts": "^5.2.0",
     "lucide-react": "^0.469.0",
     "next": "^15.1.0",
+    "plotly.js": "^3.5.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "react-plotly.js": "^2.6.0",
     "tailwind-merge": "^2.5.4",
     "technicalindicators": "^3.1.0"
   },

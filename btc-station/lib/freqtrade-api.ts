@@ -199,6 +199,65 @@ export async function getLiveMetrics() {
   return r.json();
 }
 
+// ── Hyperopt ──────────────────────────────────────────────────────────────────
+
+export interface HyperoptConfig {
+  strategy_id: string;
+  timeframe: string;
+  timerange: string;
+  epochs: number;
+  spaces: string[];
+  loss_function: string;
+  min_trades: number;
+}
+
+export interface EpochRecord {
+  epoch: number;
+  total_epochs: number;
+  profit_pct: number;
+  drawdown_pct: number;
+  trades: number;
+  params?: Record<string, string>;
+}
+
+export interface HyperoptResult {
+  total_epochs: number;
+  best: EpochRecord;
+  epochs: EpochRecord[];
+}
+
+export interface HyperoptTaskStatus {
+  task_id: string;
+  status: "running" | "completed" | "failed";
+  epochs_done: number;
+  epochs_total: number;
+  progress_pct: number;
+  latest_epochs: EpochRecord[];
+  result?: HyperoptResult;
+  error?: string;
+}
+
+export async function startHyperopt(cfg: HyperoptConfig): Promise<{ task_id: string; status: string; epochs_total: number }> {
+  const h = await authHeaders();
+  const r = await fetch(`${BASE}/hyperopt/start`, {
+    method: "POST",
+    headers: h,
+    body: JSON.stringify(cfg),
+  });
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({ detail: r.statusText }));
+    throw new Error(err.detail ?? "提交调参失败");
+  }
+  return r.json();
+}
+
+export async function getHyperoptStatus(taskId: string): Promise<HyperoptTaskStatus> {
+  const h = await authHeaders();
+  const r = await fetch(`${BASE}/hyperopt/${taskId}`, { headers: h });
+  if (!r.ok) throw new Error("获取调参状态失败");
+  return r.json();
+}
+
 export function connectBacktestStream(
   backtestId: string,
   onMessage: (msg: StreamMsg) => void,

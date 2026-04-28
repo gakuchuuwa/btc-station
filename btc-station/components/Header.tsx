@@ -13,6 +13,7 @@ const NAV = [
   { label: '图表', href: '/chart' },
   { label: '策略', href: '/strategies' },
   { label: '回测', href: '/backtest', pro: true },
+  { label: '调参', href: '/hyperopt' },
   { label: '实盘', href: '/live' },
 ]
 

@@ -43,12 +43,16 @@
 
 ## 🧠 阶段 3.3：Hyperopt 高级调参可视化
 
-- `[ ]` **前端可视化面板**
-  - `[ ]` 在策略详情页/回测页新增“智能调参”面板
-  - `[ ]` 引入 React-Plotly 或 ECharts
-- `[ ]` **数据渲染**
-  - `[ ]` 解析 Hyperopt 结果并生成 2D 热力图或散点图
-  - `[ ]` 展示“Top 10 参数组合”表格
+- `[x]` **后端 Hyperopt 引擎 (backend/hyperopt_runner.py)**
+  - `[x]` 新增 `hyperopt_runner.py`，封装 `freqtrade hyperopt` 命令
+  - `[x]` 优先解析 `--export-csv` 产出的 `epochs.csv` 结果，流式提取参数与收益数据
+- `[x]` **后端路由扩展 (api_v31.py)**
+  - `[x]` 新增 `POST /api/hyperopt/start`，校验参数并提交后台任务
+  - `[x]` 新增 `GET /api/hyperopt/{task_id}` 轮询进度与获取绘图数据
+- `[x]` **前端可视化面板 (Next.js)**
+  - `[x]` 独立 /hyperopt 页面，含调参表单 (Loss 函数、Space 多选、Epochs)
+  - `[x]` react-plotly.js scattergl (WebGL) 渲染 2D 散点图，气泡大小=交易数，颜色=回撤，1000+ epoch 不卡
+  - `[x]` Top 10 参数组合表格，一键应用参数；实时进度条；最优参数汇总卡片
 
 ## 🤖 阶段 5：AI 辅助系统 (BYOK 模式)
 
