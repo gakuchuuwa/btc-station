@@ -12,6 +12,7 @@ export function createClient() {
     return {
       auth: {
         getUser: async () => ({ data: { user: null }, error: null }),
+        getSession: async () => ({ data: { session: null }, error: null }),
         signInWithPassword: async () => ({ data: null, error: { message: 'Supabase 尚未配置' } }),
         signInWithOAuth: async () => ({ data: null, error: { message: 'Supabase 尚未配置' } }),
         signUp: async () => ({ data: null, error: { message: 'Supabase 尚未配置' } }),
