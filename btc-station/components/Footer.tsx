@@ -22,7 +22,8 @@ export default function Footer() {
             <ul>
               <li><Link href="/">行情</Link></li>
               <li><Link href="/chart">图表</Link></li>
-              <li><Link href="/strategies">策略</Link></li>
+              <li><Link href="/strategy">策略</Link></li>
+              <li><Link href="/report">报告</Link></li>
             </ul>
           </div>
           <div className="foot-col">

@@ -12,7 +12,8 @@ const NAV = [
   { label: '首页', href: '/' },
   { label: '分析', href: '/analysis' },
   { label: '图表', href: '/chart' },
-  { label: '策略', href: '/strategies' },
+  { label: '策略', href: '/strategy' },
+  { label: '报告', href: '/report' },
 ]
 
 interface TickerInfo {

@@ -1,37 +1,28 @@
-import { XMLParser } from 'fast-xml-parser'
 import type { NewsItem } from '@/types/btc'
 
-const COINDESK_RSS = 'https://www.coindesk.com/arc/outboundfeeds/rss/'
-
-function isBtcRelated(title: string): boolean {
-  const lower = title.toLowerCase()
-  return lower.includes('bitcoin') || lower.includes(' btc')
-}
-
 export async function fetchNews(limit = 8): Promise<NewsItem[]> {
-  const res = await fetch(COINDESK_RSS, {
-    next: { revalidate: 300 },
-    headers: { 'User-Agent': 'BTC-Station/1.0' },
-  })
-  if (!res.ok) throw new Error(`CoinDesk RSS failed: ${res.status}`)
+  try {
+    const res = await fetch(
+      'https://www.binance.com/bapi/composite/v1/public/cms/article/catalog/list/query?catalogId=48&pageNo=1&pageSize=' + limit + '&lang=zh-CN',
+      {
+        next: { revalidate: 300 },
+        headers: { 'User-Agent': 'BTC-Station/1.0' },
+      }
+    )
+    if (!res.ok) throw new Error(`Binance API failed: ${res.status}`)
 
-  const xml = await res.text()
-  const parser = new XMLParser({ ignoreAttributes: false })
-  const parsed = parser.parse(xml)
+    const json = await res.json()
+    const articles = json?.data?.articles ?? []
 
-  const items: Array<{
-    title: string
-    link: string
-    pubDate: string
-  }> = parsed?.rss?.channel?.item ?? []
-
-  return items
-    .filter(item => isBtcRelated(item.title ?? ''))
-    .slice(0, limit)
-    .map(item => ({
+    return articles.map((item: any) => ({
       title: item.title,
-      url: item.link,
-      source: 'CoinDesk',
-      publishedAt: new Date(item.pubDate).toISOString(),
+      url: `https://www.binance.com/zh-CN/support/announcement/${item.code}`,
+      source: 'Binance',
+      // Binance API usually returns publishDate in milliseconds
+      publishedAt: new Date(item.publishDate || Date.now()).toISOString(),
     }))
+  } catch (e) {
+    console.error('Fetch news error:', e)
+    return []
+  }
 }
