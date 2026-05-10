@@ -526,7 +526,7 @@ function ChartPanel({
           shape: m.shape,
           text: m.text ?? '',
         }))
-      markersInstanceRef.current = createSeriesMarkers(candleSeries, lwtMarkers)
+      markersInstanceRef.current = createSeriesMarkers(candleSeries as any, lwtMarkers as any) as any
     }
 
     // MA
@@ -1343,30 +1343,36 @@ export default function ChartPage() {
     const container = mainChartContainerRef.current
     if (!container) return
     try {
-      // lightweight-charts の takeScreenshot を使う
-      const chartDiv = container.querySelector('canvas') as HTMLCanvasElement | null
-      if (!chartDiv) return
+      const canvases = container.querySelectorAll('canvas')
+      if (canvases.length === 0) return
 
+      const rect = container.getBoundingClientRect()
+      const dpr = window.devicePixelRatio || 1
+      
       const offscreen = document.createElement('canvas')
-      offscreen.width = chartDiv.width
-      offscreen.height = chartDiv.height
+      offscreen.width = rect.width * dpr
+      offscreen.height = rect.height * dpr
       const ctx = offscreen.getContext('2d')!
-      ctx.drawImage(chartDiv, 0, 0)
 
-      // 透明背景を暗背景に
-      ctx.globalCompositeOperation = 'destination-over'
+      // 暗背景填充
       ctx.fillStyle = '#0d1117'
       ctx.fillRect(0, 0, offscreen.width, offscreen.height)
-      ctx.globalCompositeOperation = 'source-over'
+
+      // 叠加所有 canvas（包含图表底层、主图、画线层及所有副图）
+      canvases.forEach(canvas => {
+        const cRect = canvas.getBoundingClientRect()
+        const x = (cRect.left - rect.left) * dpr
+        const y = (cRect.top - rect.top) * dpr
+        ctx.drawImage(canvas, x, y, cRect.width * dpr, cRect.height * dpr)
+      })
 
       // 水印
-      const dpr = window.devicePixelRatio || 1
       ctx.font = `${11 * dpr}px sans-serif`
-      ctx.fillStyle = 'rgba(255,255,255,0.2)'
-      ctx.fillText(`BTC Station — ${new Date().toLocaleDateString('zh-CN')}`, 8 * dpr, offscreen.height - 8 * dpr)
+      ctx.fillStyle = 'rgba(255,255,255,0.4)'
+      ctx.fillText(`BTC Station — ${new Date().toLocaleDateString('zh-CN')} ${new Date().toLocaleTimeString('zh-CN')}`, 8 * dpr, offscreen.height - 8 * dpr)
 
       const link = document.createElement('a')
-      link.download = `BTC-USDT-${market === 'swap' ? 'SWAP' : 'SPOT'}_${tf}_${new Date().toISOString().slice(0, 10)}.png`
+      link.download = `BTC-USDT-${market === 'swap' ? 'SWAP' : 'SPOT'}_${tf}_${new Date().toISOString().replace(/[:.]/g, '-')}.png`
       link.href = offscreen.toDataURL('image/png')
       link.click()
     } catch (e) {
@@ -1391,7 +1397,13 @@ export default function ChartPage() {
 
   // ── Strategy selector state ──────────────────────────────────────────────
   const BUILTIN_STRATEGIES = [
+    { id: 'TurtleSslDualStrategy', name: '海龟 6-Pattern 综合策略' },
     { id: 'MaCrossStrategy', name: 'MA 双均线交叉' },
+    { id: 'BollingerBreakoutStrategy', name: '布林带突破' },
+    { id: 'MacdStrategy', name: 'MACD 趋势' },
+    { id: 'RsiStrategy', name: 'RSI 超买超卖' },
+    { id: 'AtrChannelStrategy', name: 'ATR 通道' },
+    { id: 'DcaStrategy', name: 'DCA 定投定抛' },
   ]
   const [activeStrategy, setActiveStrategy] = useState<string | null>(null)
   const [strategyDropdownOpen, setStrategyDropdownOpen] = useState(false)

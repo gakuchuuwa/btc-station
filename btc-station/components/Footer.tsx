@@ -10,7 +10,7 @@ export default function Footer() {
               <div className="brand-icon">₿</div>
               <span className="brand-name" style={{fontSize:14}}>BTC Station</span>
             </div>
-            <p>专注比特币的量化交易工具。实时行情、K线图表、策略回测、参数优化。</p>
+            <p>专注比特币的量化交易工具。实时行情、K线图表。</p>
             <div className="foot-status">
               <span style={{display:'flex',alignItems:'center',gap:6}}><span className="dot-live"></span>系统运行正常</span>
               <span className="text-dim">·</span>
@@ -23,7 +23,6 @@ export default function Footer() {
               <li><Link href="/">行情</Link></li>
               <li><Link href="/chart">图表</Link></li>
               <li><Link href="/strategies">策略</Link></li>
-              <li><Link href="/backtest">回测</Link></li>
             </ul>
           </div>
           <div className="foot-col">
@@ -43,7 +42,7 @@ export default function Footer() {
           <div style={{display:'flex',gap:8,alignItems:'center'}}>
             <span>© 2026 BTC Station</span>
             <span className="text-dim">·</span>
-            <span>v0.2.1 · Phase 2.1</span>
+            <span>v0.2.1</span>
           </div>
         </div>
       </div>

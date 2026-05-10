@@ -101,11 +101,12 @@ curl http://localhost:8000/api/templates
 - 截图导出（PNG + 水印）
 - 每 10 秒自动更新最新 K 线
 
-#### 内置策略（6 个）
+#### 内置策略（7 个）
 通过 `ƒx 策略库` 下拉菜单选择，一键回测：
 
 | 策略 ID                    | 名称           | 分类           |
 | -------------------------- | -------------- | -------------- |
+| `TurtleSslDualStrategy`    | 海龟 6-Pattern | trend          |
 | `MaCrossStrategy`          | MA 双均线交叉   | trend          |
 | `RsiStrategy`              | RSI 超买超卖    | mean-reversion |
 | `MacdStrategy`             | MACD 金叉死叉   | trend          |
@@ -261,6 +262,18 @@ def execute(df, parameters):
 - Next.js rewrite 有 30 秒超时限制，参数优化可能超时返回 500。
 - **正确做法**：前端检测 localhost 环境时直接调 `http://localhost:8000/api/optimize`，绕过代理。
 
+### 🚫 错误 7：轻量图表 (Lightweight-Charts) 截图机制残缺
+- `chart.takeScreenshot()` 只能截取内置图层，会导致用户自己画的趋势线和底部的副图指标无法被保存。
+- **正确做法**：重写 `handleScreenshot` 逻辑。利用 `container.querySelectorAll('canvas')` 遍历 DOM 树中所有的叠加 Canvas 图层，并根据 `getBoundingClientRect()` 获取精确相对坐标，最后创建一个脱机的 `Offscreen Canvas` 将它们完美重叠绘制（Composite）到一起并导出。
+
+### 🚫 错误 8：Strategy 页面只显示纯色折线的隐形回测
+- 原版的 `MiniChart` 组件是一个极简的火花线（Sparkline）原生 Canvas 渲染器，它在底层彻底无视了传给它的 `markers` 和 `strategyLines`。
+- **正确做法**：彻底弃用原生 `ctx.lineTo` 的绘图方法，将 `MiniChart.tsx` 重构为 `lightweight-charts`。将 K 线重写为 `CandlestickSeries`，并利用 `createSeriesMarkers` 接管所有的交易点展示。
+
+### 🚫 错误 9：Next.js 分页请求 OKX 接口引发 HTTP 429 封禁
+- 为了画出长期的 K 线，如果使用简单的 `while` 循环同步拉取 `/api/chart/klines`，瞬间并发的请求会直接被交易所的 WAF 判定为 DDoS 从而封禁 IP。
+- **正确做法**：在服务端路由做 TTL 缓存池，并在前端 `loadAllCandles` 抓取历史数据时，如果捕获到 503 或 429 状态码，系统必须**静默捕获 (try-catch)** 并且立刻优雅地停止向左翻页加载，保留已获取的数据。
+
 ---
 
 ## 验证记录
@@ -268,6 +281,10 @@ def execute(df, parameters):
 **2026-05-09：**
 MA双均线 · 4h · 16500根K线 · $10,000 初始资金
 → 净收益 +496.97% | 回撤 68.74% | 胜率 37.2% | 192笔 | Sharpe 0.78 | Sortino 1.12 | 盈利因子 1.24
+
+**2026-05-10 (最终验收)：**
+平台核心五大页面（首页、分析、图表、策略、报告）连贯跑通。
+`TurtleSslDualStrategy` (海龟6-Pattern综合策略) 在 4h 周期无缝渲染回测标记，网格调参数据成功桥接至报告页稳健性评估系统。项目达到生产级状态。
 
 ---
 

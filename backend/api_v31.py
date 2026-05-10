@@ -371,6 +371,7 @@ TEMPLATES = [
     {"id": "BollingerBreakoutStrategy","name": "布林带突破",        "category": "breakout"},
     {"id": "DcaStrategy",             "name": "DCA 定投补仓",      "category": "dca"},
     {"id": "AtrChannelStrategy",      "name": "ATR 通道动态止损",  "category": "trend"},
+    {"id": "TurtleSslDualStrategy",   "name": "海龟SSL双系统6形态","category": "trend"},
 ]
 
 

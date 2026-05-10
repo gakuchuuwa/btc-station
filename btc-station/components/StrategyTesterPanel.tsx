@@ -44,6 +44,23 @@ export interface BacktestSummary {
   initial_capital?: number;
 }
 
+export interface EpochRecord {
+  epoch: number;
+  total_epochs: number;
+  profit_pct: number;
+  drawdown_pct: number;
+  trades: number;
+  win_rate_pct: number;
+  params: Record<string, string>;
+}
+
+export interface ParamRow {
+  name: string;
+  start: number;
+  stop: number;
+  step: number;
+}
+
 interface EquityPoint {
   time: number;   // unix seconds
   equity: number;
@@ -69,6 +86,13 @@ interface Props {
   running?: boolean;
   /** Called when user clicks the settings gear */
   onOpenSettings?: () => void;
+  activeStrategyId?: string;
+  onOptimizeStart?: (paramRows: ParamRow[], timerange: string) => void;
+  optimizeStatus?: 'idle' | 'running' | 'completed' | 'failed';
+  optimizeEpochs?: EpochRecord[];
+  optimizeError?: string;
+  onOptimizeCsvDownload?: () => void;
+  onApplyBestParams?: (params: Record<string, string>) => void;
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────

@@ -17,6 +17,7 @@ export default function HomePage() {
   const [news, setNews] = useState<NewsItem[]>([])
   const [loading, setLoading] = useState(true)
   const [secondsAgo, setSecondsAgo] = useState(0)
+  const [tf, setTf] = useState('7D')
 
   const fetchSummary = useCallback(async () => {
     try {
@@ -27,10 +28,10 @@ export default function HomePage() {
 
   const fetchKlines = useCallback(async () => {
     try {
-      const res = await fetch('/api/btc/klines')
+      const res = await fetch(`/api/btc/klines?tf=${tf}`)
       if (res.ok) setKlines(await res.json())
     } catch {/* silent */}
-  }, [])
+  }, [tf])
 
   const fetchNews = useCallback(async () => {
     try {
@@ -85,7 +86,7 @@ export default function HomePage() {
         </div>
       </div>
 
-      <PriceCard summary={summary} klines={klines} isUp={isUp} />
+      <PriceCard summary={summary} klines={klines} isUp={isUp} tf={tf} onTfChange={setTf} />
 
       <div className="sec-grid">
         <NewsFeed news={news} />

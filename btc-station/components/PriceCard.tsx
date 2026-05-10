@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { formatUsd, formatPercent, formatVolume } from '@/lib/format'
 import type { BtcSummary, KlineBar } from '@/types/btc'
@@ -9,9 +9,23 @@ interface Props {
   summary: BtcSummary
   klines: KlineBar[]
   isUp: boolean
+  tf: string
+  onTfChange: (tf: string) => void
 }
 
-export default function PriceCard({ summary, klines, isUp }: Props) {
+export default function PriceCard({ summary, klines, isUp, tf, onTfChange }: Props) {
+  const [cgData, setCgData] = useState<{ ath: number; dominance: number } | null>(null)
+
+  useEffect(() => {
+    fetch('https://api.coingecko.com/api/v3/global')
+      .then(r => r.json())
+      .then(d => setCgData(p => ({ ...p, dominance: d?.data?.market_cap_percentage?.btc || 0 } as any)))
+      .catch(() => {})
+    fetch('https://api.coingecko.com/api/v3/coins/bitcoin?localization=false&tickers=false&market_data=true&community_data=false&developer_data=false&sparkline=false')
+      .then(r => r.json())
+      .then(d => setCgData(p => ({ ...p, ath: d?.market_data?.ath?.usd || 0 } as any)))
+      .catch(() => {})
+  }, [])
   // 价格拆成整数部分和小数部分，保持设计稿的 .decimals 样式
   const priceFormatted = summary.price > 0
     ? summary.price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -29,6 +43,27 @@ export default function PriceCard({ summary, klines, isUp }: Props) {
   const change7d = klines.length >= 2
     ? (klines[klines.length - 1].close - klines[0].close) / klines[0].close * 100
     : 0
+
+  // 计算波动率和夏普
+  let volStr = '—'
+  let sharpeStr = '—'
+  if (klines.length > 2) {
+    const returns = []
+    for (let i = 1; i < klines.length; i++) {
+      returns.push((klines[i].close - klines[i - 1].close) / klines[i - 1].close)
+    }
+    const mean = returns.reduce((a, b) => a + b, 0) / returns.length
+    const variance = returns.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / returns.length
+    const stdDev = Math.sqrt(variance)
+    
+    const periodsPerYear = tf === '1D' ? 365 * 96 : tf === '3D' ? 365 * 24 : tf === '7D' ? 365 * 6 : 365
+    const annVol = stdDev * Math.sqrt(periodsPerYear)
+    const annReturn = mean * periodsPerYear
+    const sharpe = annVol > 0 ? (annReturn - 0.04) / annVol : 0
+    
+    volStr = (annVol * 100).toFixed(2) + '%'
+    sharpeStr = sharpe.toFixed(2)
+  }
 
   // X轴日期标签
   const xLabels = klines.length >= 7
@@ -72,21 +107,20 @@ export default function PriceCard({ summary, klines, isUp }: Props) {
           <div className="stat"><div className="section-label">24h 成交额</div><div className="stat-val num">{summary.volume24h > 0 ? formatVolume(summary.volume24h) : '—'}</div></div>
           <div className="stat"><div className="section-label">市值</div><div className="stat-val num">{summary.marketCap > 0 ? formatVolume(summary.marketCap) : '—'}</div></div>
           <div className="stat"><div className="section-label">开盘</div><div className="stat-val num dim">{summary.price > 0 && summary.change24h !== 0 ? (summary.price / (1 + summary.change24h / 100)).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—'}</div></div>
-          <div className="stat"><div className="section-label">流通</div><div className="stat-val num dim">19.82M</div></div>
-          <div className="stat"><div className="section-label">占比</div><div className="stat-val num dim">56.2%</div></div>
-          <div className="stat"><div className="section-label">ATH</div><div className="stat-val num dim">108,135</div></div>
+          <div className="stat"><div className="section-label">流通</div><div className="stat-val num dim">{summary.price > 0 && summary.marketCap > 0 ? (summary.marketCap / summary.price / 1_000_000).toFixed(2) + 'M' : '—'}</div></div>
+          <div className="stat"><div className="section-label">占比</div><div className="stat-val num dim">{cgData?.dominance ? cgData.dominance.toFixed(1) + '%' : '—'}</div></div>
+          <div className="stat"><div className="section-label">ATH</div><div className="stat-val num dim">{cgData?.ath ? cgData.ath.toLocaleString('en-US', { maximumFractionDigits: 0 }) : '—'}</div></div>
         </div>
       </div>
 
       {/* Chart toolbar */}
       <div className="chart-toolbar">
         <div className="tf-group">
-          <button className="tf-btn">1D</button>
-          <button className="tf-btn">3D</button>
-          <button className="tf-btn active">7D</button>
-          <button className="tf-btn">1M</button>
-          <button className="tf-btn">3M</button>
-          <button className="tf-btn">1Y</button>
+          {['1D', '3D', '7D', '1M', '3M', '1Y'].map(t => (
+            <button key={t} className={`tf-btn ${tf === t ? 'active' : ''}`} onClick={() => onTfChange(t)}>
+              {t}
+            </button>
+          ))}
         </div>
         <div className="chart-tools">
           <button><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 9h6v6H9z"/></svg>指标</button>
@@ -110,11 +144,11 @@ export default function PriceCard({ summary, klines, isUp }: Props) {
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#26A69A" strokeWidth="2"><path d="M3 3v18h18"/><path d="M7 14l4-4 4 4 6-6"/></svg>
             <span>7日 <span className={`${change7d >= 0 ? 'up' : 'down'} num`}>{formatPercent(change7d)}</span></span>
           </span>
-          <span className="m"><span>波动率</span><span className="m-val num">—</span></span>
-          <span className="m"><span>夏普率 (30天)</span><span className="m-val num">—</span></span>
+          <span className="m"><span>波动率</span><span className="m-val num">{volStr}</span></span>
+          <span className="m"><span>夏普率</span><span className="m-val num">{sharpeStr}</span></span>
         </div>
         <div className="cta-actions">
-          <Link href="/strategies" className="btn btn-ghost btn-lg">
+          <Link href="/strategy" className="btn btn-ghost btn-lg">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="12 2 15 9 22 9 16.5 13.5 18 21 12 17 6 21 7.5 13.5 2 9 9 9"/></svg>
             运行策略
           </Link>

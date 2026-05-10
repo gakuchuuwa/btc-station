@@ -11,7 +11,11 @@
       "Bash(ls *.txt)",
       "Bash(git add *)",
       "Bash(git commit -m 'chore: 删除历史规划文档 *)",
-      "Bash(git push *)"
+      "Bash(git push *)",
+      "Bash(Get-ChildItem -Path . -Recurse -Depth 3)",
+      "Bash(Select-Object -Property FullName, PSIsContainer)",
+      "Bash(Format-Table -AutoSize)",
+      "Bash(grep -E \"\\\\.\\(py|json|txt\\)$\")"
     ]
   }
 }

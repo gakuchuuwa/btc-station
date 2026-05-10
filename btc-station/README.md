@@ -1,21 +1,31 @@
-# BTC Station — Phase 1
+# BTC Station
 
 专注比特币的量化交易工作台。
+
+## 页面结构
+
+| 路由 | 页面 | 说明 |
+|---|---|---|
+| `/` | 首页 | 实时价格、7日迷你图、新闻资讯 |
+| `/analysis` | 分析页 | 技术指标分析 |
+| `/chart` | 图表页 | 多周期K线、技术指标、策略回测 |
+| `/strategies` | 策略页 | 策略列表与管理 |
+| `/report` | 报告页 | 稳健性分析报告 |
 
 ## 快速启动
 
 ```bash
-# 进入项目目录
+# 前端
 cd btc-station
-
-# 安装依赖
 npm install
-
-# 启动开发服务器
 npm run dev
-```
+# 浏览器访问 http://localhost:3000
 
-浏览器访问 [http://localhost:3000](http://localhost:3000)
+# 后端
+cd backend
+.\venv\Scripts\python.exe main.py
+# API 服务 http://localhost:8000
+```
 
 ## 数据源
 
@@ -25,19 +35,10 @@ npm run dev
 
 ## 可选配置
 
-如需使用 CryptoPanic 新闻备用源，创建 `.env.local`：
+创建 `btc-station/.env.local`：
 
 ```
 CRYPTOPANIC_TOKEN=your_token_here
+NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
 ```
-
-## Phase 路线图
-
-| Phase | 内容 | 状态 |
-|---|---|---|
-| 1 | 主页：实时价格 + 7日图 + 新闻 | ✅ 当前 |
-| 1.5 | 用户登录注册（NextAuth.js + PostgreSQL）| 规划中 |
-| 2 | 完整图表页（多周期 K 线 + 技术指标）| 规划中 |
-| 3 | 策略系统 + 回测引擎（Python FastAPI）| 规划中 |
-| 4 | AI 分析（Claude/GPT 接入）| 规划中 |
-| 5 | OKX 交易所对接（模拟盘 → 实盘）| 规划中 |

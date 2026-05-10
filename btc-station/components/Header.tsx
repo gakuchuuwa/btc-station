@@ -10,11 +10,9 @@ import { formatUsd, formatPercent } from '@/lib/format'
 
 const NAV = [
   { label: '首页', href: '/' },
+  { label: '分析', href: '/analysis' },
   { label: '图表', href: '/chart' },
   { label: '策略', href: '/strategies' },
-  { label: '回测', href: '/backtest', pro: true },
-  { label: '调参', href: '/hyperopt' },
-  { label: '实盘', href: '/live' },
 ]
 
 interface TickerInfo {
@@ -105,12 +103,11 @@ export default function Header() {
             <span className="beta">BETA</span>
           </Link>
           <nav className="nav">
-            {NAV.map(({ label, href, pro }) => {
+            {NAV.map(({ label, href }) => {
               const active = href === '/' ? pathname === '/' : pathname.startsWith(href)
               return (
                 <Link key={href} href={href} className={active ? 'active' : ''}>
                   {label}
-                  {pro && <span className="chip chip-pro">Pro</span>}
                 </Link>
               )
             })}

@@ -1,64 +1,110 @@
 'use client'
 
 import { useEffect, useRef } from 'react'
-import type { KlineBar } from '@/types/btc'
+import { createChart, CandlestickSeries, LineSeries, Time, createSeriesMarkers } from 'lightweight-charts'
 
-interface Props {
-  data: KlineBar[]
-  isUp: boolean
+export interface Candle {
+  time: number
+  open: number
+  high: number
+  low: number
+  close: number
+  volume: number
 }
 
-export default function MiniChart({ data, isUp }: Props) {
-  const canvasRef = useRef<HTMLCanvasElement>(null)
+export interface ChartMarker {
+  time: number
+  position: 'aboveBar' | 'belowBar' | 'inBar'
+  color: string
+  shape: string
+  text?: string
+}
+
+export interface StrategyLine {
+  label: string
+  color: string
+  points: { time: number; value: number }[]
+}
+
+interface Props {
+  candles?: Candle[]
+  markers?: ChartMarker[]
+  strategyLines?: StrategyLine[]
+  height?: number
+}
+
+export default function MiniChart({ candles, markers, strategyLines, height = 340 }: Props) {
+  const containerRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    const canvas = canvasRef.current
-    if (!canvas || data.length < 2) return
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
+    if (!containerRef.current || !candles || candles.length === 0) return
 
-    const dpr = window.devicePixelRatio || 1
-    const w = canvas.offsetWidth
-    const h = canvas.offsetHeight
-    canvas.width = w * dpr
-    canvas.height = h * dpr
-    ctx.scale(dpr, dpr)
+    const container = containerRef.current
+    const chart = createChart(container, {
+      layout: { background: { color: 'transparent' }, textColor: '#787B86' },
+      grid: { vertLines: { color: 'rgba(255,255,255,0.04)' }, horzLines: { color: 'rgba(255,255,255,0.04)' } },
+      rightPriceScale: { borderColor: '#222A35' },
+      timeScale: { borderColor: '#222A35', timeVisible: true },
+      width: container.clientWidth,
+      height,
+    })
 
-    const closes = data.map(d => d.close)
-    const min = Math.min(...closes)
-    const max = Math.max(...closes)
-    const range = max - min || 1
+    const candleSeries = chart.addSeries(CandlestickSeries, {
+      upColor: '#26A69A', downColor: '#EF5350',
+      borderUpColor: '#26A69A', borderDownColor: '#EF5350',
+      wickUpColor: '#26A69A', wickDownColor: '#EF5350',
+    })
+    
+    // Sort and dedup candles
+    const sorted = [...candles]
+      .sort((a, b) => a.time - b.time)
+      .filter((c, i, arr) => i === 0 || c.time !== arr[i - 1].time)
 
-    const px = (i: number) => (i / (closes.length - 1)) * w
-    const py = (v: number) => h - ((v - min) / range) * (h * 0.85)
+    candleSeries.setData(sorted.map(c => ({ time: c.time as Time, open: c.open, high: c.high, low: c.low, close: c.close })))
 
-    const color = isUp ? '#26A17B' : '#E84C3D'
-    const fillColor = isUp ? 'rgba(38, 161, 123, 0.12)' : 'rgba(232, 76, 61, 0.12)'
+    // Markers
+    if (markers && markers.length > 0) {
+      const validTimes = new Set(sorted.map(c => c.time))
+      const lwtMarkers = markers
+        .filter(m => validTimes.has(m.time))
+        .sort((a, b) => a.time - b.time)
+        .map(m => ({
+          time: m.time as Time,
+          position: m.position,
+          color: m.color,
+          shape: m.shape,
+          text: m.text ?? '',
+        }))
+      try {
+        // v5 syntax
+        ;(createSeriesMarkers as any)(candleSeries, lwtMarkers)
+      } catch {
+        // fallback
+      }
+    }
 
-    // Area fill
-    ctx.beginPath()
-    ctx.moveTo(px(0), h)
-    ctx.lineTo(px(0), py(closes[0]))
-    closes.forEach((v, i) => ctx.lineTo(px(i), py(v)))
-    ctx.lineTo(px(closes.length - 1), h)
-    ctx.closePath()
-    ctx.fillStyle = fillColor
-    ctx.fill()
+    // Strategy Lines (Indicators)
+    if (strategyLines) {
+      strategyLines.forEach(line => {
+        const s = chart.addSeries(LineSeries, { color: line.color, lineWidth: 2, priceLineVisible: false })
+        const validPoints = line.points
+          .filter(p => !isNaN(p.value) && p.value !== null)
+          .sort((a, b) => a.time - b.time)
+          .filter((p, i, arr) => i === 0 || p.time !== arr[i - 1].time)
+        s.setData(validPoints.map(p => ({ time: p.time as Time, value: p.value })))
+      })
+    }
 
-    // Line
-    ctx.beginPath()
-    ctx.moveTo(px(0), py(closes[0]))
-    closes.forEach((v, i) => ctx.lineTo(px(i), py(v)))
-    ctx.strokeStyle = color
-    ctx.lineWidth = 1.5
-    ctx.lineJoin = 'round'
-    ctx.stroke()
-  }, [data, isUp])
+    chart.timeScale().fitContent()
 
-  return (
-    <canvas
-      ref={canvasRef}
-      style={{ width: '100%', height: '100%', display: 'block' }}
-    />
-  )
+    const handleResize = () => chart.applyOptions({ width: container.clientWidth })
+    window.addEventListener('resize', handleResize)
+
+    return () => {
+      window.removeEventListener('resize', handleResize)
+      chart.remove()
+    }
+  }, [candles, markers, strategyLines, height])
+
+  return <div ref={containerRef} style={{ width: '100%', height: height ?? '100%', display: 'block' }} />
 }

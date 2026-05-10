@@ -74,7 +74,7 @@ export default function HyperoptChart({ epochs, bestEpoch }: Props) {
   // Best epoch highlight
   const bestTraces: Plotly.Data[] = bestEpoch ? [{
     type: "scattergl" as const,
-    mode: "markers+text",
+    mode: "text+markers",
     x: [bestEpoch.epoch],
     y: [bestEpoch.profit_pct],
     text: ["BEST"],
