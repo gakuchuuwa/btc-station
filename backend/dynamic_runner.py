@@ -9,7 +9,13 @@ def _clean_float(val):
         return 0.0
     return float(val)
 
-def run_dynamic_code(code_string: str, df, parameters: dict):
+_TF_TO_FREQ = {
+    '1m': '1min', '5m': '5min', '15m': '15min', '30m': '30min',
+    '1h': '1h', '2h': '2h', '4h': '4h', '6h': '6h', '12h': '12h',
+    '1d': '1D', '1w': '1W',
+}
+
+def run_dynamic_code(code_string: str, df, parameters: dict, timeframe: str = '4h'):
     """
     Executes a user-provided python strategy string dynamically.
     The string MUST contain a function named 'execute(df, parameters)'.
@@ -31,6 +37,9 @@ def run_dynamic_code(code_string: str, df, parameters: dict):
         if not hasattr(dynamic_module, 'execute'):
             raise ValueError("Your code must contain a function named 'execute(df, parameters)'.")
             
+        if 'timestamp' in df.columns:
+            df = df.set_index('timestamp')
+            
         result = dynamic_module.execute(df, parameters)
         
         # Support tuple return: (portfolio, indicators_dict)
@@ -40,6 +49,12 @@ def run_dynamic_code(code_string: str, df, parameters: dict):
             portfolio, raw_indicators = result, {}
 
         # --- Format portfolio metrics ---
+        # 先把 freq 注入 portfolio wrapper，让 Sharpe/Sortino/Calmar 可以正确计算
+        freq = _TF_TO_FREQ.get(timeframe, '4h')
+        try:
+            portfolio = portfolio.replace(wrapper=portfolio.wrapper.replace(freq=freq))
+        except Exception:
+            pass
         stats = portfolio.stats()
         trades_df = portfolio.trades.records_readable
         
@@ -72,15 +87,45 @@ def run_dynamic_code(code_string: str, df, parameters: dict):
                         continue
                 indicators_out[name] = sorted(points, key=lambda x: x["time"])
 
+        def _stat_f(key):
+            v = stats.get(key)
+            if v is None: return None
+            try:
+                f = float(v)
+                return None if (math.isnan(f) or math.isinf(f)) else round(f, 4)
+            except Exception:
+                return None
+
+        # --- Format Equity Curve ---
+        equity_points = []
+        try:
+            equity_series = portfolio.value()
+            for ts, val in equity_series.items():
+                if pd.isna(val): continue
+                if hasattr(ts, 'timestamp'):
+                    t = int(ts.timestamp())
+                else:
+                    t = int(pd.Timestamp(str(ts)).timestamp())
+                equity_points.append({"time": t, "equity": round(float(val), 2)})
+        except Exception:
+            pass
+
         results = {
             "metrics": {
-                "total_return_pct": _clean_float(stats.get("Total Return [%]", 0.0)),
-                "win_rate_pct": _clean_float(stats.get("Win Rate [%]", 0.0)),
-                "max_drawdown_pct": _clean_float(stats.get("Max Drawdown [%]", 0.0)),
-                "total_trades": int(stats.get("Total Trades", 0))
+                "total_return_pct":  _clean_float(stats.get("Total Return [%]", 0.0)),
+                "win_rate_pct":      _clean_float(stats.get("Win Rate [%]", 0.0)),
+                "max_drawdown_pct":  _clean_float(stats.get("Max Drawdown [%]", 0.0)),
+                "total_trades":      int(stats.get("Total Trades", 0)),
+                "sharpe":            _stat_f("Sharpe Ratio"),
+                "sortino":           _stat_f("Sortino Ratio"),
+                "calmar":            _stat_f("Calmar Ratio"),
+                "profit_factor":     _stat_f("Profit Factor"),
+                "avg_win_pct":       _stat_f("Avg Winning Trade [%]"),
+                "avg_loss_pct":      _stat_f("Avg Losing Trade [%]"),
             },
             "trades": trades_list,
             "indicators": indicators_out,
+            "equity": equity_points,
         }
         return results, None
     except Exception as e:

@@ -9,6 +9,8 @@ backend/data/*.csv
 # === Node.js ===
 frontend/node_modules/
 frontend/dist/
+btc-station/node_modules/
+btc-station/.next/
 
 # === OS / Editor ===
 .DS_Store
@@ -20,4 +22,8 @@ Thumbs.db
 
 # === Sensitive ===
 *.env
+*.env.local
+*.env.production
+*.env.development
 !.env.example
+!.env.local.example

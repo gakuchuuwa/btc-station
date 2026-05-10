@@ -361,10 +361,126 @@ footer{
 .foot-bottom strong{color:var(--text-mute);font-weight:500;}
 
 /* Responsive */
+@media (max-width: 1100px){
+  .sec-grid{grid-template-columns:1fr;}
+}
 @media (max-width: 900px){
   .hero-top{grid-template-columns:1fr;}
   .hero-stats{padding-left:0;border-left:none;padding-top:16px;border-top:1px solid var(--border);grid-template-columns:repeat(2,1fr);}
-  .sec-grid{grid-template-columns:1fr;}
   .foot-grid{grid-template-columns:1fr 1fr;}
   .nav,.search-box{display:none;}
 }
+
+/* ============ 通用工具类 ============ */
+
+/* Flex */
+.flex-center{display:flex;align-items:center;}
+.flex-between{display:flex;align-items:center;justify-content:space-between;}
+.flex-col{display:flex;flex-direction:column;}
+
+/* 文字层级 */
+.text-11{font-size:11px;}
+.text-12{font-size:12px;}
+.text-13{font-size:13px;}
+
+/* 间距 */
+.mb-4{margin-bottom:4px;}
+.mb-8{margin-bottom:8px;}
+.mb-12{margin-bottom:12px;}
+.mb-16{margin-bottom:16px;}
+.mb-24{margin-bottom:24px;}
+.mb-32{margin-bottom:32px;}
+.mb-40{margin-bottom:40px;}
+.mt-4{margin-top:4px;}
+.mt-8{margin-top:8px;}
+.mt-12{margin-top:12px;}
+.mt-16{margin-top:16px;}
+
+/* Section 标题 */
+.section-title{font-size:14px;font-weight:700;color:var(--text);}
+.section-subtitle{font-size:11px;color:var(--text-mute);margin-top:4px;}
+
+/* 徽章 */
+.badge{font-size:10px;padding:2px 8px;border-radius:4px;}
+.badge-up{background:rgba(38,166,154,0.1);color:var(--up);}
+.badge-down{color:var(--down);}
+.badge-gold{background:var(--gold-soft);color:var(--gold);}
+.chip-gold{background:var(--gold-soft);color:var(--gold);border:1px solid rgba(229,167,74,0.25);}
+
+/* 折叠按钮 */
+.collapse-btn{
+  width:100%;padding:14px 20px;border-radius:8px;
+  display:flex;align-items:center;justify-content:space-between;
+  cursor:pointer;background:var(--card);border:1px solid var(--border);
+  text-align:left;transition:background .15s;
+}
+.collapse-btn:hover{background:var(--card-hi);}
+.collapse-chevron{
+  font-size:12px;color:var(--text-mute);
+  transition:transform .2s;
+}
+.collapse-chevron.open{transform:rotate(180deg);}
+
+/* 大数字 */
+.stat-big{font-size:32px;font-weight:800;line-height:1;font-variant-numeric:tabular-nums;}
+
+/* Loading spinner */
+@keyframes spin{to{transform:rotate(360deg);}}
+.spinner{
+  display:inline-block;width:10px;height:10px;border-radius:50%;
+  border:2px solid rgba(255,255,255,0.25);border-top-color:#fff;
+  animation:spin .7s linear infinite;
+  vertical-align:middle;
+}
+
+/* PageLoader 全屏居中 */
+.page-loader{
+  display:flex;align-items:center;justify-content:center;
+  min-height:60vh;
+}
+.page-loader-inner{
+  text-align:center;
+  display:flex;flex-direction:column;align-items:center;gap:12px;
+}
+
+/* 分析页结论区 */
+.conclusion-hero{
+  text-align:center;padding:40px 24px 32px;border-radius:12px;
+  margin-bottom:24px;
+  background:linear-gradient(135deg,rgba(38,166,154,0.08) 0%,rgba(41,98,255,0.06) 100%);
+  border:1px solid var(--border);
+}
+.conclusion-title{
+  font-size:32px;font-weight:800;color:var(--text);line-height:1.3;margin-bottom:8px;
+}
+.vs-grid{
+  display:grid;grid-template-columns:1fr auto 1fr;
+  gap:16px;max-width:560px;margin:0 auto;align-items:center;
+}
+.vs-card-down{padding:20px;border-radius:10px;background:var(--down-soft);border:2px solid var(--down);}
+.vs-card-up  {padding:20px;border-radius:10px;background:var(--up-soft);  border:2px solid var(--up);}
+
+/* 分析页滑块行 */
+.slider-row{display:flex;align-items:center;gap:12px;}
+.slider-label{font-size:11px;color:var(--text-mute);min-width:130px;flex-shrink:0;}
+
+/* 策略页内容高度 */
+:root{
+  --header-h:80px;
+  --page-content-h:calc(100vh - var(--header-h) - 48px);
+}
+
+/* Stats bar 末尾无右边框 */
+.stats-bar > *:last-child{border-right:none !important;}
+
+/* 步骤引导 */
+.step-flow{display:flex;justify-content:center;align-items:center;gap:0;margin-bottom:32px;}
+.step-node{text-align:center;padding:0 16px;}
+.step-circle{
+  width:28px;height:28px;border-radius:50%;
+  background:var(--accent-soft);border:1px solid var(--accent);
+  color:var(--accent);font-size:12px;font-weight:700;
+  display:flex;align-items:center;justify-content:center;
+  margin:0 auto 8px;
+}
+.step-line{width:40px;height:1px;background:var(--border);flex-shrink:0;}

@@ -22,6 +22,9 @@ from contextlib import asynccontextmanager
 # Phase 3.1 routes
 from api_v31 import router as router_v31
 
+# Phase 4 VectorBT Optimizer
+from optimizer.vbt_optimizer import router as vbt_optimizer_router
+
 feeder = DataFeeder('okx')
 
 @asynccontextmanager
@@ -47,6 +50,9 @@ app.add_middleware(
 
 # Phase 3.1 — strategy editor + Freqtrade backtest
 app.include_router(router_v31, prefix="/api")
+
+# Phase 4 — VectorBT Optimizer
+app.include_router(vbt_optimizer_router, prefix="/api/vbt")
 
 class StrategyRequest(BaseModel):
     code: str
@@ -221,33 +227,39 @@ def export_optimization_csv():
     )
 
 
-@app.post("/api/strategy/save")
-def save_strategy(request: StrategyRequest):
-    """
-    Saves the user-provided strategy code to disk so the live daemon can run it.
-    """
-    try:
-        with open("custom_strategy.py", "w", encoding="utf-8") as f:
-            f.write(request.code)
-        return {"status": "success", "message": "Strategy saved successfully as custom_strategy.py"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+# In-memory cache for one-shot CSV downloads from /api/backtest/dynamic
+_dynamic_csv_cache: Dict[str, str] = {}
 
 @app.post("/api/backtest/dynamic")
 def run_dynamic_strategy(request: StrategyRequest):
     """
     Endpoint to run user-provided strategy code.
+    无需 Supabase / 无需登录 / 无需保存 —— 直接拿代码跑出结果。
     """
     try:
-        # SaaS mode: Read purely from cache for multi-user safety
         df = feeder.get_local_data(request.symbol, request.timeframe)
         if df.empty:
             raise HTTPException(status_code=503, detail="Data is syncing in the background. Please try again in 10 seconds.")
-            
-        portfolio_data, error_msg = run_dynamic_code(request.code, df, request.parameters)
+
+        portfolio_data, error_msg = run_dynamic_code(request.code, df, request.parameters, timeframe=request.timeframe)
         if error_msg:
             raise HTTPException(status_code=400, detail=error_msg)
-            
+
+        # 生成 quant-lab.org 兼容 CSV 并存到内存，前端凭 token 下载
+        import uuid as _uuid
+        from csv_converter import vectorbt_to_tv_csv
+        csv_token = ""
+        try:
+            csv_text = vectorbt_to_tv_csv(portfolio_data, request.parameters or {}, 10000.0)
+            csv_token = _uuid.uuid4().hex
+            _dynamic_csv_cache[csv_token] = csv_text
+            # 简单 LRU：超过 50 条删最早的
+            if len(_dynamic_csv_cache) > 50:
+                first_key = next(iter(_dynamic_csv_cache))
+                _dynamic_csv_cache.pop(first_key, None)
+        except Exception:
+            pass
+
         return {
             "symbol": request.symbol,
             "timeframe": request.timeframe,
@@ -255,11 +267,26 @@ def run_dynamic_strategy(request: StrategyRequest):
             "metrics": portfolio_data["metrics"],
             "trades": portfolio_data["trades"],
             "indicators": portfolio_data.get("indicators", {}),
+            "equity": portfolio_data.get("equity", []),
+            "csv_token": csv_token,
         }
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/backtest/dynamic/csv/{token}")
+def download_dynamic_csv(token: str):
+    """下载上一次 /api/backtest/dynamic 生成的 191 列 TV 格式 CSV。"""
+    csv_text = _dynamic_csv_cache.get(token)
+    if not csv_text:
+        raise HTTPException(status_code=404, detail="CSV not found or expired")
+    return StreamingResponse(
+        iter([csv_text]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="backtest_{token[:8]}.csv"'}
+    )
 
 @app.get("/api/data")
 def get_k_lines(symbol: str = 'BTC/USDT', timeframe: str = '1h', limit: int = 10000):
@@ -318,4 +345,4 @@ def run_strategy(symbol: str = 'BTC/USDT', timeframe: str = '1h', s1_period: int
 if __name__ == '__main__':
     import uvicorn
     # Run the server on port 8000
-    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
+    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=False)

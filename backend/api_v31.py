@@ -9,7 +9,9 @@ import uuid
 import asyncio
 import logging
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Optional, Dict
+from dynamic_runner import run_dynamic_code
+from data_feeder import DataFeeder
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, Depends
 from fastapi.responses import Response, StreamingResponse
@@ -77,11 +79,17 @@ def _count_monthly_backtests(user_id: str) -> int:
 
 import base64 as _b64
 
+DEV_MODE = os.environ.get("DEV_MODE", "false").lower() == "true"
+DEV_USER_ID = "dev-user-local"
+
 def _get_user_id(authorization: str | None = None) -> str:
     """
     Extract user_id from Supabase access token.
     Tries fast base64 JWT decode first; falls back to Supabase Auth API.
     """
+    if DEV_MODE:
+        return DEV_USER_ID
+
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="未登录")
     token = authorization.split(" ", 1)[1]
@@ -130,11 +138,15 @@ class StrategyCreate(BaseModel):
     name: str
     description: str = ""
     code: str
+    strategy_type: str = "vectorbt"  # "freqtrade" or "vectorbt"
 
     @field_validator("code")
     @classmethod
-    def must_have_istrategy(cls, v):
-        _extract_class_name(v)
+    def valid_strategy_code(cls, v):
+        has_execute    = bool(re.search(r"def\s+execute\s*\(\s*df", v))
+        has_istrategy  = bool(re.search(r"class\s+\w+\s*\(.*IStrategy.*\)", v))
+        if not has_execute and not has_istrategy:
+            raise ValueError("代码必须包含 execute(df, parameters) 函数（VectorBT格式）或 IStrategy 子类（Freqtrade格式）")
         return v
 
 
@@ -146,6 +158,7 @@ class BacktestSubmit(BaseModel):
     initial_capital: float = 10000.0
     leverage: int = 1
     fee_pct: float = 0.05
+    engine: str = ""  # Force specific engine if set: "freqtrade" or "vectorbt"
     config_overrides: dict = {}
 
     @field_validator("timeframe")
@@ -168,14 +181,19 @@ class BacktestSubmit(BaseModel):
 
 @router.post("/strategies", status_code=201)
 async def create_strategy(body: StrategyCreate, user_id: str = Depends(current_user)):
-    class_name = _extract_class_name(body.code)
+    if "IStrategy" in body.code or "freqtrade" in body.code:
+        class_name     = _extract_class_name(body.code)
+        strategy_type  = "freqtrade"
+    else:
+        class_name     = "VectorBT"
+        strategy_type  = "vectorbt"
     row = _sb("post", "strategies", {
         "user_id": user_id,
         "name": body.name,
         "description": body.description,
         "code": body.code,
         "class_name": class_name,
-        "strategy_type": "freqtrade",
+        "strategy_type": strategy_type,
     })
     return row
 
@@ -195,12 +213,18 @@ async def get_strategy(sid: str, user_id: str = Depends(current_user)):
 
 @router.put("/strategies/{sid}")
 async def update_strategy(sid: str, body: StrategyCreate, user_id: str = Depends(current_user)):
-    class_name = _extract_class_name(body.code)
+    if "IStrategy" in body.code or "freqtrade" in body.code:
+        class_name    = _extract_class_name(body.code)
+        strategy_type = "freqtrade"
+    else:
+        class_name    = "VectorBT"
+        strategy_type = "vectorbt"
     return _sb("patch", f"strategies?id=eq.{sid}&user_id=eq.{user_id}", {
         "name": body.name,
         "description": body.description,
         "code": body.code,
         "class_name": class_name,
+        "strategy_type": strategy_type,
     })
 
 
@@ -208,6 +232,133 @@ async def update_strategy(sid: str, body: StrategyCreate, user_id: str = Depends
 async def delete_strategy(sid: str, user_id: str = Depends(current_user)):
     _sb("delete", f"strategies?id=eq.{sid}&user_id=eq.{user_id}")
     return Response(status_code=204)
+
+
+# ── Freqtrade → VectorBT auto-conversion ─────────────────────────────────────
+
+_VBT_TEMPLATES = {
+    "MaCrossStrategy": '''
+import vectorbt as vbt
+import pandas as pd
+
+def execute(df, parameters):
+    fast = parameters.get("fast_period", 20)
+    slow = parameters.get("slow_period", 50)
+    fast_ma = vbt.MA.run(df["close"], fast)
+    slow_ma = vbt.MA.run(df["close"], slow)
+    entries = fast_ma.ma_crossed_above(slow_ma)
+    exits = fast_ma.ma_crossed_below(slow_ma)
+    pf = vbt.Portfolio.from_signals(df["close"], entries, exits, init_cash=10000)
+    indicators = {"Fast MA": fast_ma.ma, "Slow MA": slow_ma.ma}
+    return pf, indicators
+''',
+    "RsiStrategy": '''
+import vectorbt as vbt
+import pandas as pd
+
+def execute(df, parameters):
+    rsi = vbt.RSI.run(df["close"], window=parameters.get("rsi_period", 14))
+    entries = rsi.rsi_below(parameters.get("rsi_buy", 30))
+    exits = rsi.rsi_above(parameters.get("rsi_sell", 70))
+    pf = vbt.Portfolio.from_signals(df["close"], entries, exits, init_cash=10000)
+    indicators = {"RSI": rsi.rsi}
+    return pf, indicators
+''',
+    "MacdStrategy": '''
+import vectorbt as vbt
+import pandas as pd
+
+def execute(df, parameters):
+    macd = vbt.MACD.run(df["close"],
+        fast_window=parameters.get("fast", 12),
+        slow_window=parameters.get("slow", 26),
+        signal_window=parameters.get("signal", 9))
+    entries = macd.macd_above(macd.signal) & macd.macd_above(0)
+    exits = macd.macd_below(macd.signal)
+    pf = vbt.Portfolio.from_signals(df["close"], entries, exits, init_cash=10000)
+    indicators = {"MACD": macd.macd, "Signal": macd.signal}
+    return pf, indicators
+''',
+    "BollingerBreakoutStrategy": '''
+import vectorbt as vbt
+import pandas as pd
+
+def execute(df, parameters):
+    bb = vbt.BBANDS.run(df["close"],
+        window=parameters.get("bb_period", 20),
+        alpha=parameters.get("bb_std", 2.0))
+    entries = df["close"] < bb.lower
+    exits = df["close"] > bb.upper
+    pf = vbt.Portfolio.from_signals(df["close"], entries, exits, init_cash=10000)
+    indicators = {"BB Upper": bb.upper, "BB Middle": bb.middle, "BB Lower": bb.lower}
+    return pf, indicators
+''',
+}
+
+# Generic fallback: simple MA cross
+_VBT_GENERIC = '''
+import vectorbt as vbt
+import pandas as pd
+
+def execute(df, parameters):
+    fast_ma = vbt.MA.run(df["close"], 20)
+    slow_ma = vbt.MA.run(df["close"], 50)
+    entries = fast_ma.ma_crossed_above(slow_ma)
+    exits = fast_ma.ma_crossed_below(slow_ma)
+    pf = vbt.Portfolio.from_signals(df["close"], entries, exits, init_cash=10000)
+    indicators = {"Fast MA (20)": fast_ma.ma, "Slow MA (50)": slow_ma.ma}
+    return pf, indicators
+'''
+
+def _freqtrade_to_vectorbt(class_name: str, freqtrade_code: str) -> str:
+    """Convert a Freqtrade IStrategy class name to equivalent VectorBT execute() code."""
+    return _VBT_TEMPLATES.get(class_name, _VBT_GENERIC)
+
+
+# ── Historical candles from local cache ────────────────────────────────────────
+
+@router.get("/candles/{timeframe}")
+async def get_cached_candles(timeframe: str):
+    """Return all locally-cached candles for BTC/USDT in the given timeframe."""
+    import pandas as pd
+    feeder = DataFeeder('okx')
+    df = feeder.get_local_data("BTC/USDT", timeframe)
+    if df.empty:
+        df = feeder.fetch_ohlcv("BTC/USDT", timeframe, limit=5000)
+    if df.empty:
+        raise HTTPException(404, "暂无该周期的K线数据")
+    
+    # Ensure timestamp column is datetime
+    if 'timestamp' in df.columns:
+        df['timestamp'] = pd.to_datetime(df['timestamp'])
+    
+    # Convert to list of {time, open, high, low, close, volume}
+    records = []
+    for _, row in df.iterrows():
+        ts = row.get('timestamp') if 'timestamp' in df.columns else row.name
+        try:
+            unix_ts = int(pd.Timestamp(ts).timestamp())
+        except Exception:
+            continue
+        records.append({
+            "time": unix_ts,
+            "open": float(row["open"]),
+            "high": float(row["high"]),
+            "low": float(row["low"]),
+            "close": float(row["close"]),
+            "volume": float(row.get("volume", 0)),
+        })
+    
+    # Sort and deduplicate
+    records.sort(key=lambda r: r["time"])
+    seen = set()
+    unique = []
+    for r in records:
+        if r["time"] not in seen:
+            seen.add(r["time"])
+            unique.append(r)
+    
+    return {"candles": unique}
 
 
 # ── Built-in templates ────────────────────────────────────────────────────────
@@ -290,26 +441,96 @@ async def submit_backtest(body: BacktestSubmit, user_id: str = Depends(current_u
 
     def _run_in_thread():
         logger.info(f"[BT {backtest_id[:8]}] 线程启动")
-        from freqtrade_runner import run_backtest_container
-        from csv_converter import freqtrade_json_to_tv_csv, validate_csv
+        from csv_converter import vectorbt_to_tv_csv, validate_csv
+        raw = None  # 初始化，防止 engine 分支都未命中时 NameError
+        csv_text = ""
         try:
             def _log(line: str):
                 logger.info(f"[BT {backtest_id[:8]}] {line}")
 
             _sb("patch", f"backtests?id=eq.{backtest_id}", {"status": "running"})
-            raw = run_backtest_container(
-                user_id=user_id, task_id=task_id,
-                strategy_class=class_name, strategy_code=code,
-                timeframe=body.timeframe, timerange=body.timerange,
-                market=body.market, initial_capital=body.initial_capital,
-                leverage=body.leverage, fee_pct=body.fee_pct,
-                plan=plan, on_log=_log,
-            )
-            csv_text = freqtrade_json_to_tv_csv(raw, {}, body.initial_capital)
-            summary = (raw.get("strategy_comparison") or raw.get("results_per_pair") or [{}])[0]
 
-            # Freqtrade 2024+ 把 trades 嵌套在 strategy.<class_name>.trades 下
-            # 旧格式则在顶层 raw["trades"]
+            engine_to_use = body.engine or strategy.get("strategy_type", "vectorbt")
+            
+            # Auto-detect: if freqtrade is not installed, fallback to vectorbt
+            if engine_to_use == "freqtrade":
+                try:
+                    import importlib
+                    importlib.import_module("freqtrade")
+                except ImportError:
+                    _log("⚠ freqtrade 未安装，自动切换到 VectorBT 引擎")
+                    engine_to_use = "vectorbt"
+            
+            _log(f"使用回测引擎: {engine_to_use}")
+
+            if engine_to_use == "vectorbt":
+                # VectorBT Path
+                feeder = DataFeeder('okx')
+                df = feeder.get_local_data("BTC/USDT", body.timeframe)
+                if df.empty:
+                    _log("本地缓存无数据，尝试抓取最近数据...")
+                    df = feeder.fetch_ohlcv("BTC/USDT", body.timeframe, limit=2000)
+                
+                # If the code is Freqtrade format (IStrategy), auto-generate VectorBT code
+                vbt_code = code
+                if "IStrategy" in code or "freqtrade" in code:
+                    _log("检测到 Freqtrade 格式策略，自动转换为 VectorBT 格式...")
+                    vbt_code = _freqtrade_to_vectorbt(class_name, code)
+                    _log(f"转换完成，使用 VectorBT 执行")
+                
+                res_data, err = run_dynamic_code(vbt_code, df, body.config_overrides, timeframe=body.timeframe)
+                if err:
+                    raise RuntimeError(f"VectorBT 执行错误: {err}")
+                
+                # Normalize VectorBT trades to Freqtrade format for frontend compatibility
+                normalized_trades = []
+                for t in res_data["trades"]:
+                    # Parse timestamps to milliseconds (frontend expects open_timestamp in ms)
+                    entry_ts = t.get("Entry Timestamp", "")
+                    exit_ts = t.get("Exit Timestamp", "")
+                    try:
+                        import pandas as _pd
+                        entry_ms = int(_pd.Timestamp(entry_ts).timestamp() * 1000) if entry_ts else 0
+                        exit_ms = int(_pd.Timestamp(exit_ts).timestamp() * 1000) if exit_ts else 0
+                    except Exception:
+                        entry_ms = 0
+                        exit_ms = 0
+                    
+                    normalized_trades.append({
+                        "pair": "BTC/USDT",
+                        "open_date": str(entry_ts),
+                        "close_date": str(exit_ts),
+                        "open_timestamp": entry_ms,
+                        "close_timestamp": exit_ms,
+                        "open_rate": t.get("Entry Price", 0),
+                        "close_rate": t.get("Exit Price", 0),
+                        "profit_ratio": t.get("Return", 0),
+                        "profit_abs": t.get("PnL", 0),
+                        "is_short": str(t.get("Direction", "Long")).lower() == "short",
+                    })
+                
+                # Mock a 'raw' dict similar to freqtrade for the downstream processing
+                raw = {
+                    "trades": normalized_trades,
+                    "strategy_comparison": [{
+                        "profit_total": res_data["metrics"]["total_return_pct"] / 100,
+                        "max_drawdown_account": res_data["metrics"]["max_drawdown_pct"] / 100,
+                        "winrate": res_data["metrics"]["win_rate_pct"] / 100,
+                        "trades": res_data["metrics"]["total_trades"]
+                    }],
+                    "results_per_pair": []
+                }
+                # VectorBT indicators for charting
+                _sb("patch", f"backtests?id=eq.{backtest_id}", {
+                    "config": {**body.model_dump(), "indicators": res_data.get("indicators", {})}
+                })
+                csv_text = vectorbt_to_tv_csv(res_data, {}, body.initial_capital)
+                _log("VectorBT 回测完成")
+
+            if raw is None:
+                raise RuntimeError(f"未识别的回测引擎: {engine_to_use}（仅支持 vectorbt）")
+
+            summary = (raw.get("strategy_comparison") or raw.get("results_per_pair") or [{}])[0]
             trades_raw = raw.get("trades", [])
             if not trades_raw:
                 strat_block = raw.get("strategy", {})
@@ -327,20 +548,42 @@ async def submit_backtest(body: BacktestSubmit, user_id: str = Depends(current_u
             # total_trades 优先用 summary 里的（最权威），fallback 才数 trades_raw
             total_trades_summary = summary.get("trades") or summary.get("total_trades") or 0
 
+            import math
+            def sanitize_nan(obj):
+                if isinstance(obj, float):
+                    return None if math.isnan(obj) or math.isinf(obj) else obj
+                elif isinstance(obj, dict):
+                    return {k: sanitize_nan(v) for k, v in obj.items()}
+                elif isinstance(obj, list):
+                    return [sanitize_nan(x) for x in obj]
+                return obj
+
+            def _safe_f(v):
+                if v is None: return 0
+                try:
+                    f = float(v)
+                    return 0 if math.isnan(f) or math.isinf(f) else f
+                except Exception:
+                    return 0
+
             metrics = {
-                "net_profit_pct": round(summary.get("profit_total", 0) * 100, 4),
-                "max_drawdown_pct": round(summary.get("max_drawdown_account", 0) * 100, 4),
-                "win_rate_pct": round(summary.get("winrate", 0) * 100, 2),
+                "net_profit_pct": round(_safe_f(summary.get("profit_total")) * 100, 4),
+                "max_drawdown_pct": round(_safe_f(summary.get("max_drawdown_account")) * 100, 4),
+                "win_rate_pct": round(_safe_f(summary.get("winrate")) * 100, 2),
                 "total_trades": int(total_trades_summary) if total_trades_summary else len(trades_raw),
                 "sharpe": summary.get("sharpe"),
                 "sortino": summary.get("sortino"),
                 "profit_factor": summary.get("profit_factor"),
             }
+            
+            metrics = sanitize_nan(metrics)
+            trades_clean = sanitize_nan(trades_raw[:200])
+
             logger.info(f"[BT {backtest_id[:8]}] metrics={metrics}, trades_raw_count={len(trades_raw)}")
             _sb("patch", f"backtests?id=eq.{backtest_id}", {
                 "status": "completed",
                 "metrics": json.dumps(metrics),
-                "trades": json.dumps(trades_raw[:200]),
+                "trades": json.dumps(trades_clean),
                 "csv_data": csv_text,
             })
         except Exception as e:
@@ -404,6 +647,8 @@ async def backtest_stream(websocket: WebSocket, backtest_id: str):
             log_line = None
             if celery_id:
                 try:
+                    from celery.result import AsyncResult
+                    from celery_app import celery_app
                     ar = AsyncResult(celery_id, app=celery_app)
                     if ar.state == "PROGRESS":
                         info = ar.info or {}
@@ -494,392 +739,3 @@ async def get_quota(user_id: str = Depends(current_user)):
         "backtests_limit": limit,
         "next_reset": next_reset,
     }
-
-
-# ── Live / Dry-run daemon (Phase 6) ──────────────────────────────────────────
-
-class LiveStartRequest(BaseModel):
-    strategy_id: str
-    dry_run: bool = True
-    timeframe: str = "4h"
-    stake_amount: float = 100.0
-    # OKX credentials — only required for live (dry_run=False)
-    # Never persisted; used only to write the on-disk config.json for Freqtrade.
-    okx_api_key: str = ""
-    okx_secret: str = ""
-    okx_password: str = ""
-
-    @field_validator("timeframe")
-    @classmethod
-    def valid_timeframe(cls, v):
-        allowed = {"1m", "5m", "15m", "1h", "4h", "1d"}
-        if v not in allowed:
-            raise ValueError(f"无效周期，允许: {allowed}")
-        return v
-
-    @field_validator("stake_amount")
-    @classmethod
-    def positive_stake(cls, v):
-        if v <= 0:
-            raise ValueError("stake_amount 必须大于 0")
-        return v
-
-
-@router.post("/live/start", status_code=202)
-async def live_start(body: LiveStartRequest, user_id: str = Depends(current_user)):
-    """Launch a Freqtrade `trade` daemon for this user (live or dry-run)."""
-    from live_runner import start_live, is_running
-
-    if is_running(user_id):
-        raise HTTPException(409, "实盘/模拟盘已在运行，请先调用 /api/live/stop")
-
-    if not body.dry_run and not (body.okx_api_key and body.okx_secret and body.okx_password):
-        raise HTTPException(400, "实盘模式需要提供 OKX API Key / Secret / Password")
-
-    # Fetch strategy code from Supabase
-    rows = _sb("get", f"strategies?id=eq.{body.strategy_id}&user_id=eq.{user_id}&limit=1")
-    if not rows:
-        raise HTTPException(404, "策略未找到")
-    strategy = rows[0]
-    code = strategy["code"]
-    class_name = strategy.get("class_name") or _extract_class_name(code)
-
-    result = start_live(
-        user_id=user_id,
-        strategy_class=class_name,
-        strategy_code=code,
-        dry_run=body.dry_run,
-        timeframe=body.timeframe,
-        stake_amount=body.stake_amount,
-        okx_api_key=body.okx_api_key,
-        okx_secret=body.okx_secret,
-        okx_password=body.okx_password,
-    )
-    return result
-
-
-@router.post("/live/stop", status_code=200)
-async def live_stop(user_id: str = Depends(current_user)):
-    """Gracefully stop the running Freqtrade trade daemon."""
-    from live_runner import stop_live
-    return stop_live(user_id)
-
-
-@router.get("/live/status")
-async def live_status(user_id: str = Depends(current_user)):
-    """Return current live session status, metadata, and last 50 log lines."""
-    from live_runner import get_status, tail_log
-    status = get_status(user_id)
-    status["log_tail"] = tail_log(user_id, lines=50)
-    return status
-
-
-@router.get("/live/metrics")
-async def live_metrics(user_id: str = Depends(current_user)):
-    """
-    Secure reverse proxy to the Freqtrade internal REST API.
-    The frontend never touches the internal port directly — all requests go through here.
-    Returns combined data: profit summary + open trades + bot status.
-    """
-    import httpx
-    from live_runner import get_status, _live_dir
-    import json as _json
-    from pathlib import Path as _Path
-
-    st = get_status(user_id)
-    if not st.get("running"):
-        raise HTTPException(503, "实盘/模拟盘未在运行")
-
-    port = st.get("port")
-    if not port:
-        raise HTTPException(503, "内部端口信息缺失，请重启实盘")
-
-    # Read the per-session credentials written by live_runner into meta.json
-    meta_path = _Path(_live_dir(user_id)) / "meta.json"  # type: ignore[arg-type]
-    # Read Freqtrade API credentials from the live config file
-    from live_runner import _config_file
-    cfg_path = _config_file(user_id)
-    ft_user = "btcstation"
-    ft_pass = ""
-    if cfg_path.exists():
-        try:
-            cfg = _json.loads(cfg_path.read_text())
-            ft_pass = cfg.get("api_server", {}).get("password", "")
-        except Exception:
-            pass
-
-    base = f"http://127.0.0.1:{port}/api/v1"
-    auth = (ft_user, ft_pass)
-
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        try:
-            profit_r, status_r, trades_r = await asyncio.gather(
-                client.get(f"{base}/profit",     auth=auth),
-                client.get(f"{base}/status",     auth=auth),
-                client.get(f"{base}/trades",     auth=auth),
-                return_exceptions=True,
-            )
-        except Exception as e:
-            raise HTTPException(502, f"无法连接 Freqtrade 内部 API: {e}")
-
-    def _safe_json(resp):
-        if isinstance(resp, Exception):
-            return None
-        if not isinstance(resp, httpx.Response):
-            return None
-        try:
-            return resp.json() if resp.status_code == 200 else None
-        except Exception:
-            return None
-
-    profit  = _safe_json(profit_r)
-    bot_st  = _safe_json(status_r)
-    trades  = _safe_json(trades_r)
-
-    # Normalise open trades list
-    open_trades: list = []
-    if isinstance(trades, list):
-        open_trades = trades
-    elif isinstance(trades, dict):
-        open_trades = trades.get("trades", [])
-
-    return {
-        "running": True,
-        "dry_run": st.get("dry_run", True),
-        "strategy_class": st.get("strategy_class"),
-        "timeframe": st.get("timeframe"),
-        "stake_amount": st.get("stake_amount"),
-        "profit": profit,
-        "open_trades": open_trades,
-        "bot_status": bot_st,
-    }
-
-
-# ── Hyperopt (Phase 3.3) ──────────────────────────────────────────────────────
-
-# In-memory store: task_id → {status, progress, result, error}
-# For production, replace with Redis or Supabase; this is sufficient for single-process Railway.
-_hyperopt_tasks: dict = {}
-
-
-class HyperoptSubmit(BaseModel):
-    strategy_id: str
-    timeframe: str = "4h"
-    timerange: str = "20230101-20260101"
-    epochs: int = 100
-    spaces: list[str] = ["buy", "sell"]
-    loss_function: str = "SharpeHyperOptLoss"
-    min_trades: int = 30
-
-    @field_validator("epochs")
-    @classmethod
-    def valid_epochs(cls, v):
-        if not (10 <= v <= 1000):
-            raise ValueError("epochs 必须在 10–1000 之间")
-        return v
-
-    @field_validator("spaces")
-    @classmethod
-    def valid_spaces(cls, v):
-        allowed = {"buy", "sell", "roi", "stoploss", "trailing", "protection"}
-        bad = [s for s in v if s not in allowed]
-        if bad:
-            raise ValueError(f"无效 space: {bad}，允许: {allowed}")
-        return v
-
-
-@router.post("/hyperopt/start", status_code=202)
-async def hyperopt_start(body: HyperoptSubmit, user_id: str = Depends(current_user)):
-    """Submit a Freqtrade hyperopt job. Runs in a background thread; poll /hyperopt/{task_id}."""
-    import threading
-
-    # Fetch strategy
-    rows = _sb("get", f"strategies?id=eq.{body.strategy_id}&user_id=eq.{user_id}&limit=1")
-    if not rows:
-        raise HTTPException(404, "策略未找到")
-    strategy = rows[0]
-    code = strategy["code"]
-    class_name = strategy.get("class_name") or _extract_class_name(code)
-
-    plan = _get_user_plan(user_id)
-    task_id = str(uuid.uuid4())
-
-    _hyperopt_tasks[task_id] = {
-        "status": "running",
-        "progress": [],     # list of epoch dicts streamed so far
-        "result": None,
-        "error": None,
-        "user_id": user_id,
-        "strategy_id": body.strategy_id,
-        "epochs_total": body.epochs,
-    }
-
-    def _run():
-        from hyperopt_runner import run_hyperopt
-
-        def _on_progress(ep: dict):
-            _hyperopt_tasks[task_id]["progress"].append(ep)
-
-        try:
-            result = run_hyperopt(
-                user_id=user_id,
-                task_id=task_id,
-                strategy_class=class_name,
-                strategy_code=code,
-                timeframe=body.timeframe,
-                timerange=body.timerange,
-                epochs=body.epochs,
-                spaces=body.spaces,
-                loss_function=body.loss_function,
-                min_trades=body.min_trades,
-                plan=plan,
-                on_progress=_on_progress,
-            )
-            _hyperopt_tasks[task_id]["status"] = "completed"
-            _hyperopt_tasks[task_id]["result"] = result
-        except Exception as e:
-            import traceback
-            logger.error(f"[HOPT {task_id[:8]}] {e}\n{traceback.format_exc()}")
-            _hyperopt_tasks[task_id]["status"] = "failed"
-            _hyperopt_tasks[task_id]["error"] = str(e)[:1000]
-
-    threading.Thread(target=_run, daemon=True).start()
-
-    return {"task_id": task_id, "status": "running", "epochs_total": body.epochs}
-
-
-@router.get("/hyperopt/{task_id}")
-async def hyperopt_status(task_id: str, user_id: str = Depends(current_user)):
-    """
-    Poll hyperopt job status.
-    Returns streaming progress (epoch-by-epoch) while running,
-    and the full plot-ready dataset on completion.
-    """
-    task = _hyperopt_tasks.get(task_id)
-    if not task:
-        raise HTTPException(404, "任务未找到")
-    if task.get("user_id") != user_id:
-        raise HTTPException(403, "无权访问此任务")
-
-    progress = task.get("progress", [])
-    epochs_done = len(progress)
-    epochs_total = task.get("epochs_total", 0)
-    pct = round(epochs_done / epochs_total * 100) if epochs_total else 0
-
-    resp: dict = {
-        "task_id":      task_id,
-        "status":       task["status"],
-        "epochs_done":  epochs_done,
-        "epochs_total": epochs_total,
-        "progress_pct": pct,
-        "latest_epochs": progress[-20:],   # last 20 for live chart updates
-    }
-
-    if task["status"] == "completed" and task.get("result"):
-        r = task["result"]
-        resp["result"] = {
-            "total_epochs": r["total_epochs"],
-            "best":         r["best"],
-            "epochs":       r["epochs"],    # full dataset for Plotly
-        }
-
-    if task["status"] == "failed":
-        resp["error"] = task.get("error")
-
-    return resp
-
-
-# ── AI Assistant (Phase 5 — BYOK) ────────────────────────────────────────────
-
-class AiChatRequest(BaseModel):
-    api_key: str
-    messages: list[dict]          # [{"role": "user"|"assistant"|"system", "content": "..."}]
-    model: str = "gpt-4o-mini"
-    base_url: str = "https://api.openai.com/v1"
-
-    @field_validator("api_key")
-    @classmethod
-    def key_not_empty(cls, v):
-        if not v.strip():
-            raise ValueError("api_key 不能为空")
-        return v.strip()
-
-    @field_validator("messages")
-    @classmethod
-    def has_messages(cls, v):
-        if not v:
-            raise ValueError("messages 不能为空")
-        return v
-
-
-class AiReportRequest(BaseModel):
-    api_key: str
-    metrics: dict                  # Freqtrade backtest metrics dict
-    model: str = "gpt-4o-mini"
-    base_url: str = "https://api.openai.com/v1"
-
-    @field_validator("api_key")
-    @classmethod
-    def key_not_empty(cls, v):
-        if not v.strip():
-            raise ValueError("api_key 不能为空")
-        return v.strip()
-
-
-@router.post("/ai/chat")
-async def ai_chat(body: AiChatRequest, user_id: str = Depends(current_user)):
-    """
-    Stream an AI coding assistant response via Server-Sent Events.
-    The api_key is forwarded to OpenAI and never stored.
-    """
-    from fastapi.responses import StreamingResponse as _SR
-    from ai_agent import stream_chat, _CODING_SYSTEM
-
-    # Prepend coding system prompt if not already present
-    messages = body.messages
-    if not messages or messages[0].get("role") != "system":
-        messages = [{"role": "system", "content": _CODING_SYSTEM}] + messages
-
-    async def _event_stream():
-        try:
-            async for chunk in stream_chat(body.api_key, messages, model=body.model, base_url=body.base_url):
-                # SSE format: "data: <chunk>\n\n"
-                yield f"data: {json.dumps({'delta': chunk})}\n\n"
-        except ValueError as e:
-            yield f"data: {json.dumps({'error': str(e)})}\n\n"
-        except Exception as e:
-            logger.error(f"[AI CHAT {user_id[:8]}] {e}")
-            yield f"data: {json.dumps({'error': '模型请求失败，请检查 API Key 和网络'})}\n\n"
-        finally:
-            yield "data: [DONE]\n\n"
-
-    return _SR(_event_stream(), media_type="text/event-stream", headers={
-        "Cache-Control": "no-cache",
-        "X-Accel-Buffering": "no",   # disable nginx buffering on Railway
-    })
-
-
-@router.post("/ai/report")
-async def ai_report(body: AiReportRequest, user_id: str = Depends(current_user)):
-    """
-    Stream a structured backtest analysis report via Server-Sent Events.
-    """
-    from fastapi.responses import StreamingResponse as _SR
-    from ai_agent import analyze_backtest
-
-    async def _event_stream():
-        try:
-            async for chunk in analyze_backtest(body.api_key, body.metrics, model=body.model, base_url=body.base_url):
-                yield f"data: {json.dumps({'delta': chunk})}\n\n"
-        except ValueError as e:
-            yield f"data: {json.dumps({'error': str(e)})}\n\n"
-        except Exception as e:
-            logger.error(f"[AI REPORT {user_id[:8]}] {e}")
-            yield f"data: {json.dumps({'error': '报告生成失败，请检查 API Key'})}\n\n"
-        finally:
-            yield "data: [DONE]\n\n"
-
-    return _SR(_event_stream(), media_type="text/event-stream", headers={
-        "Cache-Control": "no-cache",
-        "X-Accel-Buffering": "no",
-    })

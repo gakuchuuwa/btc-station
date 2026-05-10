@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from 'react'
 import PriceCard from '@/components/PriceCard'
 import NewsFeed from '@/components/NewsFeed'
 import Sidebar from '@/components/Sidebar'
+import { PageLoader } from '@/components/PageLoader'
 import type { BtcSummary, KlineBar, NewsItem } from '@/types/btc'
 
 const EMPTY_SUMMARY: BtcSummary = {
@@ -61,15 +62,10 @@ export default function HomePage() {
     return () => clearInterval(id)
   }, [])
 
-  if (loading) {
-    return (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '60vh' }}>
-        <span className="text-mute" style={{ fontSize: 13 }}>加载中...</span>
-      </div>
-    )
-  }
+  if (loading) return <PageLoader text="加载中…" />
 
   const isUp = summary.change24h >= 0
+  const freshLabel = secondsAgo < 5 ? '刚刚更新' : `${secondsAgo} 秒前`
 
   return (
     <>
@@ -80,12 +76,12 @@ export default function HomePage() {
           <span>现货</span><span className="sep">/</span>
           <span className="curr">Bitcoin · USDT</span>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 11, color: 'var(--text-mute)' }}>
-          <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <div className="flex-center" style={{ gap: 12, fontSize: 11, color: 'var(--text-mute)' }}>
+          <span className="flex-center" style={{ gap: 6 }}>
             <span className="dot-live"></span>实时 · OKX
           </span>
           <span className="text-dim">|</span>
-          <span className="num">{secondsAgo} 秒前更新</span>
+          <span className="num">{freshLabel}更新</span>
         </div>
       </div>
 

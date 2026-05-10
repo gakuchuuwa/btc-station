@@ -205,6 +205,98 @@ def freqtrade_json_to_tv_csv(
     csv_text = "﻿" + output.getvalue()  # UTF-8 BOM for Excel compat
     return csv_text
 
+def vectorbt_to_tv_csv(
+    raw: dict,
+    user_params: dict | None = None,
+    initial_capital: float = 10000.0,
+) -> str:
+    """
+    raw: dict containing 'metrics', 'trades', and 'indicators' from dynamic_runner.py
+    """
+    user_params = user_params or {}
+    metrics = raw.get("metrics", {})
+    trades_raw = raw.get("trades", [])
+
+    net_profit_pct = _round(metrics.get("total_return_pct", 0), 4)
+    win_rate_all = _round(metrics.get("win_rate_pct", 0), 2)
+    max_dd = _round(metrics.get("max_drawdown_pct", 0) / 100, 4)
+    trades_count = int(metrics.get("total_trades", 0))
+    
+    net_profit_abs = _round(net_profit_pct / 100 * initial_capital, 4)
+
+    param_headers = [f"__{k}" for k in user_params.keys()]
+    param_values  = list(user_params.values())
+
+    # Re-use the same header
+    header = [
+        "Net profit %: All", "Net profit: All",
+        "Gross profit: All", "Gross loss: All",
+        "Percent profitable: All",
+        "Total trades: All", "Winning trades: All", "Losing trades: All",
+        "Avg winning trade %: All", "Avg losing trade %: All",
+        "Largest winning trade %: All", "Largest losing trade %: All",
+        "Max equity drawdown %",
+        "Profit factor: All",
+        "Sharpe ratio", "Sortino ratio", "Calmar ratio",
+        "Initial Capital: All", "Net profit abs: All",
+        "Net profit %: Long", "Total trades: Long",
+        "Win rate %: Long", "Avg win %: Long",
+        "Net profit %: Short", "Total trades: Short",
+        "Win rate %: Short", "Avg win %: Short",
+        "Funding fee cost total", "Liquidations",
+        "Trade #", "Open date", "Close date", "Duration",
+        "Direction", "Entry price", "Exit price",
+        "Profit %", "Profit abs", "Cumulative profit %",
+    ] + param_headers
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(header)
+
+    # Summary row
+    summary_row = [
+        net_profit_pct, net_profit_abs,
+        "", "", # Gross P/L
+        win_rate_all,
+        trades_count, "", "", # Winning/Losing counts
+        "", "", "", "", # Avg win/loss/largest
+        _round(max_dd * 100, 4),
+        "", "", "", "", # PF/Sharpe/etc
+        initial_capital, net_profit_abs,
+        "", "", "", "", # Long stats
+        "", "", "", "", # Short stats
+        0, 0, # Funding/Liq
+        "", "", "", "", "", "", "", "", "", "",
+    ] + param_values
+    writer.writerow(summary_row)
+
+    # Trade rows
+    cumulative = 0.0
+    for i, t in enumerate(trades_raw, start=1):
+        # VectorBT records_readable columns: 
+        # 'Entry Timestamp', 'Exit Timestamp', 'Direction', 'Entry Price', 'Exit Price', 'PnL', 'Return'
+        pnl_pct = _round(t.get("Return", 0) * 100, 4)
+        pnl_abs = _round(t.get("PnL", 0), 4)
+        cumulative += t.get("Return", 0) * 100
+        row = [
+            "", "", "", "", "", "", "", "", "", "",
+            "", "", "", "", "", "", "", "", "",
+            "", "", "", "",
+            "", "", "", "",
+            "", "",
+            i,
+            t.get("Entry Timestamp", ""),
+            t.get("Exit Timestamp", ""),
+            "", # Duration
+            t.get("Direction", "Long"),
+            _round(t.get("Avg Entry Price", t.get("Entry Price", 0)), 2),
+            _round(t.get("Avg Exit Price", t.get("Exit Price", 0)), 2),
+            pnl_pct, pnl_abs,
+            _round(cumulative, 4),
+        ] + ([""] * len(param_headers))
+        writer.writerow(row)
+
+    return "﻿" + output.getvalue()
 
 def validate_csv(csv_text: str) -> bool:
     """Quick sanity check: parse back and verify column count."""
