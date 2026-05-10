@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl *)",
+      "Bash(python3 -c ' *)",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); m=d['metrics']; print\\('sharpe=',m.get\\('sharpe'\\),'pf=',m.get\\('profit_factor'\\),'sortino=',m.get\\('sortino'\\)\\)\")",
+      "PowerShell(\"pycache cleared\")",
+      "Bash(venv/Scripts/python.exe -c ' *)",
+      "Bash(curl -s http://127.0.0.1:8000/)"
+    ]
+  }
+}

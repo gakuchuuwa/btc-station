@@ -5,7 +5,13 @@
       "Bash(mkdir -p \"c:/Users/GAKU/Desktop/BTC Tradingview assistant/btc-station/app/api/btc/klines\")",
       "Bash(mkdir -p \"c:/Users/GAKU/Desktop/BTC Tradingview assistant/btc-station/app/api/news\")",
       "Bash(mkdir -p \"c:/Users/GAKU/Desktop/BTC Tradingview assistant/btc-station/app/chart\")",
-      "Bash(mkdir -p \"c:/Users/GAKU/Desktop/BTC Tradingview assistant/btc-station/app/strategies\")"
+      "Bash(mkdir -p \"c:/Users/GAKU/Desktop/BTC Tradingview assistant/btc-station/app/strategies\")",
+      "PowerShell($env:PATH = $env:PATH + \";C:\\\\Program Files\\\\GitHub CLI\"; Set-Location \"c:\\\\Users\\\\GAKU\\\\Desktop\\\\BTC Tradingview assistant\"; git remote add origin https://github.com/gakuchuuwa/btc-station.git; git push -u origin master 2>&1)",
+      "Bash(ls *.md)",
+      "Bash(ls *.txt)",
+      "Bash(git add *)",
+      "Bash(git commit -m 'chore: 删除历史规划文档 *)",
+      "Bash(git push *)"
     ]
   }
 }
