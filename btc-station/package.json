@@ -17,6 +17,7 @@
     "date-fns": "^4.1.0",
     "fast-xml-parser": "^4.4.0",
     "idb": "^8.0.3",
+    "katex": "^0.16.45",
     "lightweight-charts": "^5.2.0",
     "lucide-react": "^0.469.0",
     "next": "^15.1.0",
@@ -25,6 +26,7 @@
     "react-dom": "^19.0.0",
     "react-markdown": "^10.1.0",
     "react-plotly.js": "^2.6.0",
+    "recharts": "^3.8.1",
     "tailwind-merge": "^2.5.4",
     "technicalindicators": "^3.1.0"
   },
