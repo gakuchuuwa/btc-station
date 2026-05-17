@@ -45,6 +45,8 @@ def execute(df, parameters):
 
 const LS_CODE_KEY = 'custom_strategy_code'
 const LS_NAME_KEY = 'custom_strategy_name'
+// S3 回测结果 sessionStorage 键名：跨页面切换保留，关闭 tab 才清；下次成功回测时覆盖
+const SS_BT_RESULT_KEY = 'strategy_s3_backtest_result'
 const INDICATOR_COLORS = ['#26a69a', '#ef5350', '#FFD700', '#7B68EE', '#FF8C00', '#00CED1']
 
 export default function StrategyPage() {
@@ -130,6 +132,23 @@ export default function StrategyPage() {
       localStorage.removeItem(LS_NAME_KEY)
     } else if (savedName) {
       setStrategyName(savedName)
+    }
+
+    // 恢复 S3 回测结果：跨页面切换或刷新后保留上次回测结果
+    try {
+      const raw = sessionStorage.getItem(SS_BT_RESULT_KEY)
+      if (raw) {
+        const s = JSON.parse(raw)
+        if (s.summary) setSummary(s.summary as BacktestSummary)
+        if (s.xlsxToken) setXlsxToken(s.xlsxToken as string)
+        if (Array.isArray(s.trades)) setTrades(s.trades as TradeRecord[])
+        if (Array.isArray(s.equity)) setEquity(s.equity as {time:number;equity:number}[])
+        if (Array.isArray(s.markers)) setMarkers(s.markers as ChartMarker[])
+        if (Array.isArray(s.strategyLines)) setStrategyLines(s.strategyLines as StrategyLine[])
+      }
+    } catch (e) {
+      console.warn('回测结果恢复失败:', e)
+      sessionStorage.removeItem(SS_BT_RESULT_KEY)
     }
   }, [])
 
@@ -303,6 +322,22 @@ export default function StrategyPage() {
     const indics = (result.indicators ?? {}) as Record<string, {time:number;value:number}[]>
     const lines = Object.entries(indics).filter(([, pts]) => Array.isArray(pts) && pts.length > 0).map(([name, pts], idx) => ({ label: name, color: INDICATOR_COLORS[idx % INDICATOR_COLORS.length], points: pts }))
     setStrategyLines(lines)
+
+    // 持久化到 sessionStorage：切到其他页面再回来时可恢复，避免回测结果丢失
+    try {
+      const snapshot = {
+        summary: { ...m, initial_capital: 10000 },
+        xlsxToken: (result.xlsx_token as string | null) ?? null,
+        trades: parsedTrades,
+        equity: result.equity ?? [],
+        markers: mkrs,
+        strategyLines: lines,
+      }
+      sessionStorage.setItem(SS_BT_RESULT_KEY, JSON.stringify(snapshot))
+    } catch (e) {
+      // sessionStorage 写失败（容量超限/隐私模式）不阻塞主流程
+      console.warn('回测结果持久化失败:', e)
+    }
   }, [snapToCandle])
 
   // Run backtest
