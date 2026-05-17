@@ -1,30 +1,22 @@
-FROM freqtradeorg/freqtrade:stable
+FROM python:3.11-slim
 
-# Switch to root to install our custom backend dependencies
-USER root
+# System dependencies for numpy/pandas/vectorbt compilation
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc g++ && \
+    rm -rf /var/lib/apt/lists/*
 
-# Create the working directory for the backend API
 WORKDIR /app
 
-# Install our required Python packages
+# Install Python dependencies first (cache-friendly)
 COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
-# Copy all the FastAPI backend code
+# Copy all backend code
 COPY . /app
 
-# Create necessary directories and set ownership to ftuser
-RUN mkdir -p /data/historical /data/users /app/user_data/strategies /app/user_data/data && \
-    chown -R ftuser:ftuser /app /data/historical /data/users
+# Create necessary directories
+RUN mkdir -p /data/historical /data/users
 
-# Switch back to the unprivileged freqtrade user
-USER ftuser
-
-# Expose FastAPI default port
 EXPOSE 8000
 
-# CRITICAL: Clear the Freqtrade ENTRYPOINT so we can run uvicorn directly
-ENTRYPOINT []
-
-# Start command
 CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
