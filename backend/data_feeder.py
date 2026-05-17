@@ -47,30 +47,44 @@ class DataFeeder:
             except Exception as e:
                 print(f"Error during quick update, falling back to full fetch: {e}")
 
-        # 2. FULL FETCH: If cache is missing or too small, paginate to get the full history
+        # 2. FULL FETCH: 反向分页——从最新往过去拉，避免 since 设得太早（如交易对未上线日期）导致首批返回空
         print(f"Fetching {limit} candles of {timeframe} for {symbol} from {self.exchange.id} (may take a while)...")
         all_ohlcv = []
         try:
             tf_ms = self.exchange.parse_timeframe(timeframe) * 1000
-            now_ms = self.exchange.milliseconds()
-            since = now_ms - (limit * tf_ms)
-            
-            while len(all_ohlcv) < limit:
-                fetch_limit = min(limit - len(all_ohlcv), 100)
-                batch = self.exchange.fetch_ohlcv(symbol, timeframe, since=since, limit=fetch_limit)
-                
-                if not batch or len(batch) == 0:
+            import time
+
+            # 第一批：不带 since，OKX 返回最近 ~300 根（最新数据）
+            batch = self.exchange.fetch_ohlcv(symbol, timeframe, limit=300)
+            if batch:
+                all_ohlcv = list(batch)
+
+            # 后续批次：用当前最早时间戳作为 endTime（OKX 用 'until' 或 params={'before': earliest_ms}）反向往过去拉
+            while all_ohlcv and len(all_ohlcv) < limit:
+                earliest_ms = all_ohlcv[0][0]
+                # OKX 用 params.before（毫秒）表示返回此时间之前的数据
+                try:
+                    older = self.exchange.fetch_ohlcv(
+                        symbol, timeframe, limit=300,
+                        params={'until': earliest_ms}
+                    )
+                except Exception as inner:
+                    print(f"  Reverse pagination hit error, stop: {inner}")
                     break
-                    
-                all_ohlcv.extend(batch)
-                since = batch[-1][0] + tf_ms  # Next candle timestamp
-                
-                import time
+
+                if not older:
+                    break  # 到达交易对最早数据
+                # 过滤已存在的时间戳，防御去重
+                existing_ts = {row[0] for row in all_ohlcv}
+                new_rows = [row for row in older if row[0] not in existing_ts]
+                if not new_rows:
+                    break  # 没有更早数据
+                all_ohlcv = sorted(new_rows + all_ohlcv, key=lambda r: r[0])
                 time.sleep(self.exchange.rateLimit / 1000.0)
-                
+
         except Exception as e:
             print(f"Error during pagination fetch: {e}")
-            
+
         if not all_ohlcv:
             all_ohlcv = self.exchange.fetch_ohlcv(symbol, timeframe, limit=min(limit, 300))
             
