@@ -573,7 +573,111 @@ vbt_end  = pf.value().iloc[-1] - init_cash      # VBT 末值 - 初始
    - **界面高度预算**：散点图容器高度必须克制，通常控制在 **400px** 左右（过高会导致页面信息密度低，用户体验差）。
 2. **数据去重与过滤逻辑防缩水**：
    - **坚决杜绝硬编码过滤上限**：历史版本中曾出现过因为去重硬编码导致前端只显示 48 条参数的恶性 Bug。去重和评分机制必须对全量扫描出的 Epoch 结果负责，不可以用任何硬上限进行粗暴过滤。
-   - **邻居法（防参数孤岛）**：计算某个参数的稳健性评分时，必须检查其周围邻居（如快均线 +2/-2 步长）的绩效，剔除因为行情巧合形成的“孤峰”参数。
+   - **邻居法（防参数孤岛）**：计算某个参数的稳健性评分时，必须检查其周围邻居（如快均线 +2/-2 步长）的绩效，剔除因为行情巧合形成的”孤峰”参数。
+
+---
+
+### 16. OKX 历史 K 线只拉到几个月：`history-candles` vs `candles` 接口区别
+
+**症状**：Railway 后端日志打印 `Fetching 18000 candles ... (may take a while)` 但下一行立即 `Saved 300 rows`。前端 K 线只显示最近一两个月。
+
+**根本原因**：OKX REST 有**两个**历史 K 线接口，CCXT 根据参数自动路由：
+| 接口 | 数据深度 | 触发方式 |
+|---|---|---|
+| `/api/v5/market/candles` | **仅最近约 8 个月** | 不传 `since`，或传 `until/params` |
+| `/api/v5/market/history-candles` | **从交易对上线日起的全部历史** | 传 `since`（不传 `until`） |
+
+如果分页用 `params={'until': earliest_ms}` 反向拉，CCXT 路由到第一个接口，最多只能拿到 ~1440 根（8 个月）。
+
+更糟的是：如果 `since = now - limit * tf_ms` 设得**太早**（比如 limit=18000 + 4h = 起点 2018-02，但 OKX 永续 BTC/USDT:USDT 2019-11 才上线），首批返回空 → 循环 break → fallback 到”最近 300 根”。
+
+**修复方案**（已实施于 `backend/data_feeder.py`）：反向分页用 `since` 而非 `until`：
+
+```python
+# 第一批：不带 since，OKX 返回最近 300 根
+batch = self.exchange.fetch_ohlcv(symbol, timeframe, limit=300)
+all_ohlcv = list(batch) if batch else []
+
+# 后续批次：用最早时间戳算 since 反向往前拉（走 history-candles 接口）
+while all_ohlcv and len(all_ohlcv) < limit:
+    earliest_ms = all_ohlcv[0][0]
+    next_since = earliest_ms - 300 * tf_ms
+    older = self.exchange.fetch_ohlcv(symbol, timeframe, since=next_since, limit=300)
+    if not older:
+        break  # 到达交易对最早数据
+    existing_ts = {row[0] for row in all_ohlcv}
+    new_rows = [row for row in older if row[0] not in existing_ts]
+    if not new_rows:
+        break
+    all_ohlcv = sorted(new_rows + all_ohlcv, key=lambda r: r[0])
+    time.sleep(self.exchange.rateLimit / 1000.0)
+```
+
+**验证命令**（本地或 Railway 部署后）：
+```bash
+curl -s “https://btc-station-backend-production.up.railway.app/api/candles/4h” | \
+  python -c “import sys,json,datetime; d=json.load(sys.stdin)['candles']; \
+    print(len(d), datetime.datetime.fromtimestamp(d[0]['time'],datetime.UTC).date(), '->', \
+    datetime.datetime.fromtimestamp(d[-1]['time'],datetime.UTC).date())”
+# 期望：14068 2019-12-16 -> <今天>（4h 周期 BTC/USDT:USDT 全历史）
+```
+
+**排查顺序**：当 K 线显示明显偏少时，先用上面 curl 看后端返回多少根。如果 < 1000 根，就是这个 bug；如果 14000+ 而前端少，就是前端缓存或渲染问题（Ctrl+Shift+R 强刷）。
+
+---
+
+### 17. Railway 部署：Builder 必须显式设为 Dockerfile，否则用 Railpack 自选 Python 版本
+
+**症状**：明明 `backend/Dockerfile` 第一行 `FROM python:3.11-slim` 写死了 Python 版本，构建日志却显示 `Cannot install on Python version 3.14.3; only versions >=3.10,<3.14 are supported`，numba/vectorbt 编译失败。或者部署”成功”但实际跑的是 Caddy 静态服务器（HTTP 502，Deploy Logs 出现 `using config from file file: Caddyfile`）。
+
+**根本原因**：Railway 默认 Builder 是 **Railpack**（Railway 自研自动构建器），它**不读 Dockerfile**：
+- 看到根目录有 `index.html` → 当成静态网站，跑 Caddy
+- 看到 Python 项目 → 自己选 Python 版本（默认拉最新版，如 3.14）
+
+`backend/Dockerfile` 完全被忽略。
+
+**修复方案**（一次性配置，永久生效）：
+1. 在 Railway 服务的 **Settings → Build → Builder** 卡片，从 `Railpack` 切换到 **`Dockerfile`**
+2. **Dockerfile Path** 填 `Dockerfile`（相对 Root Directory，已经是 `/backend`）
+3. 保存后会自动触发新部署
+
+**排查顺序**：Railway 构建日志里如果出现 `cp314` / `cp313`（说明用了高版本 Python）、或 Deploy Logs 里出现 `Caddyfile` / `admin endpoint disabled`（说明在跑 Caddy），第一时间检查 Builder 设置，**不要去改 Dockerfile**，因为根本没在用它。
+
+---
+
+### 18. PyPI 包名规范化与新版 `pandas-ta` 陷阱
+
+**症状 A**：`requirements.txt` 写 `pandas_ta`，pip 报 `Could not find a version that satisfies the requirement pandas_ta`。
+**症状 B**：改成 `pandas-ta` 后，Python 3.11 下仍然 `No matching distribution found`，但 Python 3.12 装得上。
+
+**根本原因**：
+1. **PyPI 包名只用连字符**：`pandas_ta`（下划线）不是合法的 PyPI 名，Python `import` 时才写下划线。两者的对应关系是 PyPI 内部的”规范化”机制——`pip install pandas-ta` 后 `import pandas_ta` 才能用。
+2. **PyPI 上 `pandas-ta` 已易主**：原作者 Twopirllc 的老 `pandas_ta` 兼容 Python 3.7+，但**当前 PyPI `pandas-ta` 名下的包是新作者重写的 0.4.x 版本**，`requires_python >=3.12`。Python 3.11 完全装不上。
+
+**修复方案**（已实施）：
+- `requirements.txt` 写 `pandas-ta`（连字符）
+- `backend/Dockerfile` 用 `FROM python:3.12-slim`（不能再用 3.11）
+- 由于新版 API 跟老版 pandas_ta 可能不完全一致，调用 pandas_ta 的代码（如 `vbt_optimizer.py`）必须在升级后跑一遍单元测试或冒烟测试
+
+**备选方案**（如果新版 API 不兼容）：requirements.txt 改用 `git+https://github.com/twopirllc/pandas-ta.git` 直接从作者仓库装老版本，绕开 PyPI。
+
+**排查顺序**：装包失败时，先用 `curl https://pypi.org/pypi/<pkg>/json | python -c “import sys,json; d=json.load(sys.stdin); print(d['info']['version'], d['info'].get('requires_python'))”` 确认包名拼写正确和 Python 版本要求。
+
+---
+
+### 19. FastAPI 用了表单/文件上传必须装 `python-multipart`
+
+**症状**：FastAPI 应用启动时崩溃，Deploy Logs 出现：
+```
+RuntimeError: Form data requires “python-multipart” to be installed.
+You can install “python-multipart” with: pip install python-multipart
+```
+
+**根本原因**：任何路由用了 `Form(...)`、`File(...)`、`UploadFile` 等表单/文件上传参数，FastAPI 都会在**应用启动时**（不是运行时）检查 `python-multipart` 是否已装。本项目 `backend/pattern_report.py` 的 `/pattern-report/analyze` 路由用了表单上传。
+
+**修复方案**（已实施）：`requirements.txt` 添加 `python-multipart`。
+
+**注意**：FastAPI 文档里 `python-multipart` 是 “Optional Dependency”，不在 `pip install fastapi` 默认装的列表里，需要手动加。
 
 ---
 

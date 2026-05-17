@@ -148,6 +148,39 @@ diff = pf.value().iloc[-1] - (init_cash + realized)
 
 ---
 
+## Railway 后端部署（生产环境）
+
+后端跑在 Railway，服务名 `btc-station-backend`，公网域名 `btc-station-backend-production.up.railway.app`。前端 `quant-lab.org`（Vercel）通过 `/py-api/*` 代理过去。
+
+### ⚠️ Railway 关联的是独立仓库
+
+本地 origin 是 `gakuchuuwa/btc-station`，但 **Railway 监听的是另一个独立仓库** `gakuchuuwa/btc-station-backend`，分支 `main`（不是 master）。本地 git 里这个仓库的 remote 名是 `railway`。
+
+任何后端修复必须**同时**推到两个仓库：
+```powershell
+git push origin master            # 主仓库
+git push railway master:main      # Railway 监听的仓库
+```
+
+如果只推到 `origin`，Railway 永远看不到改动。
+
+### ⚠️ Railway Builder 必须是 Dockerfile
+
+Railway 默认 Builder 是 **Railpack**，不读 `backend/Dockerfile`，会自己选最新 Python 版本（3.14）导致 numba 编译失败，或者看到根目录 `index.html` 就跑 Caddy 当成静态站点。
+
+正确配置（在 Railway Settings → Build 里）：
+- **Builder**: `Dockerfile`
+- **Dockerfile Path**: `Dockerfile`（Root Directory 已设为 `/backend`）
+- **Branch**: `main`
+
+详见 README 防坑指南第 17 条。
+
+### Railway 后端调试排查顺序
+
+1. `curl -s -o /dev/null -w "%{http_code}\n" https://btc-station-backend-production.up.railway.app/api/templates` —— 502 说明应用没起来；200 说明后端正常
+2. 502 时**必须看 Deploy Logs**（不是 Build Logs），找 `Traceback` 行
+3. Build 失败时看 Build Logs，关注 `cp311`/`cp312`/`cp314`（Python 版本暗号）和"No matching distribution"
+
 ## 编码行为准则（来自 Karpathy 观察）
 
 **权衡提示**：以下准则偏向谨慎而非速度。简单任务可酌情判断。
