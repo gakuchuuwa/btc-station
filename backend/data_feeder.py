@@ -9,6 +9,7 @@ class DataFeeder:
         exchange_class = getattr(ccxt, exchange_id)
         self.exchange = exchange_class({
             'enableRateLimit': True,
+            'options': {'defaultType': 'swap'},  # 永续合约
         })
         # Local storage directory for K-lines
         self.data_dir = 'data'
@@ -20,9 +21,11 @@ class DataFeeder:
         Fetches OHLCV (K-line) data from the exchange with pagination to handle large limits.
         Intelligently updates cache if sufficient data already exists.
         """
-        safe_symbol = symbol.replace('/', '_')
+        # 剥离永续后缀（同 get_local_data，避免 Windows NTFS ADS 问题）
+        clean_symbol = symbol.split(':')[0]
+        safe_symbol = clean_symbol.replace('/', '_')
         filepath = os.path.join(self.data_dir, f"{safe_symbol}_{timeframe}.csv")
-        
+
         cached_df = pd.DataFrame()
         if os.path.exists(filepath):
             cached_df = pd.read_csv(filepath)
@@ -33,9 +36,9 @@ class DataFeeder:
             try:
                 recent_ohlcv = self.exchange.fetch_ohlcv(symbol, timeframe, limit=100)
                 recent_df = pd.DataFrame(recent_ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-                recent_df['timestamp'] = pd.to_datetime(recent_df['timestamp'], unit='ms')
-                
-                cached_df['timestamp'] = pd.to_datetime(cached_df['timestamp'])
+                recent_df['timestamp'] = pd.to_datetime(recent_df['timestamp'], unit='ms', utc=True).dt.tz_localize(None)
+
+                cached_df['timestamp'] = pd.to_datetime(cached_df['timestamp']).dt.tz_localize(None)
                 df = pd.concat([cached_df, recent_df]).drop_duplicates(subset=['timestamp'], keep='last')
                 df = df.sort_values('timestamp').tail(limit)
                 
@@ -72,7 +75,7 @@ class DataFeeder:
             all_ohlcv = self.exchange.fetch_ohlcv(symbol, timeframe, limit=min(limit, 300))
             
         df = pd.DataFrame(all_ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms', utc=True).dt.tz_localize(None)
         df.to_csv(filepath, index=False)
         print(f"Saved {len(df)} rows to {filepath}")
         return df
@@ -80,14 +83,17 @@ class DataFeeder:
     def get_local_data(self, symbol: str = 'BTC/USDT', timeframe: str = '1h') -> pd.DataFrame:
         """
         Retrieves data from local cache if it exists.
+        Windows NTFS 不支持冒号文件名，含 ':USDT' 等永续后缀的 symbol 会被解析为 ADS 流，
+        导致读到不完整数据。这里统一剥离 ':XXX' 后缀，回退到现货文件名。
         """
-        safe_symbol = symbol.replace('/', '_')
+        # 永续合约后缀（如 BTC/USDT:USDT）在 Windows 上会触发 NTFS ADS，必须剥离
+        clean_symbol = symbol.split(':')[0]
+        safe_symbol = clean_symbol.replace('/', '_')
         filepath = os.path.join(self.data_dir, f"{safe_symbol}_{timeframe}.csv")
         if os.path.exists(filepath):
             df = pd.read_csv(filepath)
-            # Ensure timestamp is parsed as datetime (consistent with freshly fetched data)
             if 'timestamp' in df.columns:
-                df['timestamp'] = pd.to_datetime(df['timestamp'])
+                df['timestamp'] = pd.to_datetime(df['timestamp']).dt.tz_localize(None)
             return df
         return pd.DataFrame()
 
@@ -95,11 +101,23 @@ class DataFeeder:
         """
         [SaaS Upgrade] Global background method to fetch and update huge datasets into the cache.
         Should be run async on server startup.
+        每个周期所需本数（从2018年起）：1h≈70000，4h≈18000，1d≈3000
         """
-        print(f"[Data Syncer] Preloading cache for {symbol} across {timeframes} (limit={limit})...")
+        # 每个周期独立设定本数，覆盖 2018 年至今
+        tf_limits = {
+            '1m':  500000,
+            '5m':  100000,
+            '15m':  35000,
+            '1h':   70000,
+            '4h':   18000,
+            '1d':    3000,
+            '1w':     500,
+        }
         for tf in timeframes:
+            tf_limit = tf_limits.get(tf, limit)
+            print(f"[Data Syncer] Preloading {symbol} {tf} (limit={tf_limit})...")
             try:
-                self.fetch_ohlcv(symbol, tf, limit=limit)
+                self.fetch_ohlcv(symbol, tf, limit=tf_limit)
                 print(f"[Data Syncer] OK {tf} synchronized.")
             except Exception as e:
                 print(f"[Data Syncer] ERR syncing {tf}: {e}")

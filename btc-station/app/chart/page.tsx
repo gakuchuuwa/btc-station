@@ -178,7 +178,7 @@ interface PerpInfo {
 }
 
 // ============================
-// チャート共通設定
+// 图表公共配置
 // ============================
 const CHART_COLORS = {
   bg: 'transparent',
@@ -191,7 +191,7 @@ const CHART_COLORS = {
 
 function chartOptions(height: number) {
   return {
-    layout: { background: { color: CHART_COLORS.bg }, textColor: CHART_COLORS.text },
+    layout: { background: { color: CHART_COLORS.bg }, textColor: CHART_COLORS.text, attributionLogo: false },
     grid: { vertLines: { color: CHART_COLORS.grid }, horzLines: { color: CHART_COLORS.grid } },
     rightPriceScale: { borderColor: CHART_COLORS.border },
     timeScale: { borderColor: CHART_COLORS.border, timeVisible: true },
@@ -226,12 +226,12 @@ function fmtCountdown(ms: number) {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
 }
 
-// フィボナッチレベル
+// 斐波那契水平线
 const FIB_LEVELS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1]
 const FIB_COLORS = ['#EF5350', '#FF9800', '#FFEB3B', '#4CAF50', '#2196F3', '#9C27B0', '#EF5350']
 
 // ============================
-// 画線レイヤーコンポーネント
+// 画线图层组件
 // ============================
 interface DrawingLayerProps {
   canvasRef: React.RefObject<HTMLCanvasElement | null>
@@ -286,11 +286,11 @@ function DrawingLayer({
     // 時刻→X座標
     const timeToX = (time: number): number | null => ts.timeToCoordinate(time as Time) as number | null
 
-    // 価格→Y座標（カンドル価格レンジから線形補間）
+    // 价格→Y坐标（从K线价格范围线性插值）
     const priceRange = chart.priceScale('right')
     const priceToY = (price: number): number => {
-      // lightweight-chartsの内部 priceToCoordinate はシリーズ経由のみ
-      // キャンバス高さと価格レンジで近似
+      // lightweight-charts 内部的 priceToCoordinate 只能通过系列访问
+      // 用画布高度和价格范围近似计算
       const h = rect.height
       if (candles.length === 0) return h / 2
       const prices = candles.flatMap(c => [c.high, c.low])
@@ -383,7 +383,7 @@ function DrawingLayer({
       ctx.globalAlpha = 1
     }
 
-    // プレビュー（マウス追跡中の線）
+    // 预览（鼠标追踪中的线）
     if (pendingPoint && mousePos && (activeTool === 'trendline' || activeTool === 'rectangle' || activeTool === 'fibonacci')) {
       const x1 = timeToX(pendingPoint.time)
       if (x1 !== null) {
@@ -399,7 +399,7 @@ function DrawingLayer({
 }
 
 // ============================
-// 単一チャートコンポーネント
+// 单个图表组件
 // ============================
 export interface ChartMarker {
   time: number    // unix seconds
@@ -423,12 +423,13 @@ interface ChartPanelProps {
   isMain?: boolean
   ticker: { lastPrice: number; change24h: number }
   markers?: ChartMarker[]
+  testerVisible?: boolean
 }
 
 function ChartPanel({
   candles, tf, market, indicatorParams, drawings, activeTool,
   onDrawingComplete, onDeleteDrawing, hasMore, loadMoreCandles, isMain = true, ticker,
-  markers = [],
+  markers = [], testerVisible = false,
 }: ChartPanelProps) {
   const mainContainerRef = useRef<HTMLDivElement>(null)
   const volumeContainerRef = useRef<HTMLDivElement>(null)
@@ -448,6 +449,7 @@ function ChartPanel({
   const obvChartRef = useRef<IChartApi | null>(null)
   // lightweight-charts v5: markers are managed via createSeriesMarkers(), not series.setMarkers()
   const markersInstanceRef = useRef<ReturnType<typeof createSeriesMarkers> | null>(null)
+  const candleSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
 
 
   const [crosshairData, setCrosshairData] = useState<{
@@ -508,25 +510,12 @@ function ChartPanel({
       wickUpColor: CHART_COLORS.up, wickDownColor: CHART_COLORS.down,
     })
     candleSeries.setData(sorted.map(c => ({ time: c.time as Time, open: c.open, high: c.high, low: c.low, close: c.close })))
+    candleSeriesRef.current = candleSeries
 
-    // Strategy markers — lightweight-charts v5 uses createSeriesMarkers(), not series.setMarkers()
+    // markers 在单独的 useEffect 中更新（在此处理会导致图表重建 → 视角重置）
     if (markersInstanceRef.current) {
       try { markersInstanceRef.current.detach() } catch { /* already detached */ }
       markersInstanceRef.current = null
-    }
-    if (markers.length > 0) {
-      const validTimes = new Set(sorted.map(c => c.time))
-      const lwtMarkers = markers
-        .filter(m => validTimes.has(m.time))
-        .sort((a, b) => a.time - b.time)
-        .map(m => ({
-          time: m.time as Time,
-          position: m.position,
-          color: m.color,
-          shape: m.shape,
-          text: m.text ?? '',
-        }))
-      markersInstanceRef.current = createSeriesMarkers(candleSeries as any, lwtMarkers as any) as any
     }
 
     // MA
@@ -576,9 +565,12 @@ function ChartPanel({
       })
     })
 
-    // 视图范围恢复
+    // 视图范围恢复（用 rAF 确保数据渲染完再恢复）
     if (savedRangeRef.current) {
-      chart.timeScale().setVisibleLogicalRange(savedRangeRef.current)
+      const rangeToRestore = savedRangeRef.current
+      requestAnimationFrame(() => {
+        chart.timeScale().setVisibleLogicalRange(rangeToRestore)
+      })
     }
 
     const handleResize = () => chart.applyOptions({ width: container.clientWidth })
@@ -592,7 +584,38 @@ function ChartPanel({
         mainChartRef.current = null
       }
     }
-  }, [candles, indicatorParams, markers, syncTimeScales])
+  }, [candles, indicatorParams, syncTimeScales])
+
+  // markers 专用更新 —— 不重建图表，不重置视点
+  useEffect(() => {
+    const series = candleSeriesRef.current
+    if (!series) return
+    if (markersInstanceRef.current) {
+      try { markersInstanceRef.current.detach() } catch { /* already detached */ }
+      markersInstanceRef.current = null
+    }
+    if (markers.length > 0) {
+      const sorted = [...candles].sort((a, b) => a.time - b.time)
+      const candleTimes = sorted.map(c => c.time)
+      const validTimes = new Set(candleTimes)
+      // 마커 time이 정확히 일치하지 않으면 가장 가까운 캔들 time으로 스냅
+      const snapToCandle = (t: number): number => {
+        if (validTimes.has(t)) return t
+        let lo = 0, hi = candleTimes.length - 1
+        while (lo < hi) {
+          const mid = (lo + hi) >> 1
+          if (candleTimes[mid] < t) lo = mid + 1
+          else hi = mid
+        }
+        return candleTimes[lo] ?? t
+      }
+      const lwtMarkers = markers
+        .map(m => ({ ...m, time: snapToCandle(m.time) }))
+        .sort((a, b) => a.time - b.time)
+        .map(m => ({ time: m.time as Time, position: m.position, color: m.color, shape: m.shape, text: m.text ?? '' }))
+      markersInstanceRef.current = createSeriesMarkers(series as any, lwtMarkers as any) as any
+    }
+  }, [markers, candles])
 
   // 成交量（含 Volume MA）：统一重建
   useEffect(() => {
@@ -797,7 +820,7 @@ function ChartPanel({
     }
   }, [candles, indicatorParams.obv, syncTimeScales])
 
-  // 指標終了時クリーンアップ
+  // 指标关闭时清理
   useEffect(() => {
     if (!indicatorParams.rsi.enabled && rsiChartRef.current) { rsiChartRef.current.remove(); rsiChartRef.current = null }
     if (!indicatorParams.macd.enabled && macdChartRef.current) { macdChartRef.current.remove(); macdChartRef.current = null }
@@ -806,7 +829,7 @@ function ChartPanel({
     if (!indicatorParams.obv.enabled && obvChartRef.current) { obvChartRef.current.remove(); obvChartRef.current = null }
   }, [indicatorParams.rsi.enabled, indicatorParams.macd.enabled, indicatorParams.stochastic.enabled, indicatorParams.atr.enabled, indicatorParams.obv.enabled])
 
-  // 画線キャンバスのリサイズ
+  // 画线画布的尺寸调整
   useEffect(() => {
     const canvas = drawingCanvasRef.current
     const container = mainContainerRef.current
@@ -823,7 +846,7 @@ function ChartPanel({
     return () => observer.disconnect()
   }, [])
 
-  // キャンバスマウスイベント（画線）
+  // 画布鼠标事件（画线）
   const handleCanvasMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = drawingCanvasRef.current
     if (!canvas) return
@@ -848,7 +871,7 @@ function ChartPanel({
     const ts = chart.timeScale()
     const time = ts.coordinateToTime(x)
     if (time !== null) return time as number
-    // フォールバック：補間
+    // 回退：插值
     if (candles.length === 0) return Date.now() / 1000
     const rect = canvas.getBoundingClientRect()
     const ratio = x / rect.width
@@ -946,8 +969,8 @@ function ChartPanel({
 
       {/* 主K線図 */}
       <div style={{ position: 'relative' }} onContextMenu={handleContextMenu}>
-        <div ref={mainContainerRef} style={{ height: 380, width: '100%' }} />
-        {/* 画線キャンバス — cursor模式时pointer-events:none，让图表正常拖动 */}
+        <div ref={mainContainerRef} style={{ height: testerVisible ? 260 : 380, width: '100%' }} />
+        {/* 画线画布 — cursor模式时pointer-events:none，让图表正常拖动 */}
         <canvas
           ref={drawingCanvasRef}
           style={{
@@ -972,7 +995,7 @@ function ChartPanel({
           selectedId={selectedDrawingId}
           onSelectDrawing={setSelectedDrawingId}
         />
-        {/* テキスト入力オーバーレイ */}
+        {/* 文字输入浮层 */}
         {textInputState && (
           <div style={{ position: 'absolute', left: textInputState.x, top: textInputState.y, zIndex: 30 }}>
             <input
@@ -1005,7 +1028,7 @@ function ChartPanel({
               minWidth: 180, boxShadow: '0 8px 24px rgba(0,0,0,0.6)', overflow: 'hidden',
             }}>
               {[
-                { label: '重置视图', action: () => { mainChartRef.current?.timeScale().resetTimeScale(); closeContextMenu() } },
+                { label: '重置视图', action: () => { mainChartRef.current?.applyOptions({ timeScale: { barSpacing: 8, rightOffset: 5 } }); mainChartRef.current?.timeScale().scrollToRealTime(); mainChartRef.current?.priceScale('right').applyOptions({ autoScale: true }); closeContextMenu() } },
                 { label: '最新K线', action: () => { mainChartRef.current?.timeScale().scrollToRealTime(); closeContextMenu() } },
                 { label: '清空画线', action: () => { if (confirm('确认清空所有画线？')) { onDeleteDrawing('__all__'); closeContextMenu() } } },
                 { label: '取消画线模式', action: () => { setPendingPoint(null); closeContextMenu() }, dimmed: !pendingPoint },
@@ -1035,14 +1058,14 @@ function ChartPanel({
         <div style={{ padding: '4px 12px', fontSize: 10, color: 'var(--text-dim)' }}>
           成交量{indicatorParams.volume_ma.enabled ? ` · MA(${indicatorParams.volume_ma.period})` : ''}
         </div>
-        <div ref={volumeContainerRef} style={{ height: 80, width: '100%' }} />
+        <div ref={volumeContainerRef} style={{ height: testerVisible ? 50 : 80, width: '100%' }} />
       </div>
 
       {/* RSI */}
       {indicatorParams.rsi.enabled && (
         <div style={{ borderTop: '1px solid var(--border)' }}>
           <div style={{ padding: '4px 12px', fontSize: 10, color: 'var(--text-dim)' }}>RSI ({indicatorParams.rsi.period})</div>
-          <div ref={rsiContainerRef} style={{ height: 110, width: '100%' }} />
+          <div ref={rsiContainerRef} style={{ height: testerVisible ? 70 : 110, width: '100%' }} />
         </div>
       )}
 
@@ -1050,7 +1073,7 @@ function ChartPanel({
       {indicatorParams.macd.enabled && (
         <div style={{ borderTop: '1px solid var(--border)' }}>
           <div style={{ padding: '4px 12px', fontSize: 10, color: 'var(--text-dim)' }}>MACD ({indicatorParams.macd.fast},{indicatorParams.macd.slow},{indicatorParams.macd.signal})</div>
-          <div ref={macdContainerRef} style={{ height: 110, width: '100%' }} />
+          <div ref={macdContainerRef} style={{ height: testerVisible ? 70 : 110, width: '100%' }} />
         </div>
       )}
 
@@ -1058,7 +1081,7 @@ function ChartPanel({
       {indicatorParams.stochastic.enabled && (
         <div style={{ borderTop: '1px solid var(--border)' }}>
           <div style={{ padding: '4px 12px', fontSize: 10, color: 'var(--text-dim)' }}>Stochastic ({indicatorParams.stochastic.k_period},{indicatorParams.stochastic.k_smooth},{indicatorParams.stochastic.d_period})</div>
-          <div ref={stochContainerRef} style={{ height: 110, width: '100%' }} />
+          <div ref={stochContainerRef} style={{ height: testerVisible ? 70 : 110, width: '100%' }} />
         </div>
       )}
 
@@ -1066,7 +1089,7 @@ function ChartPanel({
       {indicatorParams.atr.enabled && (
         <div style={{ borderTop: '1px solid var(--border)' }}>
           <div style={{ padding: '4px 12px', fontSize: 10, color: 'var(--text-dim)' }}>ATR ({indicatorParams.atr.period})</div>
-          <div ref={atrContainerRef} style={{ height: 100, width: '100%' }} />
+          <div ref={atrContainerRef} style={{ height: testerVisible ? 60 : 100, width: '100%' }} />
         </div>
       )}
 
@@ -1078,14 +1101,14 @@ function ChartPanel({
         </div>
       )}
 
-      {/* isMain でのみ注記表示 */}
+      {/* 仅 isMain 时显示注释 */}
       {isMain && (
         <div style={{ padding: '4px 12px 8px', fontSize: 11, color: 'var(--text-dim)', textAlign: 'right' }}>
           数据来源：OKX 公共 API · {market === 'swap' ? 'BTC/USDT 永续' : 'BTC/USDT 现货'} · {TF_LABELS[tf] ?? tf} · 每 10 秒更新
         </div>
       )}
 
-      {/* 価格表示（分割モード用サブ） */}
+      {/* 价格显示（分屏模式副图） */}
       {!isMain && (
         <div style={{ padding: '4px 12px', fontSize: 11, color: 'var(--text-dim)' }}>
           {TF_LABELS[tf] ?? tf} &nbsp;
@@ -1100,7 +1123,7 @@ function ChartPanel({
 // All indicators disabled by default; chart shows clean K-lines only.
 
 // ============================
-// 永続情報パネル
+// 永续合约信息面板
 // ============================
 function PerpInfoPanel({ info, lastPrice }: { info: PerpInfo; lastPrice: number }) {
   const [now, setNow] = useState(Date.now())
@@ -1149,7 +1172,7 @@ function PerpInfoPanel({ info, lastPrice }: { info: PerpInfo; lastPrice: number 
 }
 
 // ============================
-// メインページ
+// 主页面
 // ============================
 export default function ChartPage() {
   const [market, setMarket] = useState<Market>('swap')
@@ -1202,17 +1225,23 @@ export default function ChartPage() {
       let emptyCount = 0 // 连续空页计数，防止无限循环
 
       while (allMap.size < MAX) {
-        const { candles: page } = await fetchPage(interval, mkt, before)
-        if (page.length === 0) {
-          emptyCount++
-          if (emptyCount >= 3) break // 连续3次空页，认为到头了
-          continue
+        try {
+          await new Promise(r => setTimeout(r, 200))
+          const { candles: page } = await fetchPage(interval, mkt, before)
+          if (page.length === 0) {
+            emptyCount++
+            if (emptyCount >= 3) break
+            continue
+          }
+          emptyCount = 0
+          page.forEach(c => allMap.set(c.time, c))
+          const newMin = Math.min(...page.map(c => c.time))
+          if (newMin >= before) break
+          before = newMin
+        } catch {
+          // 限流或网络中断时保留已获取数据，优雅退出
+          break
         }
-        emptyCount = 0
-        page.forEach(c => allMap.set(c.time, c))
-        const newMin = Math.min(...page.map(c => c.time))
-        if (newMin >= before) break // 没有更早的数据了
-        before = newMin
       }
 
       // 排序去重后一次性写入
@@ -1258,7 +1287,7 @@ export default function ChartPage() {
     } catch {/* silent */}
   }, [])
 
-  // 初期ロード
+  // 初始加载
   useEffect(() => {
     setLoading(true)
     Promise.all([
@@ -1268,13 +1297,13 @@ export default function ChartPage() {
     ]).finally(() => setLoading(false))
   }, [tf, market, loadCandles, loadTicker, loadPerpInfo])
 
-  // 分割パネルのロード
+  // 分屏面板加载
   useEffect(() => {
     if (!isSplit) return
     loadCandles(splitTf, market, undefined, true)
   }, [isSplit, splitTf, market, loadCandles])
 
-  // 10秒ごとに最新K線更新
+  // 每10秒更新最新K线（直接 series.update() → 不重置视角）
   useEffect(() => {
     const id = setInterval(async () => {
       await loadTicker(market)
@@ -1283,21 +1312,23 @@ export default function ChartPage() {
       const res = await fetch(`/api/chart/klines?interval=${tf}&limit=2&market=${market}`)
       if (!res.ok) return
       const { candles: latest } = await res.json()
-      if (latest?.length > 0) {
-        setCandles(prev => {
-          if (prev.length === 0) return prev
-          const updated = [...prev]
-          const last = latest[latest.length - 1]
-          if (updated[updated.length - 1].time === last.time) updated[updated.length - 1] = last
-          else updated.push(last)
-          return updated
-        })
-      }
+      if (!latest?.length) return
+
+      const last = latest[latest.length - 1]
+
+      // 静默更新 candles state（仅追加/更新最新一根，不触发图表重建）
+      setCandles(prev => {
+        if (prev.length === 0) return prev
+        const updated = [...prev]
+        if (updated[updated.length - 1].time === last.time) updated[updated.length - 1] = last
+        else updated.push(last)
+        return updated
+      })
     }, 10_000)
     return () => clearInterval(id)
   }, [tf, market, loadTicker, loadPerpInfo])
 
-  // ローカルストレージから画線読み込み
+  // 从 localStorage 加载画线
   useEffect(() => {
     const key = `drawings_${market}_${tf}`
     const saved = localStorage.getItem(key)
@@ -1314,7 +1345,7 @@ export default function ChartPage() {
     }
   }, [isSplit, market, splitTf])
 
-  // 画線を保存
+  // 保存画线
   const saveDrawings = useCallback((newDrawings: Drawing[], isSplt = false) => {
     const key = `drawings_${market}_${isSplt ? splitTf : tf}`
     localStorage.setItem(key, JSON.stringify(newDrawings))
@@ -1338,7 +1369,7 @@ export default function ChartPage() {
     saveDrawings([])
   }, [saveDrawings])
 
-  // スクリーンショット
+  // 截图
   const handleScreenshot = useCallback(async () => {
     const container = mainChartContainerRef.current
     if (!container) return
@@ -1382,7 +1413,7 @@ export default function ChartPage() {
 
   const isUp = ticker.change24h >= 0
 
-  // 描画ツールボタン設定
+  // 画线工具按钮配置
   const drawingTools: { tool: ActiveTool; label: string; title: string }[] = [
     { tool: 'cursor',     label: '↖', title: '选择' },
     { tool: 'trendline',  label: '╱', title: '趋势线' },
@@ -1396,15 +1427,14 @@ export default function ChartPage() {
   const [testerVisible, setTesterVisible] = useState(true)
 
   // ── Strategy selector state ──────────────────────────────────────────────
-  const BUILTIN_STRATEGIES = [
-    { id: 'TurtleSslDualStrategy', name: '海龟 6-Pattern 综合策略' },
-    { id: 'MaCrossStrategy', name: 'MA 双均线交叉' },
-    { id: 'BollingerBreakoutStrategy', name: '布林带突破' },
-    { id: 'MacdStrategy', name: 'MACD 趋势' },
-    { id: 'RsiStrategy', name: 'RSI 超买超卖' },
-    { id: 'AtrChannelStrategy', name: 'ATR 通道' },
-    { id: 'DcaStrategy', name: 'DCA 定投定抛' },
-  ]
+  const [builtinStrategies, setBuiltinStrategies] = useState<{ id: string; name: string }[]>([])
+  useEffect(() => {
+    fetch('/py-api/api/templates')
+      .then(r => r.json())
+      .then((data: { id: string; name: string; category?: string }[]) => setBuiltinStrategies(data))
+      .catch(() => {})
+  }, [])
+  const [selectedStrategy, setSelectedStrategy] = useState<string | null>(null)
   const [activeStrategy, setActiveStrategy] = useState<string | null>(null)
   const [strategyDropdownOpen, setStrategyDropdownOpen] = useState(false)
   const [strategyLoading, setStrategyLoading] = useState(false)
@@ -1413,7 +1443,9 @@ export default function ChartPage() {
   const [testerTrades, setTesterTrades] = useState<import('@/components/StrategyTesterPanel').TradeRecord[]>([])
   const [testerLogs, setTesterLogs] = useState<string[]>([])
   const [testerBtId, setTesterBtId] = useState<string | null>(null)
+  const [testerEquity, setTesterEquity] = useState<{time:number;equity:number}[]>([])
   const [testerRunning, setTesterRunning] = useState(false)
+  const [testerFtmoScan, setTesterFtmoScan] = useState<import('@/components/StrategyTesterPanel').FtmoScanResult | null>(null)
   const strategyDropdownRef = useRef<HTMLDivElement>(null)
 
   // ── Strategy settings modal ──────────────────────────────────────────────
@@ -1445,103 +1477,165 @@ export default function ChartPage() {
     setTesterLogs([])
     setTesterSummary(null)
     setTesterTrades([])
+    setTesterEquity([])
     setChartMarkers([])
     setActiveStrategy(strategyId)
+    setSelectedStrategy(strategyId)
     setTesterVisible(true)
 
     const capital  = opts?.capital  ?? settingsCapital
-    const dateFrom = opts?.dateFrom ?? settingsDateFrom
-    const dateTo   = opts?.dateTo   ?? settingsDateTo
-    const timerange = `${dateFrom}-${dateTo}`
 
     try {
-      // Get auth token
-      const { createClient } = await import('@/lib/supabase/client')
-      const sb = createClient()
-      const { data } = await sb.auth.getSession()
-      const authHeader = `Bearer ${data.session?.access_token ?? ''}`
-
-      // Step 1: ensure strategy exists in DB (save from template)
-      const templateRes = await fetch(`/py-api/api/templates/${strategyId}/code`)
+      // Step 1: fetch template code（禁用缓存，确保拉到最新策略代码）
+      const templateRes = await fetch(`/py-api/api/templates/${strategyId}/code?t=${Date.now()}`, { cache: 'no-store' })
       if (!templateRes.ok) throw new Error('无法加载策略模板')
       const { code } = await templateRes.json()
 
-      const saveRes = await fetch('/py-api/api/strategies', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: authHeader },
-        body: JSON.stringify({ name: BUILTIN_STRATEGIES.find(s => s.id === strategyId)?.name ?? strategyId, code }),
-      })
-      let strategyDbId: string
-      if (saveRes.ok) {
-        const saved = await saveRes.json()
-        strategyDbId = Array.isArray(saved) ? saved[0].id : saved.id
-      } else {
-        // Strategy might already exist — list and find it
-        const listRes = await fetch('/py-api/api/strategies', { headers: { Authorization: authHeader } })
-        const list = listRes.ok ? await listRes.json() : []
-        const found = list.find((s: { class_name: string; id: string }) => s.class_name === strategyId)
-        if (!found) throw new Error('策略保存失败')
-        strategyDbId = found.id
-      }
+      // Step 2: run backtest via stateless /api/backtest/dynamic (no auth, no DB)
+      setTesterLogs([`▶ 提交回测：${tf} | $${capital.toLocaleString()}`])
 
-      // Step 2: submit backtest — use current chart timeframe (tf) and user-chosen settings
-      setTesterLogs([`▶ 提交回测：${tf} | ${dateFrom}~${dateTo} | $${capital.toLocaleString()}`])
-      const btRes = await fetch('/py-api/api/backtests', {
+      const btRes = await fetch(`/py-api/api/backtest/dynamic`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: authHeader },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          strategy_id: strategyDbId,
-          timeframe: tf,          // ← always from the chart's current timeframe selector
-          timerange,
-          market: 'futures',
-          initial_capital: capital,
-          leverage: 1,
-          fee_pct: 0.05,
+          code,
+          symbol: 'BTC/USDT',
+          timeframe: tf,
+          parameters: { start_date: '2019-12-16 13:00:00' },
         }),
       })
-      if (!btRes.ok) throw new Error('回测提交失败')
-      const { backtest_id } = await btRes.json()
-      setTesterBtId(backtest_id)
-      setTesterLogs(p => [...p, `✓ 回测已提交 (ID: ${backtest_id.slice(0, 8)})`])
+      if (!btRes.ok) {
+        const errBody = await btRes.text()
+        throw new Error(`回测失败: ${errBody.slice(0, 200)}`)
+      }
+      const result = await btRes.json()
 
-      // Step 3: poll until done
-      let done = false
-      while (!done) {
-        await new Promise(r => setTimeout(r, 3000))
-        const pollRes = await fetch(`/py-api/api/backtests/${backtest_id}`, { headers: { Authorization: authHeader } })
-        if (!pollRes.ok) continue
-        const d = await pollRes.json()
-        if (d.status === 'running') setTesterLogs(p => [...p.slice(-30), '⏳ 回测运行中...'])
-        if (d.status === 'completed') {
-          done = true
-          const m = d.result?.metrics
-          if (m) {
-            setTesterSummary({ ...m, initial_capital: capital })
-            // Build buy/sell markers from trades
-            const trades: import('@/components/StrategyTesterPanel').TradeRecord[] = (d.result?.trades ?? []).map((t: Record<string, unknown>) => ({
-              entry_time:  t.open_timestamp ? Math.floor((t.open_timestamp as number) / 1000) : 0,
-              exit_time:   t.close_timestamp ? Math.floor((t.close_timestamp as number) / 1000) : undefined,
-              pair:        String(t.pair ?? 'BTC/USDT'),
-              direction:   'long' as const,
-              entry_price: Number(t.open_rate ?? 0),
-              exit_price:  Number(t.close_rate ?? 0),
-              pnl_pct:     Number(t.profit_ratio ?? 0),
-              pnl_abs:     Number(t.profit_abs ?? 0),
-            }))
-            setTesterTrades(trades)
-            const markers: ChartMarker[] = []
-            trades.forEach(t => {
-              if (t.entry_time) markers.push({ time: t.entry_time, position: 'belowBar', color: '#26a69a', shape: 'arrowUp', text: 'B' })
-              if (t.exit_time)  markers.push({ time: t.exit_time,  position: 'aboveBar', color: '#ef5350', shape: 'arrowDown', text: 'S' })
-            })
-            setChartMarkers(markers)
-            setTesterLogs(p => [...p, `✓ 回测完成 — 净收益 ${m.net_profit_pct >= 0 ? '+' : ''}${m.net_profit_pct.toFixed(2)}% | ${m.total_trades} 笔交易`])
-          }
+      // Step 3: process results synchronously
+      const m = result.metrics
+      if (m) {
+        setTesterSummary({
+          // 表现
+          initial_capital:           m.initial_capital ?? capital,
+          end_value:                 m.end_value,
+          net_profit_pct:            m.total_return_pct ?? 0,
+          net_profit_abs:            m.net_profit_abs,
+          gross_profit_abs:          m.gross_profit_abs,
+          gross_loss_abs:            m.gross_loss_abs,
+          gross_profit_long:         m.gross_profit_long,
+          gross_loss_long:           m.gross_loss_long,
+          gross_profit_short:        m.gross_profit_short,
+          gross_loss_short:          m.gross_loss_short,
+          expectancy_abs:            m.expectancy_abs,
+          commission_paid:           m.commission_paid,
+          benchmark_return_pct:      m.benchmark_return_pct,
+          benchmark_return_abs:      m.benchmark_return_abs,
+          cagr_pct:                  m.cagr_pct,
+          max_drawdown_pct:          m.max_drawdown_pct ?? 0,
+          ftmo_drawdown_pct:         m.ftmo_drawdown_pct ?? null,
+          max_drawdown_duration_days: m.max_drawdown_duration_days,
+          avg_drawdown_duration_days: m.avg_drawdown_duration_days ?? null,
+          avg_drawdown_pct:           m.avg_drawdown_pct ?? null,
+          max_dd_profit_at_trough:    m.max_dd_profit_at_trough ?? null,
+          open_trade_pnl:            m.open_trade_pnl,
+          // 交易分析
+          total_trades:              m.total_trades ?? 0,
+          win_trades:                m.win_trades,
+          loss_trades:               m.loss_trades,
+          total_trades_long:         m.total_trades_long,
+          total_trades_short:        m.total_trades_short,
+          win_trades_long:           m.win_trades_long,
+          loss_trades_long:          m.loss_trades_long,
+          win_trades_short:          m.win_trades_short,
+          loss_trades_short:         m.loss_trades_short,
+          win_rate_pct:              m.win_rate_pct ?? 0,
+          avg_win_abs:               m.avg_win_abs,
+          avg_loss_abs:              m.avg_loss_abs,
+          avg_win_pct:               m.avg_win_pct,
+          avg_loss_pct:              m.avg_loss_pct,
+          max_win_abs:               m.max_win_abs,
+          max_loss_abs:              m.max_loss_abs,
+          max_win_pct:               m.max_win_pct,
+          max_loss_pct:              m.max_loss_pct,
+          payoff_ratio:              m.payoff_ratio,
+          avg_bars_all:              m.avg_bars_all,
+          avg_bars_win:              m.avg_bars_win,
+          avg_bars_loss:             m.avg_bars_loss,
+          max_consec_win:            m.max_consec_win ?? null,
+          max_consec_loss:           m.max_consec_loss ?? null,
+          // 风险调整
+          sharpe:                    m.sharpe,
+          sortino:                   m.sortino,
+          calmar:                    m.calmar,
+          omega:                     m.omega,
+          profit_factor:             m.profit_factor,
+          // 元信息
+          backtest_start:            m.backtest_start,
+          backtest_end:              m.backtest_end,
+          timeframe:                 m.timeframe,
+        })
+
+        // Build buy/sell markers from trades
+        // ISO 8601 T 형식으로 통일된 타임스탬프를 UTC로 파싱
+        const parseUtcTs = (s: unknown): number => {
+          if (!s) return 0
+          const str = String(s)
+          // 'T' 없으면 보완 (구형 데이터 호환)
+          const iso = str.includes('T') ? str : str.replace(' ', 'T')
+          // UTC임을 명시하기 위해 Z 접미사 추가 (없는 경우만)
+          const utc = iso.endsWith('Z') || iso.includes('+') ? iso : iso + 'Z'
+          return Math.floor(new Date(utc).getTime() / 1000)
         }
-        if (d.status === 'failed') {
-          done = true
-          setTesterLogs(p => [...p, `✗ 回测失败: ${d.error ?? '未知错误'}`])
-        }
+        const trades: import('@/components/StrategyTesterPanel').TradeRecord[] = (result.trades ?? []).map((t: Record<string, unknown>) => ({
+          entry_time:  parseUtcTs(t['Entry Timestamp']),
+          exit_time:   t['Exit Timestamp'] ? parseUtcTs(t['Exit Timestamp']) : undefined,
+          pair:        'BTC/USDT',
+          direction:   String(t['Direction'] ?? 'Long').toLowerCase() as 'long' | 'short',
+          entry_price: Number(t['Avg Entry Price'] ?? t['Entry Price'] ?? 0),
+          exit_price:  Number(t['Avg Exit Price']  ?? t['Exit Price']  ?? 0),
+          pnl_pct:     Number(t['Return'] ?? 0) * 100,
+          pnl_abs:     Number(t['PnL'] ?? 0),
+          size:        t['Size'] != null ? Number(t['Size']) : undefined,
+          signal:      t['Signal'] != null ? String(t['Signal']) : undefined,
+          exit_signal: t['ExitSignal'] != null ? String(t['ExitSignal']) : undefined,
+        }))
+        setTesterTrades(trades)
+        setTesterEquity((result.equity ?? []) as {time:number;equity:number}[])
+        if (result.csv_token) setTesterBtId(result.csv_token)
+
+        // FTMO 扫描：用已有的 equity + trades 数据，不需要再跑一次回测
+        const initCap = m.initial_capital ?? capital
+        fetch('/py-api/api/backtest/ftmo_scan', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code, symbol: 'BTC/USDT', timeframe: tf, parameters: { start_date: '2019-12-16 13:00:00' } }),
+        })
+          .then(r => r.ok ? r.json() : null)
+          .then(data => { if (data?.ftmo_scan) setTesterFtmoScan(data.ftmo_scan) })
+          .catch(() => {})
+          void initCap
+
+        const markers: ChartMarker[] = []
+        trades.forEach(t => {
+          const isLong = t.direction === 'long'
+          // 开多：绿色箭头朝上；开空：红色箭头朝下
+          if (t.entry_time) markers.push({
+            time:     t.entry_time,
+            position: isLong ? 'belowBar' : 'aboveBar',
+            color:    isLong ? '#26a69a' : '#ef5350',
+            shape:    isLong ? 'arrowUp' : 'arrowDown',
+            text:     isLong ? '做多' : '做空',
+          })
+          // 平仓：紫色，多仓平仓在上方，空仓平仓在下方
+          if (t.exit_time) markers.push({
+            time:     t.exit_time,
+            position: isLong ? 'aboveBar' : 'belowBar',
+            color:    '#9c27b0',
+            shape:    isLong ? 'arrowDown' : 'arrowUp',
+            text:     '平仓',
+          })
+        })
+        setChartMarkers(markers)
+        setTesterLogs(p => [...p, `✓ 回测完成 — 净收益 ${m.total_return_pct >= 0 ? '+' : ''}${m.total_return_pct.toFixed(2)}% | ${m.total_trades} 笔交易`])
       }
     } catch (e: unknown) {
       setTesterLogs(p => [...p, `✗ ${(e as Error).message}`])
@@ -1650,7 +1744,7 @@ export default function ChartPage() {
               }}
             >
               <span style={{ fontStyle: 'italic', fontFamily: 'Georgia, serif', fontSize: 14, lineHeight: 1 }}>ƒx</span>
-              <span>{strategyLoading ? '运行中…' : activeStrategy ? BUILTIN_STRATEGIES.find(s => s.id === activeStrategy)?.name : '策略库'}</span>
+              <span>{strategyLoading ? '运行中…' : activeStrategy ? builtinStrategies.find(s => s.id === activeStrategy)?.name : selectedStrategy ? builtinStrategies.find(s => s.id === selectedStrategy)?.name : '策略库'}</span>
               <span style={{ fontSize: 9, opacity: 0.7 }}>{strategyDropdownOpen ? '▲' : '▼'}</span>
             </button>
 
@@ -1664,28 +1758,44 @@ export default function ChartPage() {
                 <div style={{ padding: '8px 12px 4px', fontSize: 10, color: 'var(--text-mute)', fontWeight: 600, letterSpacing: '0.06em' }}>
                   内置策略
                 </div>
-                {BUILTIN_STRATEGIES.map(s => (
+                {builtinStrategies.map(s => (
                   <button
                     key={s.id}
-                    onClick={() => handleApplyStrategy(s.id)}
+                    onClick={() => setSelectedStrategy(s.id)}
                     style={{
                       display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                       width: '100%', textAlign: 'left', padding: '9px 14px',
-                      background: activeStrategy === s.id ? 'rgba(38,166,154,0.1)' : 'none',
+                      background: selectedStrategy === s.id ? 'rgba(38,166,154,0.15)' : 'none',
                       border: 'none', cursor: 'pointer',
-                      color: activeStrategy === s.id ? 'var(--up)' : 'var(--text)',
+                      color: selectedStrategy === s.id ? 'var(--up)' : 'var(--text)',
                       fontSize: 13,
                     }}
                     onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.06)')}
-                    onMouseLeave={e => (e.currentTarget.style.background = activeStrategy === s.id ? 'rgba(38,166,154,0.1)' : 'none')}
+                    onMouseLeave={e => (e.currentTarget.style.background = selectedStrategy === s.id ? 'rgba(38,166,154,0.15)' : 'none')}
                   >
                     <span>{s.name}</span>
-                    {activeStrategy === s.id && <span style={{ fontSize: 10, color: 'var(--up)' }}>● 运行中</span>}
+                    {activeStrategy === s.id && <span style={{ fontSize: 10, color: 'var(--up)' }}>● 已运行</span>}
                   </button>
                 ))}
                 <div style={{ height: 1, background: 'var(--border)', margin: '4px 0' }} />
+                <div style={{ padding: '6px 10px 8px' }}>
+                  <button
+                    disabled={!selectedStrategy || strategyLoading}
+                    onClick={() => { if (selectedStrategy) handleApplyStrategy(selectedStrategy) }}
+                    style={{
+                      width: '100%', padding: '7px 0', borderRadius: 6, border: 'none',
+                      background: selectedStrategy && !strategyLoading ? 'var(--up)' : 'rgba(38,166,154,0.2)',
+                      color: selectedStrategy && !strategyLoading ? '#000' : 'var(--text-mute)',
+                      fontWeight: 700, fontSize: 13, cursor: selectedStrategy && !strategyLoading ? 'pointer' : 'not-allowed',
+                      transition: 'all 0.15s',
+                    }}
+                  >
+                    {strategyLoading ? '运行中…' : '▶ 运行回测'}
+                  </button>
+                </div>
+                <div style={{ height: 1, background: 'var(--border)', margin: '0 0 4px' }} />
                 <button
-                  onClick={() => { setStrategyDropdownOpen(false); setActiveStrategy(null); setChartMarkers([]); setTesterSummary(null); setTesterTrades([]); }}
+                  onClick={() => { setStrategyDropdownOpen(false); setSelectedStrategy(null); setActiveStrategy(null); setChartMarkers([]); setTesterSummary(null); setTesterTrades([]); }}
                   style={{ width: '100%', textAlign: 'left', padding: '8px 14px', background: 'none', border: 'none', color: 'var(--text-mute)', fontSize: 12, cursor: 'pointer' }}
                 >
                   清除策略标记
@@ -1695,7 +1805,7 @@ export default function ChartPage() {
           </div>
         </div>
 
-        {/* 右：ツールボタン */}
+        {/* 右：工具按钮 */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           {/* 分屏切换 */}
           <button
@@ -1766,12 +1876,12 @@ export default function ChartPage() {
           </button>
         </div>
 
-        {/* メインチャートエリア */}
+        {/* 主图表区域 */}
         <div style={{ flex: 1, minWidth: 0 }}>
           {isSplit ? (
             /* 分屏布局 */
             <div style={{ display: 'flex', gap: 0 }}>
-              <div ref={mainChartContainerRef} className="card" style={{ flex: 1, minWidth: 0, overflow: 'hidden', borderRight: '1px solid var(--border)' }}>
+              <div className="card" style={{ flex: 1, minWidth: 0, overflow: 'hidden', borderRight: '1px solid var(--border)' }}>
                 {candles.length === 0 && loading ? (
                   <div style={{ height: 380, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-mute)', fontSize: 13 }}>K线加载中...</div>
                 ) : (
@@ -1787,6 +1897,7 @@ export default function ChartPage() {
                     isMain={true}
                     ticker={ticker}
                     markers={chartMarkers}
+                    testerVisible={testerVisible}
                   />
                 )}
               </div>
@@ -1840,6 +1951,7 @@ export default function ChartPage() {
                   isMain={true}
                   ticker={ticker}
                   markers={chartMarkers}
+                  testerVisible={testerVisible}
                 />
               )}
             </div>
@@ -1854,12 +1966,11 @@ export default function ChartPage() {
         onClose={() => setTesterVisible(false)}
         summary={testerSummary}
         trades={testerTrades}
-        equity={[]}
-        csvDownloadUrl={testerBtId ? `/py-api/api/backtests/${testerBtId}/csv` : null}
-        strategyName={activeStrategy ? BUILTIN_STRATEGIES.find(s => s.id === activeStrategy)?.name : undefined}
+        equity={testerEquity}
+        ftmoScan={testerFtmoScan}
+        strategyName={activeStrategy ? builtinStrategies.find(s => s.id === activeStrategy)?.name : undefined}
         logs={testerLogs}
         running={testerRunning}
-        onOpenSettings={activeStrategy ? () => { setSettingsStrategyId(activeStrategy); setSettingsOpen(true) } : undefined}
       />
 
       {/* Re-open tester if closed */}
@@ -1900,7 +2011,7 @@ export default function ChartPage() {
                   ⚙️ 回测设置
                 </div>
                 <div style={{ fontSize: 11, color: 'var(--text-mute)', marginTop: 2 }}>
-                  {BUILTIN_STRATEGIES.find(s => s.id === settingsStrategyId)?.name} · {tf}
+                  {builtinStrategies.find(s => s.id === settingsStrategyId)?.name} · {tf}
                 </div>
               </div>
               <button
@@ -2002,3 +2113,5 @@ export default function ChartPage() {
     </div>
   )
 }
+
+

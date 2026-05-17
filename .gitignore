@@ -27,3 +27,6 @@ Thumbs.db
 *.env.development
 !.env.example
 !.env.local.example
+
+# YoYo AI version control directory
+.yoyo/

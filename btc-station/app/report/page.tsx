@@ -43,78 +43,226 @@ function userParams(params: Record<string, number | boolean | string>) {
 }
 
 // ── Scatter Plot (Return vs Drawdown) ──
-function ScatterPlot({ data, ranked }: { data: { returnPct: number; ddPct: number; passed: boolean; originalIndex: number }[]; ranked: { originalIndex: number }[] }) {
+// Pareto 前沿:不被任何其他点支配的方案(高收益 + 低回撤,左上角)
+function computeScatterPareto(pts: { returnPct: number; ddPct: number; originalIndex: number }[]): Set<number> {
+  const result = new Set<number>()
+  pts.forEach((p, i) => {
+    const dominated = pts.some((q, j) =>
+      i !== j && q.returnPct >= p.returnPct && q.ddPct <= p.ddPct &&
+      (q.returnPct > p.returnPct || q.ddPct < p.ddPct)
+    )
+    if (!dominated) result.add(p.originalIndex)
+  })
+  return result
+}
+
+// 规整刻度:根据 minV 和 maxV 计算合适的网格，不再强制从0开始
+function niceTicks(minV: number, maxV: number, ticks = 5): { ticks: number[]; min: number; max: number } {
+  let range = maxV - minV
+  if (range <= 0) {
+    const pad = maxV === 0 ? 1 : Math.abs(maxV) * 0.1
+    minV -= pad; maxV += pad; range = maxV - minV
+  }
+  const rawStep = range / ticks
+  const mag = Math.pow(10, Math.floor(Math.log10(rawStep)))
+  const norm = rawStep / mag
+  const step = (norm < 1.5 ? 1 : norm < 3 ? 2 : norm < 7 ? 5 : 10) * mag
+  
+  const tickMin = Math.floor(minV / step) * step
+  const tickMax = Math.ceil(maxV / step) * step
+  
+  const result: number[] = []
+  for (let v = tickMin; v <= tickMax + step * 0.001; v += step) {
+    result.push(Number(v.toFixed(4))) // 避免浮点误差
+  }
+  return { ticks: result, min: tickMin, max: tickMax }
+}
+
+type ScatterPoint = { returnPct: number; ddPct: number; passed: boolean; originalIndex: number; combinedScore?: number }
+function ScatterPlot({ data, ranked }: { data: ScatterPoint[]; ranked: { originalIndex: number; combinedScore?: number }[] }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
-  const rankedSet = useMemo(() => new Set(ranked.slice(0, 3).map(r => r.originalIndex)), [ranked])
+  const [hover, setHover] = useState<{ x: number; y: number; pt: ScatterPoint; rank?: number } | null>(null)
+  const top3 = useMemo(() => ranked.slice(0, 3).map(r => r.originalIndex), [ranked])
+  const top3Rank = useMemo(() => new Map(top3.map((idx, i) => [idx, i + 1])), [top3])
 
-  const draw = useCallback((canvas: HTMLCanvasElement, width: number) => {
+  // 只对"通过过滤"的点算 Pareto 前沿
+  const paretoSet = useMemo(() => {
+    const pts = data.filter(d => d.passed).map(d => ({ returnPct: d.returnPct, ddPct: d.ddPct, originalIndex: d.originalIndex }))
+    return computeScatterPareto(pts)
+  }, [data])
+
+  // 用 ref 存 hit-test 用的数据,避免 draw 闭包过旧
+  const pointPositions = useRef<{ x: number; y: number; pt: ScatterPoint }[]>([])
+  const layoutRef = useRef<{ pad: {top:number;right:number;bottom:number;left:number}; W: number; H: number }>({
+    pad: { top: 20, right: 20, bottom: 36, left: 56 }, W: 0, H: 0,
+  })
+
+  const draw = useCallback((canvas: HTMLCanvasElement, width: number, height: number) => {
     if (data.length === 0) return
     const ctx = canvas.getContext('2d')
     if (!ctx) return
-    const H = 260
     const dpr = window.devicePixelRatio || 1
-    canvas.width = width * dpr
-    canvas.height = H * dpr
-    canvas.style.width = width + 'px'
-    canvas.style.height = H + 'px'
+    canvas.width = width * dpr; canvas.height = height * dpr
+    canvas.style.width = width + 'px'; canvas.style.height = height + 'px'
     ctx.scale(dpr, dpr)
-    const W = width
-    const pad = { top: 20, right: 20, bottom: 32, left: 50 }
+    const W = width, H = height
+    const pad = layoutRef.current.pad
+    layoutRef.current.W = W; layoutRef.current.H = H
     const pw = W - pad.left - pad.right, ph = H - pad.top - pad.bottom
 
-    // Ranges
+    // 数据范围 + 规整刻度
     const rets = data.map(d => d.returnPct), dds = data.map(d => d.ddPct)
-    const minR = Math.min(0, ...rets), maxR = Math.max(...rets) * 1.1
-    const minD = 0, maxD = Math.max(...dds) * 1.1
-    const scaleX = (v: number) => pad.left + ((v - minD) / (maxD - minD || 1)) * pw
-    const scaleY = (v: number) => pad.top + ph - ((v - minR) / (maxR - minR || 1)) * ph
+    const rawMinR = Math.min(...rets), rawMaxR = Math.max(...rets)
+    const rawMinD = Math.min(...dds), rawMaxD = Math.max(...dds)
+    const rSpan = rawMaxR - rawMinR || Math.abs(rawMaxR) * 0.1 || 1
+    const dSpan = rawMaxD - rawMinD || Math.abs(rawMaxD) * 0.1 || 1
+    
+    const xAxis = niceTicks(rawMinD - dSpan * 0.05, rawMaxD + dSpan * 0.05, 6)
+    const yAxis = niceTicks(rawMinR - rSpan * 0.05, rawMaxR + rSpan * 0.05, 6)
+    
+    const xTicks = xAxis.ticks, xMin = xAxis.min, xMax = xAxis.max
+    const yTicks = yAxis.ticks, yMin = yAxis.min, yMax = yAxis.max
+    
+    const scaleX = (v: number) => pad.left + ((v - xMin) / (xMax - xMin || 1)) * pw
+    const scaleY = (v: number) => pad.top + ph - ((v - yMin) / (yMax - yMin || 1)) * ph
 
     ctx.clearRect(0, 0, W, H)
 
-    // Grid
-    ctx.strokeStyle = 'rgba(255,255,255,0.06)'; ctx.lineWidth = 1
-    for (let i = 0; i <= 4; i++) {
-      const y = pad.top + (ph / 4) * i; ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(W - pad.right, y); ctx.stroke()
-      const x = pad.left + (pw / 4) * i; ctx.beginPath(); ctx.moveTo(x, pad.top); ctx.lineTo(x, pad.top + ph); ctx.stroke()
-    }
+    // 网格
+    ctx.strokeStyle = 'rgba(255,255,255,0.05)'; ctx.lineWidth = 1
+    xTicks.forEach(v => { const x = scaleX(v); ctx.beginPath(); ctx.moveTo(x, pad.top); ctx.lineTo(x, pad.top + ph); ctx.stroke() })
+    yTicks.forEach(v => { const y = scaleY(v); ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(W - pad.right, y); ctx.stroke() })
 
-    // Axis labels
-    ctx.fillStyle = 'rgba(255,255,255,0.3)'; ctx.font = '10px monospace'; ctx.textAlign = 'center'
-    ctx.fillText('回撤 %', pad.left + pw / 2, H - 4)
-    ctx.save(); ctx.translate(12, pad.top + ph / 2); ctx.rotate(-Math.PI / 2); ctx.fillText('收益 %', 0, 0); ctx.restore()
+    // 坐标轴
+    ctx.strokeStyle = 'rgba(255,255,255,0.2)'
+    ctx.beginPath(); ctx.moveTo(pad.left, pad.top); ctx.lineTo(pad.left, pad.top + ph); ctx.lineTo(W - pad.right, pad.top + ph); ctx.stroke()
 
-    // Ticks
+    // 刻度文字
+    ctx.fillStyle = 'rgba(255,255,255,0.5)'; ctx.font = '10px monospace'
     ctx.textAlign = 'right'; ctx.textBaseline = 'middle'
-    for (let i = 0; i <= 4; i++) {
-      const v = minR + ((maxR - minR) / 4) * (4 - i)
-      ctx.fillText(v.toFixed(0), pad.left - 6, pad.top + (ph / 4) * i)
-    }
+    const fmtTick = (v: number) => Number.isInteger(v) ? String(v) : v.toFixed(2).replace(/\.?0+$/, '')
+    yTicks.forEach(v => { ctx.fillText(fmtTick(v), pad.left - 6, scaleY(v)) })
     ctx.textAlign = 'center'; ctx.textBaseline = 'top'
-    for (let i = 0; i <= 4; i++) {
-      const v = minD + ((maxD - minD) / 4) * i
-      ctx.fillText(v.toFixed(0), pad.left + (pw / 4) * i, pad.top + ph + 4)
+    xTicks.forEach(v => { ctx.fillText(fmtTick(v), scaleX(v), pad.top + ph + 6) })
+
+    // 轴标签
+    ctx.fillStyle = 'rgba(255,255,255,0.4)'; ctx.font = '11px sans-serif'
+    ctx.textAlign = 'center'; ctx.fillText('回撤 %', pad.left + pw / 2, H - 4)
+    ctx.save(); ctx.translate(14, pad.top + ph / 2); ctx.rotate(-Math.PI / 2); ctx.fillText('收益 %', 0, 0); ctx.restore()
+
+    // Pareto 折线(按回撤升序连)
+    const paretoPts = data
+      .filter(d => paretoSet.has(d.originalIndex))
+      .sort((a, b) => a.ddPct - b.ddPct)
+    if (paretoPts.length >= 2) {
+      ctx.strokeStyle = 'rgba(255,215,0,0.35)'; ctx.lineWidth = 1.5
+      ctx.setLineDash([4, 3])
+      ctx.beginPath()
+      paretoPts.forEach((p, i) => {
+        const x = scaleX(p.ddPct), y = scaleY(p.returnPct)
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y)
+      })
+      ctx.stroke()
+      ctx.setLineDash([])
     }
 
-    // Points
+    // 数据点
+    // 渲染顺序:① 先画所有 Pareto 橙色光环(垫底,不被 Top 3 遮挡)
+    //           ② 再画普通点
+    //           ③ 最后画 Top 3 金球(放最上面,但下面已有橙环)
+    pointPositions.current = []
+
+    // ① Pareto 橙色光环(包括 Top 3,所有 Pareto 都标)
+    data.forEach(d => {
+      if (!paretoSet.has(d.originalIndex)) return
+      const x = scaleX(d.ddPct), y = scaleY(d.returnPct)
+      ctx.beginPath(); ctx.arc(x, y, 10, 0, Math.PI * 2)
+      ctx.fillStyle = 'rgba(255,165,0,0.18)'; ctx.fill()  // 橙色辉光垫底
+      ctx.strokeStyle = '#FFA500'; ctx.lineWidth = 2; ctx.stroke()
+    })
+
+    // ② 收集 hit-test 数据并画普通点
     data.forEach(d => {
       const x = scaleX(d.ddPct), y = scaleY(d.returnPct)
-      const isTop3 = rankedSet.has(d.originalIndex)
-      ctx.beginPath(); ctx.arc(x, y, isTop3 ? 6 : 4, 0, Math.PI * 2)
-      if (isTop3) { ctx.fillStyle = '#FFD700'; ctx.strokeStyle = '#FFD700'; ctx.lineWidth = 2; ctx.fill(); ctx.stroke() }
-      else if (d.passed) { ctx.fillStyle = 'rgba(38,166,154,0.7)'; ctx.fill() }
-      else { ctx.fillStyle = 'rgba(239,83,80,0.4)'; ctx.fill() }
+      pointPositions.current.push({ x, y, pt: d })
+      const rank = top3Rank.get(d.originalIndex)
+      if (rank) return  // Top 3 在第 ③ 步画
+      const isPareto = paretoSet.has(d.originalIndex)
+      if (isPareto) {
+        ctx.beginPath(); ctx.arc(x, y, 5, 0, Math.PI * 2)
+        ctx.fillStyle = '#FFA500'; ctx.fill()  // 实心橙色
+      } else if (d.passed) {
+        ctx.beginPath(); ctx.arc(x, y, 4, 0, Math.PI * 2)
+        ctx.fillStyle = 'rgba(38,166,154,0.65)'; ctx.fill()
+      } else {
+        ctx.beginPath(); ctx.arc(x, y, 3.5, 0, Math.PI * 2)
+        ctx.fillStyle = 'rgba(239,83,80,0.35)'; ctx.fill()
+      }
     })
 
-    // Legend
-    const lg = [['通过', 'rgba(38,166,154,0.7)'], ['未通过', 'rgba(239,83,80,0.4)'], ['Top 3', '#FFD700']] as const
-    lg.forEach(([label, color], i) => {
-      const lx = W - pad.right - 140 + i * 50
-      ctx.fillStyle = color; ctx.beginPath(); ctx.arc(lx, pad.top + 6, 4, 0, Math.PI * 2); ctx.fill()
-      ctx.fillStyle = 'rgba(255,255,255,0.5)'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'
-      ctx.font = '9px sans-serif'; ctx.fillText(label, lx + 7, pad.top + 6)
+    // ③ Top 3 金球(最上层,橙环已在第 ① 步垫底所以不会被遮)
+    data.forEach(d => {
+      const rank = top3Rank.get(d.originalIndex)
+      if (!rank) return
+      const x = scaleX(d.ddPct), y = scaleY(d.returnPct)
+      const size = rank === 1 ? 8 : rank === 2 ? 6.5 : 5.5
+      ctx.beginPath(); ctx.arc(x, y, size, 0, Math.PI * 2)
+      ctx.fillStyle = '#FFD700'; ctx.fill()
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke()
+      ctx.fillStyle = '#1e222d'; ctx.font = `bold ${rank === 1 ? 11 : 9}px sans-serif`
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
+      ctx.fillText(String(rank), x, y)
     })
-  }, [data, rankedSet])
+
+    // 图例(右上角)
+    const lg: [string, string, string][] = [
+      ['通过', 'rgba(38,166,154,0.65)', 'fill'],
+      ['未通过', 'rgba(239,83,80,0.35)', 'fill'],
+      ['Pareto 前沿', '#FFA500', 'halo'],
+      ['Top 3', '#FFD700', 'fill'],
+    ]
+    ctx.font = '10px sans-serif'
+    let lx = W - pad.right - 240
+    lg.forEach(([label, color, mode]) => {
+      const cy = pad.top + 8
+      if (mode === 'halo') {
+        // 跟图上一致:橙色光环+实心橙色
+        ctx.beginPath(); ctx.arc(lx, cy, 6, 0, Math.PI * 2)
+        ctx.fillStyle = 'rgba(255,165,0,0.25)'; ctx.fill()
+        ctx.strokeStyle = color; ctx.lineWidth = 1.5; ctx.stroke()
+        ctx.beginPath(); ctx.arc(lx, cy, 3, 0, Math.PI * 2)
+        ctx.fillStyle = color; ctx.fill()
+      } else {
+        ctx.beginPath(); ctx.arc(lx, cy, 4, 0, Math.PI * 2)
+        ctx.fillStyle = color; ctx.fill()
+      }
+      ctx.fillStyle = 'rgba(255,255,255,0.6)'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'
+      ctx.fillText(label, lx + 10, cy)
+      lx += ctx.measureText(label).width + 32
+    })
+  }, [data, paretoSet, top3Rank])
+
+  // hit-test:鼠标移动找最近点
+  const handleMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current
+    if (!canvas || pointPositions.current.length === 0) return
+    const rect = canvas.getBoundingClientRect()
+    const mx = e.clientX - rect.left, my = e.clientY - rect.top
+    let best: { x: number; y: number; pt: ScatterPoint } | null = null
+    let bestDist = 12 * 12  // 12px 半径内
+    for (const p of pointPositions.current) {
+      const dx = p.x - mx, dy = p.y - my
+      const d = dx*dx + dy*dy
+      if (d < bestDist) { bestDist = d; best = p }
+    }
+    if (best) {
+      const rank = top3Rank.get(best.pt.originalIndex)
+      setHover({ x: best.x, y: best.y, pt: best.pt, rank })
+    } else {
+      setHover(null)
+    }
+  }, [top3Rank])
 
   useEffect(() => {
     const container = containerRef.current
@@ -122,16 +270,64 @@ function ScatterPlot({ data, ranked }: { data: { returnPct: number; ddPct: numbe
     if (!container || !canvas) return
     const ro = new ResizeObserver(entries => {
       const w = entries[0].contentRect.width
-      if (w > 0) draw(canvas, w)
+      const h = entries[0].contentRect.height
+      if (w > 0 && h > 0) draw(canvas, w, h)
     })
     ro.observe(container)
-    draw(canvas, container.offsetWidth || 560)
+    const w = container.offsetWidth || 600
+    const h = container.offsetHeight || 360
+    draw(canvas, w, h)
     return () => ro.disconnect()
   }, [draw])
 
   return (
-    <div ref={containerRef} style={{ width: '100%' }}>
-      <canvas ref={canvasRef} style={{ display: 'block', borderRadius: 6 }} />
+    <div ref={containerRef} style={{ width: '100%', height: '100%', minHeight: 360, position: 'relative' }}>
+      <canvas
+        ref={canvasRef}
+        style={{ display: 'block', borderRadius: 6, cursor: hover ? 'pointer' : 'default' }}
+        onMouseMove={handleMouseMove}
+        onMouseLeave={() => setHover(null)}
+      />
+      {hover && (
+        <div style={{
+          position: 'absolute',
+          left: Math.min(hover.x + 14, (containerRef.current?.offsetWidth ?? 600) - 200),
+          top:  Math.max(hover.y - 80, 8),
+          padding: '8px 10px',
+          background: 'rgba(30,34,45,0.96)',
+          border: '1px solid rgba(255,255,255,0.15)',
+          borderRadius: 4,
+          fontSize: 11,
+          color: '#d1d4dc',
+          pointerEvents: 'none',
+          minWidth: 180,
+          boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
+          fontFamily: "'JetBrains Mono',monospace",
+        }}>
+          <div style={{ marginBottom: 4, color: hover.rank ? '#FFD700' : '#00d4ff', fontWeight: 600 }}>
+            {hover.rank ? `🏆 Top ${hover.rank} · 行号 ${hover.pt.originalIndex}` : `行号 ${hover.pt.originalIndex}`}
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+            <span style={{ color: '#787b86' }}>收益</span>
+            <span style={{ color: hover.pt.returnPct >= 0 ? '#26a69a' : '#ef5350', fontWeight: 600 }}>
+              {hover.pt.returnPct >= 0 ? '+' : ''}{hover.pt.returnPct.toFixed(2)}%
+            </span>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+            <span style={{ color: '#787b86' }}>回撤</span>
+            <span style={{ color: '#ef5350' }}>{hover.pt.ddPct.toFixed(2)}%</span>
+          </div>
+          {hover.pt.combinedScore != null && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+              <span style={{ color: '#787b86' }}>综合分</span>
+              <span style={{ color: '#26a69a', fontWeight: 600 }}>{hover.pt.combinedScore.toFixed(3)}</span>
+            </div>
+          )}
+          <div style={{ marginTop: 4, fontSize: 10, color: '#787b86' }}>
+            {hover.pt.passed ? '✓ 通过过滤' : '✗ 未通过过滤'}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -145,7 +341,10 @@ export default function ReportPage() {
   const [robProg, setRobProg] = useState(0)
   const [source, setSource] = useState<'none' | 'localStorage' | 'csv'>('none')
   const [stratName, setStratName] = useState('')
-  const [showFilters, setShowFilters] = useState(false)
+  const [showFilters, setShowFilters] = useState(true)  // 默认展开,用户能直接看到/调过滤+权重
+  const [activeTab, setActiveTab] = useState<'top10' | 'scatter' | 'all'>('top10')
+  // Top10 排序状态:null = 按默认 combinedScore 降序,其他 = 用户点击切换
+  const [top10Sort, setTop10Sort] = useState<{ key: string | null; dir: 'asc' | 'desc' }>({ key: null, dir: 'desc' })
   const abortRef = useRef<(() => void) | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
@@ -166,15 +365,9 @@ export default function ReportPage() {
 
   // Process pipeline
   const processed = useMemo(() => processRawData(rawData), [rawData])
-  const deduplicated = useMemo(() => {
-    const seen = new Set<string>()
-    return processed.filter(row => {
-      const key = [row.netProfit?.toFixed(2), row.ddPct?.toFixed(2), row.totalTrades, row.profitFactor?.toFixed(3)].join('|')
-      if (seen.has(key)) return false; seen.add(key); return true
-    })
-  }, [processed])
+  const deduplicated = processed // 移除去重，保留所有参数组合以保证稳健性计算的准确性
   const filtered = useMemo(() => applyFilters(deduplicated, filters), [deduplicated, filters])
-  const scored = useMemo(() => scoreRows(filtered, weights), [filtered, weights])
+  const scored = useMemo(() => scoreRows(filtered, weights, filters), [filtered, weights, filters])
   const passedRows = useMemo(() => scored.filter(r => r.passed), [scored])
   const paretoSet = useMemo(() => computePareto(passedRows), [passedRows])
 
@@ -208,10 +401,28 @@ export default function ReportPage() {
     }).sort((a, b) => b.combinedScore - a.combinedScore)
   }, [scored, robustness, robustnessWeight, paretoSet])
 
-  const top10 = ranked.slice(0, 10)
+  // 默认按 combinedScore 降序取前 10;用户点表头则按选中列重排(基于已 Top10 内部排序)
+  const top10 = useMemo(() => {
+    const base = ranked.slice(0, 20)
+    if (!top10Sort.key) return base
+    return [...base].sort((a, b) => {
+      const va = (a as unknown as Record<string, number>)[top10Sort.key!] ?? -1e9
+      const vb = (b as unknown as Record<string, number>)[top10Sort.key!] ?? -1e9
+      if (va < vb) return top10Sort.dir === 'asc' ? -1 : 1
+      if (va > vb) return top10Sort.dir === 'asc' ? 1 : -1
+      return 0
+    })
+  }, [ranked, top10Sort])
+
+  // 排序点击 handler:同列再点切升降序;新列默认降序(originalIndex 例外用升序)
+  const handleTop10Sort = (key: string) => {
+    setTop10Sort(prev => {
+      if (prev.key === key) return { key, dir: prev.dir === 'desc' ? 'asc' : 'desc' }
+      return { key, dir: key === 'originalIndex' ? 'asc' : 'desc' }
+    })
+  }
   const stats = {
     total: rawData.length,
-    dedup: deduplicated.length,
     passed: passedRows.length,
     pareto: paretoSet.size,
     maxReturn: passedRows.length > 0 ? Math.max(...passedRows.map(r => r.returnPct)) : 0,
@@ -241,209 +452,378 @@ export default function ReportPage() {
     { key: 'minWinLossRatio' as const, label: '最小盈亏比', step: 0.1 },
   ]
 
+  // 平均稳健性分
+  const avgRobustness = useMemo(() => {
+    if (ranked.length === 0) return 0
+    const sum = ranked.reduce((acc, r) => acc + (r.robustnessScore ?? 0), 0)
+    return sum / ranked.length
+  }, [ranked])
+
+  const tabBtnStyle = (active: boolean): React.CSSProperties => ({
+    padding: '4px 12px', fontSize: 11, color: active ? '#00d4ff' : '#787b86',
+    cursor: 'pointer', fontFamily: "'JetBrains Mono',monospace", background: 'none',
+    border: 'none', borderBottom: active ? '2px solid #00d4ff' : '2px solid transparent',
+    transition: '.15s', whiteSpace: 'nowrap' as const,
+  })
+
   return (
-    <div style={{ padding: '16px 0', maxWidth: 1200, margin: '0 auto' }}>
-      {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
-        <div>
-          <h1 style={{ fontSize: 22, fontWeight: 700, color: 'var(--text)', margin: 0 }}>📊 稳健性分析报告</h1>
-          <p style={{ fontSize: 12, color: 'var(--text-mute)', marginTop: 4 }}>基于单步邻居法的参数稳健性评估 · 避开孤峰陷阱 · 锁定参数高原</p>
-        </div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button onClick={() => setShowFilters(!showFilters)} style={{ padding: '6px 14px', borderRadius: 6, fontSize: 12, border: '1px solid var(--border)', background: showFilters ? 'rgba(38,166,154,0.1)' : 'transparent', color: showFilters ? 'var(--up)' : 'var(--text-mute)', cursor: 'pointer' }}>
-            ⚙ 过滤设置
+    <div style={{ background: '#131722', color: '#d1d4dc', fontFamily: "'Space Grotesk',system-ui,sans-serif", fontSize: 13 }}>
+
+      {/* ── TV 风格 Topbar ── */}
+      <div style={{ height: 40, display: 'flex', alignItems: 'center', padding: '0 16px', background: '#1e222d', borderBottom: '1px solid #363a45', gap: 12 }}>
+        <span style={{ fontWeight: 700, fontSize: 13, color: '#d1d4dc' }}>优化报告</span>
+        <span
+          title="评分逻辑:Calmar 35% + Sortino 30% + Profit Factor 25% + NetReturn 10% + Sharpe 0%。过滤:盈亏比 ≥1.5、Sortino ≥1.0、PF ≥1.5、回撤 ≤40%。点击「过滤设置」可调整。"
+          style={{
+            padding: '2px 8px', borderRadius: 3, fontSize: 10, fontFamily: "'JetBrains Mono',monospace",
+            background: 'rgba(247,147,26,.12)', color: '#f7931a',
+            border: '1px solid rgba(247,147,26,.3)', cursor: 'help',
+          }}
+        >🎯 BTC 趋势策略模式</span>
+        {source !== 'none' && (
+          <>
+            {/* 显眼数据源徽章 */}
+            <span style={{
+              padding: '2px 8px', borderRadius: 3, fontSize: 10, fontFamily: "'JetBrains Mono',monospace",
+              background: source === 'localStorage' ? 'rgba(0,212,255,.12)' : 'rgba(240,185,11,.12)',
+              color: source === 'localStorage' ? '#00d4ff' : '#f0b90b',
+              border: `1px solid ${source === 'localStorage' ? 'rgba(0,212,255,.3)' : 'rgba(240,185,11,.3)'}`,
+              display: 'inline-flex', alignItems: 'center', gap: 5,
+            }}>
+              <span style={{ width: 5, height: 5, borderRadius: '50%', background: 'currentColor' }} />
+              {source === 'localStorage' ? '数据源:站内上次优化结果' : '数据源:上传的 CSV 文件'}
+            </span>
+            <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: '#787b86' }}>
+              {stratName} · {rawData.length} 个组合
+            </span>
+            {/* 清除按钮:既清屏也清 localStorage,防止下次刷新又自动加载 */}
+            <button
+              onClick={() => {
+                if (!confirm('清除当前分析数据?如果是站内优化结果,会同时清除浏览器缓存,下次刷新不再自动加载。')) return;
+                try { localStorage.removeItem('optimize_epochs') } catch {}
+                setRawData([]); setSource('none'); setStratName(''); setRobustness({}); setRobProg(0);
+              }}
+              title="清空当前数据,可上传新 CSV"
+              style={{ padding: '2px 8px', borderRadius: 3, fontSize: 10, border: '1px solid #363a45', background: 'transparent', color: '#787b86', cursor: 'pointer', fontFamily: "'JetBrains Mono',monospace" }}
+            >
+              ✕ 清除
+            </button>
+            {robProg > 0 && robProg < 100 && (
+              <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: '#00d4ff', display: 'flex', alignItems: 'center', gap: 4 }}>
+                <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#00d4ff', display: 'inline-block' }} />
+                分析中 {robProg}%
+              </span>
+            )}
+          </>
+        )}
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
+          <button onClick={() => setShowFilters(!showFilters)} style={{ padding: '3px 10px', borderRadius: 3, fontSize: 11, border: `1px solid ${showFilters ? 'rgba(38,166,154,.4)' : '#363a45'}`, background: showFilters ? 'rgba(38,166,154,.08)' : 'transparent', color: showFilters ? '#26a69a' : '#787b86', cursor: 'pointer', fontFamily: "'JetBrains Mono',monospace" }}>
+            过滤设置
           </button>
-          <button onClick={() => fileRef.current?.click()} style={{ padding: '6px 14px', borderRadius: 6, fontSize: 12, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-mute)', cursor: 'pointer' }}>
-            📁 上传CSV
+          <button onClick={() => fileRef.current?.click()} style={{ padding: '3px 10px', borderRadius: 3, fontSize: 11, border: '1px solid rgba(38,166,154,.4)', background: 'rgba(38,166,154,.08)', color: '#26a69a', cursor: 'pointer', fontFamily: "'JetBrains Mono',monospace", fontWeight: 600 }}>
+            ↑ 上传 CSV
           </button>
           <input ref={fileRef} type="file" accept=".csv" onChange={handleCSV} style={{ display: 'none' }} />
         </div>
       </div>
 
-      {/* Data source info */}
-      {source !== 'none' && (
-        <div className="card" style={{ padding: '12px 20px', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 12 }}>
-          <span style={{ fontSize: 11, color: 'var(--text-mute)' }}>
-            数据来源: {source === 'localStorage' ? '策略页调参结果' : 'CSV 文件'} · <strong style={{ color: 'var(--text)' }}>{stratName}</strong> · {rawData.length} 个组合
-          </span>
-          {robProg > 0 && robProg < 100 && (
-            <span style={{ fontSize: 11, color: 'var(--up)' }}>稳健性分析中… {robProg}%</span>
-          )}
+      {/* ── 过滤面板（折叠）── */}
+      {showFilters && source !== 'none' && (
+        <div style={{ padding: '14px 16px', background: '#1e222d', borderBottom: '1px solid #363a45' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 12 }}>
+            {filterInputs.map(f => (
+              <div key={f.key}>
+                <label style={{ display: 'block', fontSize: 10, color: '#787b86', marginBottom: 3, fontFamily: "'JetBrains Mono',monospace", textTransform: 'uppercase', letterSpacing: '.04em' }}>{f.label}</label>
+                <input type="number" step={f.step} value={filters[f.key]} onChange={e => setFilters(p => ({ ...p, [f.key]: Number(e.target.value) }))}
+                  style={{ width: '100%', padding: '4px 8px', borderRadius: 3, fontSize: 11, border: '1px solid #363a45', background: '#131722', color: '#d1d4dc', outline: 'none', fontFamily: "'JetBrains Mono',monospace" }} />
+              </div>
+            ))}
+          </div>
+          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'center' }}>
+            <span style={{ fontSize: 10, color: '#787b86', fontFamily: "'JetBrains Mono',monospace", textTransform: 'uppercase', letterSpacing: '.04em' }}>评分权重</span>
+            {Object.entries(weights).map(([k, v]) => {
+              // 给每个权重一个工具提示,解释为什么是这个默认值
+              const tip: Record<string, string> = {
+                calmar:       '年化收益÷最大回撤,BTC 趋势策略最核心指标(默认 35%)',
+                sortino:      '只惩罚下行波动的改进版夏普,对趋势爆发友好(默认 30%)',
+                profitFactor: '总盈利÷总亏损,趋势策略低胜率高盈亏比的灵魂(默认 25%)',
+                sharpe:       '会把"趋势爆拉"当波动扣分,对 BTC 趋势策略不友好。默认 0%。如果你测的是均值回归/网格策略,可手动拉到 10%',
+                netReturn:    '总净收益%。权重高容易被"高收益+高回撤"的极端方案带歪,默认 10%',
+              }
+              return (
+                <div key={k} title={tip[k] || ''} style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'help' }}>
+                  <span style={{ fontSize: 10, color: '#787b86', minWidth: 50, fontFamily: "'JetBrains Mono',monospace" }}>{k}</span>
+                  <input type="range" min={0} max={1} step={0.05} value={v} onChange={e => setWeights(p => ({ ...p, [k]: Number(e.target.value) }))} style={{ width: 70 }} />
+                  <span style={{ fontSize: 10, fontFamily: 'monospace', color: v === 0 ? '#787b86' : '#d1d4dc', minWidth: 28 }}>{(v*100).toFixed(0)}%</span>
+                </div>
+              )
+            })}
+            <div title="稳健性=参数邻域稳定性,值越高代表此方案在参数微调下仍表现稳定" style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'help' }}>
+              <span style={{ fontSize: 10, color: '#787b86', fontFamily: "'JetBrains Mono',monospace" }}>稳健性权重</span>
+              <input type="range" min={0} max={1} step={0.05} value={robustnessWeight} onChange={e => setRobustnessWeight(Number(e.target.value))} style={{ width: 80 }} />
+              <span style={{ fontSize: 10, fontFamily: 'monospace', color: '#26a69a' }}>{(robustnessWeight*100).toFixed(0)}%</span>
+            </div>
+          </div>
         </div>
       )}
 
-      {/* Empty state */}
+      {/* ── 空状态 ── */}
       {source === 'none' && (
-        <div className="card" style={{ padding: '60px 40px', textAlign: 'center' }}>
+        <div style={{ padding: '80px 40px', textAlign: 'center', maxWidth: 600, margin: '0 auto' }}>
           <div style={{ fontSize: 40, marginBottom: 16 }}>🔬</div>
-          <div className="section-title" style={{ fontSize: 16, marginBottom: 8 }}>暂无分析数据</div>
-          <div style={{ fontSize: 13, color: 'var(--text-mute)', lineHeight: 1.8, marginBottom: 32 }}>
-            完成以下步骤后，报告将自动加载：
-          </div>
+          <div style={{ fontSize: 16, fontWeight: 700, color: '#d1d4dc', marginBottom: 8 }}>暂无分析数据</div>
+          <div style={{ fontSize: 13, color: '#787b86', lineHeight: 1.8, marginBottom: 32 }}>完成以下步骤后，报告将自动加载：</div>
           <div className="step-flow">
-            {[
-              { step: '1', text: '策略页写代码' },
-              { step: '2', text: '运行参数优化' },
-              { step: '3', text: '返回此页查看报告' },
-            ].map((s, i) => (
+            {[{ step: '1', text: '策略页写代码' }, { step: '2', text: '运行参数优化' }, { step: '3', text: '返回此页查看报告' }].map((s, i) => (
               <div key={i} style={{ display: 'flex', alignItems: 'center' }}>
                 <div className="step-node">
                   <div className="step-circle">{s.step}</div>
-                  <div style={{ fontSize: 12, color: 'var(--text-mute)' }}>{s.text}</div>
+                  <div style={{ fontSize: 12, color: '#787b86' }}>{s.text}</div>
                 </div>
                 {i < 2 && <div className="step-line" />}
               </div>
             ))}
           </div>
-          <div style={{ fontSize: 12, color: 'var(--text-dim)', margin: '24px 0 16px' }}>或者</div>
-          <button onClick={() => fileRef.current?.click()} style={{ padding: '10px 28px', borderRadius: 8, fontSize: 14, fontWeight: 700, border: 'none', background: 'var(--up)', color: '#fff', cursor: 'pointer', boxShadow: '0 2px 12px rgba(38,166,154,0.3)' }}>
-            📁 上传 CSV 文件
+          <div style={{ fontSize: 12, color: '#363a45', margin: '24px 0 16px' }}>或者</div>
+          <button onClick={() => fileRef.current?.click()} style={{ padding: '10px 28px', borderRadius: 8, fontSize: 14, fontWeight: 700, border: 'none', background: '#26a69a', color: '#fff', cursor: 'pointer', boxShadow: '0 2px 12px rgba(38,166,154,0.3)' }}>
+            上传 CSV 文件
           </button>
         </div>
       )}
 
-      {/* Filter panel */}
-      {showFilters && source !== 'none' && (
-        <div className="card" style={{ padding: '16px 20px', marginBottom: 16 }}>
-          <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)', marginBottom: 12 }}>过滤条件</div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
-            {filterInputs.map(f => (
-              <div key={f.key}>
-                <label style={{ display: 'block', fontSize: 10, color: 'var(--text-mute)', marginBottom: 4 }}>{f.label}</label>
-                <input type="number" step={f.step} value={filters[f.key]} onChange={e => setFilters(p => ({ ...p, [f.key]: Number(e.target.value) }))}
-                  style={{ width: '100%', padding: '5px 8px', borderRadius: 5, fontSize: 12, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', outline: 'none' }} />
-              </div>
-            ))}
-          </div>
-          <div style={{ marginTop: 12, fontSize: 12, fontWeight: 600, color: 'var(--text)', marginBottom: 8 }}>评分权重</div>
-          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
-            {Object.entries(weights).map(([k, v]) => (
-              <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <label style={{ fontSize: 10, color: 'var(--text-mute)', minWidth: 60 }}>{k}</label>
-                <input type="range" min={0} max={1} step={0.05} value={v}
-                  onChange={e => setWeights(p => ({ ...p, [k]: Number(e.target.value) }))}
-                  style={{ width: 80 }} />
-                <span style={{ fontSize: 10, fontFamily: 'monospace', color: 'var(--text)', minWidth: 30 }}>{(v*100).toFixed(0)}%</span>
-              </div>
-            ))}
-          </div>
-          <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
-            <label style={{ fontSize: 10, color: 'var(--text-mute)' }}>稳健性权重</label>
-            <input type="range" min={0} max={1} step={0.05} value={robustnessWeight} onChange={e => setRobustnessWeight(Number(e.target.value))} style={{ width: 100 }} />
-            <span style={{ fontSize: 10, fontFamily: 'monospace', color: 'var(--up)' }}>{(robustnessWeight*100).toFixed(0)}%</span>
-          </div>
-        </div>
-      )}
-
+      {/* ── 有数据时：左右分栏布局 ── */}
       {source !== 'none' && rawData.length > 0 && (
-        <>
-          {/* Stats bar */}
-          <div className="card stats-bar" style={{ display: 'flex', marginBottom: 16, overflow: 'hidden' }}>
-            <Stat label="原始组合" value={stats.total} />
-            <Stat label="去重后" value={stats.dedup} />
-            <Stat label="通过过滤" value={stats.passed} color="var(--up)" />
-            <Stat label="帕累托最优" value={stats.pareto} color="var(--gold)" />
-            <Stat label="最高收益" value={`${fmt(stats.maxReturn, 1)}%`} color="var(--up)" />
-            <Stat label="参数维度" value={`${paramDims}D`} />
-            <Stat label="稳健性权重" value={`${(robustnessWeight*100).toFixed(0)}%`} />
-          </div>
+        <div style={{ display: 'flex', minHeight: 'calc(100vh - 88px)' }}>
 
-          {/* Scatter plot */}
-          <div className="card" style={{ padding: '16px', marginBottom: 16 }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-              <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>📈 收益 vs 回撤 分布</span>
-              <span style={{ fontSize: 10, color: 'var(--text-dim)' }}>横轴: 回撤% · 纵轴: 收益% · 左上角为理想区域</span>
+          {/* 左侧：ScoreCard 仪表盘 220px */}
+          <div style={{ width: 220, flexShrink: 0, borderRight: '1px solid #363a45', background: '#1e222d', padding: 14, display: 'flex', flexDirection: 'column', gap: 0 }}>
+
+            {/* 圆形仪表 */}
+            <div style={{ textAlign: 'center', marginBottom: 12 }}>
+              {(() => {
+                const pct = Math.round(avgRobustness * 100)
+                const r = 54, circ = 2 * Math.PI * r
+                const fill = circ * pct / 100
+                const color = pct >= 70 ? '#26a69a' : pct >= 40 ? '#f0b90b' : '#ef5350'
+                return (
+                  <div style={{ position: 'relative', width: 130, height: 130, margin: '0 auto 8px' }}>
+                    <svg viewBox="0 0 130 130" width={130} height={130}>
+                      <circle cx={65} cy={65} r={r} fill="none" stroke="rgba(255,255,255,.06)" strokeWidth={9} />
+                      <circle cx={65} cy={65} r={r} fill="none" stroke={color} strokeWidth={9}
+                        strokeDasharray={`${fill} ${circ}`} strokeLinecap="round"
+                        transform="rotate(-90 65 65)" style={{ transition: 'stroke-dasharray 1s ease-out' }} />
+                    </svg>
+                    <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+                      <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 32, fontWeight: 700, color, letterSpacing: '-.04em', lineHeight: 1 }}>{pct}</div>
+                      <div style={{ fontSize: 10, color: '#787b86', marginTop: 3 }}>稳健性</div>
+                    </div>
+                  </div>
+                )
+              })()}
             </div>
-            <ScatterPlot data={scored.map(r => ({ returnPct: r.returnPct, ddPct: r.ddPct, passed: r.passed, originalIndex: r.originalIndex }))} ranked={ranked} />
+
+            {/* 四格迷你卡片 */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginBottom: 14 }}>
+              {[
+                { val: stats.total, lbl: '总组合', color: '#d1d4dc' },
+                { val: stats.passed, lbl: '通过', color: '#26a69a' },
+                { val: stats.pareto, lbl: '帕累托', color: '#f0b90b' },
+                { val: `${paramDims}D`, lbl: '参数维度', color: '#00d4ff' },
+              ].map(({ val, lbl, color }) => (
+                <div key={lbl} style={{ background: 'rgba(255,255,255,.04)', borderRadius: 4, padding: '8px 10px', textAlign: 'center' }}>
+                  <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 16, fontWeight: 600, color }}>{val}</div>
+                  <div style={{ fontSize: 10, color: '#787b86', marginTop: 2 }}>{lbl}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* 评分权重分解 */}
+            <div style={{ fontSize: 10, color: '#787b86', textTransform: 'uppercase', letterSpacing: '.06em', fontFamily: "'JetBrains Mono',monospace", marginBottom: 8 }}>评分权重</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {Object.entries(weights).map(([k, v]) => (
+                <div key={k} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: 11, color: '#787b86', fontFamily: "'JetBrains Mono',monospace" }}>{k}</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <div style={{ width: 60, height: 4, borderRadius: 2, background: 'rgba(255,255,255,.06)' }}>
+                      <div style={{ width: `${v * 100}%`, height: '100%', borderRadius: 2, background: 'linear-gradient(90deg,#26a69a,#00d4ff)' }} />
+                    </div>
+                    <span style={{ fontSize: 10, fontFamily: 'monospace', color: '#d1d4dc', minWidth: 24 }}>{(v*100).toFixed(0)}%</span>
+                  </div>
+                </div>
+              ))}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 2, paddingTop: 6, borderTop: '1px solid #363a45' }}>
+                <span style={{ fontSize: 11, color: '#787b86', fontFamily: "'JetBrains Mono',monospace" }}>稳健性</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <div style={{ width: 60, height: 4, borderRadius: 2, background: 'rgba(255,255,255,.06)' }}>
+                    <div style={{ width: `${robustnessWeight * 100}%`, height: '100%', borderRadius: 2, background: '#26a69a' }} />
+                  </div>
+                  <span style={{ fontSize: 10, fontFamily: 'monospace', color: '#26a69a', minWidth: 24 }}>{(robustnessWeight*100).toFixed(0)}%</span>
+                </div>
+              </div>
+            </div>
+
+            {/* 最高收益 */}
+            {stats.maxReturn > 0 && (
+              <div style={{ marginTop: 14, padding: '10px 12px', background: 'rgba(38,166,154,.06)', border: '1px solid rgba(38,166,154,.2)', borderRadius: 5 }}>
+                <div style={{ fontSize: 10, color: '#787b86', fontFamily: "'JetBrains Mono',monospace", marginBottom: 3 }}>最高收益</div>
+                <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 20, fontWeight: 700, color: '#26a69a' }}>+{fmt(stats.maxReturn, 1)}%</div>
+              </div>
+            )}
           </div>
 
-          {/* 🏆 Top 10 */}
-          {top10.length > 0 && (
-            <div className="card" style={{ marginBottom: 16 }}>
-              <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>🏆 推荐参数组合 Top 10</span>
-                <span style={{ fontSize: 11, color: 'var(--text-mute)' }}>综合分 = 效用分 × 稳健性</span>
-              </div>
-              <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
-                  <thead>
-                    <tr>
-                      {['#', '综合分', '效用分', '稳健性', '收益%', '回撤%', '胜率%', '盈亏比', '交易数'].map(h => (
-                        <th key={h} style={thS}>{h}</th>
-                      ))}
-                      {top10[0] && Object.keys(userParams(top10[0].strategyParams || {})).map(k => (
-                        <th key={k} style={{ ...thS, color: 'var(--up)' }}>{k}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {top10.map((row, i) => (
-                      <tr key={row.originalIndex} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)', background: i === 0 ? 'rgba(38,166,154,0.04)' : 'transparent' }}>
-                        <td style={{ padding: '6px 10px', fontWeight: 700, color: i === 0 ? 'var(--up)' : 'var(--text-mute)' }}>
-                          {i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `#${i+1}`}
-                        </td>
-                        <td style={{ padding: '6px 10px', fontFamily: 'monospace', fontWeight: 700, color: 'var(--up)' }}>{fmt(row.combinedScore, 3)}</td>
-                        <td style={{ padding: '6px 10px', fontFamily: 'monospace', color: 'var(--text)' }}>{fmt(row.utilityScore, 3)}</td>
-                        <td style={{ padding: '6px 10px' }}><RobBar score={row.robustnessScore} total={row.totalNeighbors} stable={row.stableNeighbors} /></td>
-                        <td style={{ padding: '6px 10px', fontFamily: 'monospace', fontWeight: 600, color: row.returnPct >= 0 ? 'var(--up)' : 'var(--down)' }}>{fmt(row.returnPct)}%</td>
-                        <td style={{ padding: '6px 10px', fontFamily: 'monospace', color: row.ddPct > 20 ? 'var(--down)' : 'var(--text-mute)' }}>{fmt(row.ddPct)}%</td>
-                        <td style={{ padding: '6px 10px', fontFamily: 'monospace' }}>{fmt(row.winRate, 1)}%</td>
-                        <td style={{ padding: '6px 10px', fontFamily: 'monospace' }}>{fmt(row.winLossRatio)}</td>
-                        <td style={{ padding: '6px 10px', fontFamily: 'monospace' }}>{row.totalTrades}</td>
-                        {Object.values(userParams(row.strategyParams || {})).map((v, j) => (
-                          <td key={j} style={{ padding: '6px 10px', fontFamily: 'monospace', color: 'var(--up)' }}>{String(v)}</td>
+          {/* 右侧：Tab 面板 */}
+          <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+            {/* Tab 栏 */}
+            <div style={{ height: 32, display: 'flex', alignItems: 'flex-end', padding: '0 12px', borderBottom: '1px solid #363a45', background: '#1e222d', gap: 2, flexShrink: 0 }}>
+              <button style={tabBtnStyle(activeTab === 'top10')} onClick={() => setActiveTab('top10')}>Top 20 推荐</button>
+              <button style={tabBtnStyle(activeTab === 'scatter')} onClick={() => setActiveTab('scatter')}>收益分布</button>
+              <button style={tabBtnStyle(activeTab === 'all')} onClick={() => setActiveTab('all')}>全量数据 ({processed.length})</button>
+            </div>
+
+            {/* Tab 内容 */}
+            <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 16 }}>
+
+              {/* Tab: Top 10 */}
+              {activeTab === 'top10' && (
+                top10.length > 0 ? (
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+                      <span style={{ fontSize: 12, fontWeight: 600, color: '#d1d4dc' }}>推荐参数组合 Top 20</span>
+                      <span style={{ fontSize: 10, color: '#787b86', fontFamily: "'JetBrains Mono',monospace" }}>综合分 = 效用分 × 稳健性</span>
+                    </div>
+                    <div style={{ overflowX: 'auto' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
+                        <thead>
+                          <tr>
+                            {([
+                              ['originalIndex', '行号'],
+                              ['combinedScore', '综合分'],
+                              ['utilityScore', '效用分'],
+                              ['robustnessScore', '稳健性'],
+                              ['calmarRatio', 'Calmar'],
+                              ['returnPct', '收益%'],
+                              ['ddPct', '回撤%'],
+                              ['winRate', '胜率%'],
+                              ['winLossRatio', '盈亏比'],
+                              ['totalTrades', '交易数'],
+                            ] as [string, string][]).map(([key, label]) => {
+                              const active = top10Sort.key === key
+                              return (
+                                <th key={key}
+                                  onClick={() => handleTop10Sort(key)}
+                                  style={{ ...thS, cursor: 'pointer', userSelect: 'none', color: active ? '#26a69a' : (thS.color as string) }}
+                                  title="点击切换排序方向"
+                                >
+                                  {label}{active ? (top10Sort.dir === 'desc' ? ' ↓' : ' ↑') : ' ⇅'}
+                                </th>
+                              )
+                            })}
+                            {top10[0] && Object.keys(userParams(top10[0].strategyParams || {})).map(k => (
+                              <th key={k} style={{ ...thS, color: '#787b86' }}>{k}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {top10.map((row) => {
+                            // 标记综合分最高的那一行(原始排名第 1,不随用户排序变化)
+                            const isTopRec = ranked[0]?.originalIndex === row.originalIndex
+                            return (
+                            <tr key={row.originalIndex} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)', background: isTopRec ? 'rgba(38,166,154,0.04)' : 'transparent' }}>
+                              <td style={{ padding: '7px 10px', fontFamily: "'JetBrains Mono',monospace", color: '#787b86', display: 'flex', alignItems: 'center', gap: 6 }}>
+                                <span>{row.originalIndex}</span>
+                                {isTopRec && <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#26a69a', display: 'inline-block' }} title="原始 Top 1 推荐" />}
+                                {row.isPareto && <span title="Pareto 前沿:不被任何其他方案同时支配(高收益+低回撤+高 Sortino+高 PF)" style={{ padding: '1px 5px', borderRadius: 3, fontSize: 9, fontWeight: 700, background: 'rgba(255,165,0,0.15)', color: '#FFA500', border: '1px solid rgba(255,165,0,0.4)', letterSpacing: '.04em' }}>★</span>}
+                              </td>
+                              <td style={{ padding: '7px 10px', fontFamily: 'monospace', fontWeight: 700, color: '#26a69a' }}>{fmt(row.combinedScore, 3)}</td>
+                              <td style={{ padding: '7px 10px', fontFamily: 'monospace', color: '#d1d4dc' }}>{fmt(row.utilityScore, 3)}</td>
+                              <td style={{ padding: '7px 10px' }}><RobBar score={row.robustnessScore} total={row.totalNeighbors} stable={row.stableNeighbors} /></td>
+                              <td style={{ padding: '7px 10px', fontFamily: 'monospace', color: '#d1d4dc' }}>{fmt(row.calmarRatio)}</td>
+                              <td style={{ padding: '7px 10px', fontFamily: 'monospace', fontWeight: 600, color: row.returnPct >= 0 ? '#26a69a' : '#ef5350' }}>{fmt(row.returnPct)}%</td>
+                              <td style={{ padding: '7px 10px', fontFamily: 'monospace', color: row.ddPct > 20 ? '#ef5350' : '#787b86' }}>{fmt(row.ddPct)}%</td>
+                              <td style={{ padding: '7px 10px', fontFamily: 'monospace' }}>{fmt(row.winRate, 1)}%</td>
+                              <td style={{ padding: '7px 10px', fontFamily: 'monospace' }}>{fmt(row.winLossRatio)}</td>
+                              <td style={{ padding: '7px 10px', fontFamily: 'monospace' }}>{row.totalTrades}</td>
+                              {Object.values(userParams(row.strategyParams || {})).map((v, j) => (
+                                <td key={j} style={{ padding: '7px 10px', fontFamily: 'monospace', color: '#787b86' }}>{String(v)}</td>
+                              ))}
+                            </tr>
+                            )
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ padding: '40px 0', textAlign: 'center', color: '#787b86', fontFamily: "'JetBrains Mono',monospace", fontSize: 12 }}>
+                    无通过过滤的参数组合，请调整过滤条件
+                  </div>
+                )
+              )}
+
+              {/* Tab: 收益分布散点图 */}
+              {activeTab === 'scatter' && (
+                <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 400 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, flexShrink: 0 }}>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: '#d1d4dc' }}>收益 vs 回撤 分布</span>
+                    <span style={{ fontSize: 10, color: '#787b86', fontFamily: "'JetBrains Mono',monospace" }}>横轴: 回撤% · 纵轴: 收益% · 左上角为理想区域</span>
+                  </div>
+                  <div style={{ flex: 1, minHeight: 360 }}>
+                    <ScatterPlot
+                      data={scored.map(r => {
+                        const rk = ranked.find(rr => rr.originalIndex === r.originalIndex)
+                        return { returnPct: r.returnPct, ddPct: r.ddPct, passed: r.passed, originalIndex: r.originalIndex, combinedScore: rk?.combinedScore }
+                      })}
+                      ranked={ranked}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Tab: 全量数据 */}
+              {activeTab === 'all' && (
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
+                    <thead>
+                      <tr>
+                        {['行号', '综合分', '稳健性', '收益%', '回撤%', '交易数', '状态'].map(h => (
+                          <th key={h} style={thS}>{h}</th>
                         ))}
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-
-          {/* All data */}
-          <div className="card">
-            <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>📋 全量数据 ({deduplicated.length} 条)</span>
-            </div>
-            <div style={{ overflowX: 'auto', maxHeight: 400, overflowY: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
-                <thead>
-                  <tr>
-                    {['行号', '综合分', '稳健性', '收益%', '回撤%', '交易数', '状态'].map(h => (
-                      <th key={h} style={thS}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {scored.map(row => {
-                    const rb = robustness[row.originalIndex]
-                    const enriched = ranked.find(r => r.originalIndex === row.originalIndex)
-                    return (
-                      <tr key={row.originalIndex} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
-                        <td style={{ padding: '5px 10px', color: 'var(--text-mute)' }}>{row.originalIndex}</td>
-                        <td style={{ padding: '5px 10px', fontFamily: 'monospace', color: enriched ? 'var(--up)' : 'var(--text-dim)' }}>
-                          {enriched ? fmt(enriched.combinedScore, 3) : '—'}
-                        </td>
-                        <td style={{ padding: '5px 10px' }}>
-                          {rb ? <RobBar score={rb.robustnessScore} total={rb.totalNeighbors} stable={rb.stableNeighbors} /> : <span style={{ color: 'var(--text-dim)' }}>—</span>}
-                        </td>
-                        <td style={{ padding: '5px 10px', fontFamily: 'monospace', color: row.returnPct >= 0 ? 'var(--up)' : 'var(--down)' }}>{fmt(row.returnPct)}%</td>
-                        <td style={{ padding: '5px 10px', fontFamily: 'monospace', color: 'var(--text-mute)' }}>{fmt(row.ddPct)}%</td>
-                        <td style={{ padding: '5px 10px', fontFamily: 'monospace' }}>{row.totalTrades}</td>
-                        <td style={{ padding: '5px 10px' }}>
-                          {row.passed
-                            ? <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 4, background: 'rgba(38,166,154,0.1)', color: 'var(--up)' }}>通过</span>
-                            : <span style={{ fontSize: 10, color: 'var(--down)' }}>{row.filterReasons.join(' · ')}</span>}
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
+                    </thead>
+                    <tbody>
+                      {scored.map(row => {
+                        const rb = robustness[row.originalIndex]
+                        const enriched = ranked.find(r => r.originalIndex === row.originalIndex)
+                        return (
+                          <tr key={row.originalIndex} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                            <td style={{ padding: '5px 10px', color: '#787b86', fontFamily: 'monospace', whiteSpace: 'nowrap' }}>
+                              {row.originalIndex}
+                              {enriched?.isPareto && <span title="Pareto 前沿" style={{ marginLeft: 5, padding: '1px 4px', borderRadius: 3, fontSize: 9, fontWeight: 700, background: 'rgba(255,165,0,0.15)', color: '#FFA500', border: '1px solid rgba(255,165,0,0.4)' }}>★</span>}
+                            </td>
+                            <td style={{ padding: '5px 10px', fontFamily: 'monospace', color: enriched ? '#26a69a' : '#363a45' }}>
+                              {enriched ? fmt(enriched.combinedScore, 3) : '—'}
+                            </td>
+                            <td style={{ padding: '5px 10px' }}>
+                              {rb ? <RobBar score={rb.robustnessScore} total={rb.totalNeighbors} stable={rb.stableNeighbors} /> : <span style={{ color: '#363a45' }}>—</span>}
+                            </td>
+                            <td style={{ padding: '5px 10px', fontFamily: 'monospace', color: row.returnPct >= 0 ? '#26a69a' : '#ef5350' }}>{fmt(row.returnPct)}%</td>
+                            <td style={{ padding: '5px 10px', fontFamily: 'monospace', color: '#787b86' }}>{fmt(row.ddPct)}%</td>
+                            <td style={{ padding: '5px 10px', fontFamily: 'monospace' }}>{row.totalTrades}</td>
+                            <td style={{ padding: '5px 10px' }}>
+                              {row.passed
+                                ? <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 4, background: 'rgba(38,166,154,0.1)', color: '#26a69a' }}>通过</span>
+                                : <span style={{ fontSize: 10, color: '#ef5350' }}>{row.filterReasons.join(' · ')}</span>}
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           </div>
-        </>
+        </div>
       )}
     </div>
   )

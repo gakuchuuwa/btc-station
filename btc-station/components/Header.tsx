@@ -9,11 +9,11 @@ import type { User } from '@supabase/supabase-js'
 import { formatUsd, formatPercent } from '@/lib/format'
 
 const NAV = [
-  { label: '首页', href: '/' },
-  { label: '分析', href: '/analysis' },
-  { label: '图表', href: '/chart' },
-  { label: '策略', href: '/strategy' },
-  { label: '报告', href: '/report' },
+  { label: '市场前瞻', href: '/' },
+  { label: '策略研发', href: '/strategy' },
+  { label: '蒙特卡洛', href: '/monte-carlo' },
+  { label: '参数优化', href: '/report' },
+  { label: '形态归因', href: '/pattern-report' },
 ]
 
 interface TickerInfo {
@@ -99,9 +99,7 @@ export default function Header() {
       <div className="wrap header-inner">
         <div className="header-left">
           <Link href="/" className="brand">
-            <div className="brand-icon">₿</div>
             <span className="brand-name">BTC Station</span>
-            <span className="beta">BETA</span>
           </Link>
           <nav className="nav">
             {NAV.map(({ label, href }) => {
@@ -116,20 +114,25 @@ export default function Header() {
         </div>
 
         <div className="header-right">
-          <div className="search-box">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
-            <span>搜索...</span>
-            <span className="kbd mono">⌘K</span>
+          {/* 实时价格 */}
+          <div className="nav-price">
+            <span className="np-sym">BTC/USDT</span>
+            <span className="np-val">{tick ? formatUsd(tick.price) : '—'}</span>
+            {tick && (
+              <span className={`np-chg ${tickIsUp ? 'up' : 'dn'}`}>
+                {formatPercent(tick.change24h)}
+              </span>
+            )}
+            <span className="live-dot" />
           </div>
 
           {user ? (
-            /* 已登录：头像菜单 */
             <div ref={menuRef} style={{ position: 'relative' }}>
               <button
                 onClick={() => setShowMenu(p => !p)}
                 style={{
                   width: 28, height: 28, borderRadius: '50%',
-                  background: 'var(--accent)', color: '#fff',
+                  background: 'var(--accent)', color: '#131722',
                   fontWeight: 700, fontSize: 12, cursor: 'pointer',
                   border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center',
                 }}
@@ -142,7 +145,7 @@ export default function Header() {
                 <div style={{
                   position: 'absolute', right: 0, top: 36, zIndex: 50, minWidth: 180,
                   background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 8,
-                  overflow: 'hidden', boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
+                  overflow: 'hidden', boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
                 }}>
                   <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--border)' }}>
                     <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>
@@ -160,39 +163,11 @@ export default function Header() {
               )}
             </div>
           ) : (
-            /* 未登录：登录/注册按钮 */
             <>
               <Link href="/login" className="btn btn-ghost">登录</Link>
               <Link href="/signup" className="btn btn-primary">注册</Link>
             </>
           )}
-        </div>
-      </div>
-
-      {/* Ticker strip — 实时数据 */}
-      <div className="ticker">
-        <div className="wrap ticker-inner" style={{ padding: 0, maxWidth: 'var(--max-w)' }}>
-          <div className="ticker-cell">
-            <span className="label">BTC/USDT</span>
-            <span className="num">{tick ? formatUsd(tick.price) : '—'}</span>
-            {tick && (
-              <span className={`num ${tickIsUp ? 'up' : 'down'}`} style={{ fontSize: 10 }}>
-                {formatPercent(tick.change24h)}
-              </span>
-            )}
-          </div>
-          <div className="ticker-cell">
-            <span className="label">24h 最高</span>
-            <span className="num">{tick ? formatUsd(tick.high24h) : '—'}</span>
-          </div>
-          <div className="ticker-cell">
-            <span className="label">24h 最低</span>
-            <span className="num">{tick ? formatUsd(tick.low24h) : '—'}</span>
-          </div>
-          <div className="ticker-cell">
-            <span className="label">24h 成交量</span>
-            <span className="num">{tick ? '$' + fmtVol(tick.vol24h) : '—'}</span>
-          </div>
         </div>
       </div>
     </header>

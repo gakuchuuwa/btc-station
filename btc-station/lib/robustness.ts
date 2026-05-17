@@ -22,6 +22,11 @@ export interface ProcessedRow {
   initialCapital: number
   avgWin: number
   avgLoss: number
+  // 多/空分组(BTC 趋势策略多空失衡惩罚用)
+  netPnlLong: number
+  netPnlShort: number
+  totalTradesLong: number
+  totalTradesShort: number
   strategyParams: Record<string, number | boolean | string>
   filterReasons: string[]
   passed: boolean
@@ -55,13 +60,27 @@ export interface ScoreWeights {
   netReturn: number
 }
 
+// BTC 趋势策略专用默认值
+// 趋势策略本质:低胜率、高盈亏比、少数大趋势贡献主要收益
+// → 强调 Calmar(年化/回撤)、Sortino(只惩罚下行)、Profit Factor(盈亏比)
+// → 弱化 Sharpe(会惩罚趋势爆发的"好波动")、Net Return(避免被高回撤的极端方案带歪)
 export const DEFAULT_FILTERS: Filters = {
-  minTrades: 10, minProfitFactor: 1.0, maxSingleLossPct: 30,
-  maxDrawdown: 70, minSharpe: 0, minSortino: 0, minWinRate: 0, minWinLossRatio: 0,
+  minTrades: 20,           // 趋势策略一年约 20 笔合理(原 10)
+  minProfitFactor: 1.5,    // PF < 1.5 的趋势策略无意义(原 1.0)
+  maxSingleLossPct: 10,    // 单笔亏损 > 10% 是风控失败(原 30)
+  maxDrawdown: 40,         // 实盘可承受上限(原 70)
+  minSharpe: 0,            // 不限制 — 夏普会惩罚趋势爆发(原 0)
+  minSortino: 1.0,         // Sortino 才是趋势策略真指标(原 0)
+  minWinRate: 0,           // 不限制 — 趋势策略低胜率正常
+  minWinLossRatio: 1.5,    // 趋势策略盈亏比 < 1.5 不可接受(原 0)
 }
 
 export const DEFAULT_WEIGHTS: ScoreWeights = {
-  calmar: 0.30, sortino: 0.20, profitFactor: 0.20, sharpe: 0.05, netReturn: 0.25,
+  calmar: 0.35,            // +5 (趋势策略最核心指标)
+  sortino: 0.30,           // +10 (改进版夏普,对趋势友好)
+  profitFactor: 0.25,      // +5 (盈亏比是趋势策略灵魂)
+  sharpe: 0,               // -5 (夏普会扣趋势爆发的分,降到 0)
+  netReturn: 0.10,         // -15 (避免被极端高收益+爆仓方案带歪)
 }
 
 // ── CSV Parser ──
@@ -149,6 +168,11 @@ export function processRawData(data: RawRow[]): Omit<ProcessedRow, 'finalScore'|
     const sortino = getVal(row, 'Sortino ratio', 'Sortino Ratio')
     const profitFactor = getVal(row, 'Profit factor: All', 'Profit Factor')
     const marginCalls = getVal(row, 'Margin calls: All', 'Margin Calls', 'Margin calls')
+    // 多/空分组(用于多空失衡惩罚)
+    const netPnlLong  = getVal(row, 'Net P&L: Long',  'Net profit: Long')
+    const netPnlShort = getVal(row, 'Net P&L: Short', 'Net profit: Short')
+    const totalTradesLong  = getVal(row, 'Total trades: Long')
+    const totalTradesShort = getVal(row, 'Total trades: Short')
 
     if (avgWin === 0 && winningTrades > 0 && grossProfit > 0) avgWin = grossProfit / winningTrades
     if (avgLoss === 0 && losingTrades > 0 && grossLoss > 0) avgLoss = grossLoss / losingTrades
@@ -170,8 +194,9 @@ export function processRawData(data: RawRow[]): Omit<ProcessedRow, 'finalScore'|
     return {
       originalIndex: idx + 2, netProfit, netProfitPct, returnPct, ddPct, calmarRatio,
       winRate: percentProfit, winLossRatio: R, totalTrades, sharpe, sortino, profitFactor,
-      singleLossPct, marginCalls, kellyFraction, E, initialCapital, avgWin, avgLoss, strategyParams,
-      filterReasons: [] as string[], passed: true,
+      singleLossPct, marginCalls, kellyFraction, E, initialCapital, avgWin, avgLoss,
+      netPnlLong, netPnlShort, totalTradesLong, totalTradesShort,
+      strategyParams, filterReasons: [] as string[], passed: true,
     }
   })
 }
@@ -198,16 +223,31 @@ export function epochsToRawRows(epochs: { profit_pct: number; drawdown_pct: numb
 }
 
 // ── Filter ──
+// 数据完整度自动判断:
+//   完整(TV Assistant 145列) → 8 维过滤
+//   简化(站内导出 / grid search) → 仅按收益/回撤/交易数过滤,其余指标缺失就跳过
+// 检测依据:行内 avgWin/sortino/singleLossPct 均为 0 = 简化数据
+function isSlimRow(row: ReturnType<typeof processRawData>[number]): boolean {
+  // grid search 显式标记优先
+  if (row.strategyParams?.['from_grid_search'] === 1) return true
+  // 站内导出的 CSV: avgWin/avgLoss 均为 0(缺失 "Avg winning/losing trade" 列)
+  if (row.avgWin === 0 && row.avgLoss === 0 && row.totalTrades > 0) return true
+  // 或 sortino = 0 但其他指标正常(TV 145 列正常策略 sortino 一般非零)
+  if (row.sortino === 0 && row.sharpe === 0 && row.profitFactor > 0) return true
+  return false
+}
+
 export function applyFilters(rows: ReturnType<typeof processRawData>, filters: Filters) {
-  // Detect if data comes from grid search (missing detailed metrics)
-  const isGridSearch = rows.length > 0 && rows[0].strategyParams?.['from_grid_search'] === 1
   return rows.map(row => {
     const reasons: string[] = []
-    // For grid search data: only filter on returnPct, ddPct, and totalTrades
-    if (isGridSearch) {
+    const slim = isSlimRow(row)
+
+    if (slim) {
+      // 简化数据:只过滤"必有"的字段
       if (row.returnPct <= 0) reasons.push('亏损')
       if (row.totalTrades < filters.minTrades) reasons.push(`交易数<${filters.minTrades}`)
       if (row.ddPct > filters.maxDrawdown) reasons.push(`回撤>${filters.maxDrawdown}%`)
+      if (row.profitFactor > 0 && row.profitFactor < filters.minProfitFactor) reasons.push(`盈利因子<${filters.minProfitFactor}`)
     } else {
       // Full CSV data: apply all filters
       if (row.netProfit <= 0) reasons.push('亏损')
@@ -229,7 +269,14 @@ export function applyFilters(rows: ReturnType<typeof processRawData>, filters: F
 }
 
 // ── Score ──
-export function scoreRows(filtered: ReturnType<typeof applyFilters>, weights: ScoreWeights) {
+// BTC 趋势策略选优逻辑(3 步):
+//   1. finalScore  = 5 维加权(Calmar/Sortino/PF/Sharpe/NetReturn)
+//   2. utilityScore = finalScore × 稳定系数 - 风险临界惩罚 - 多空失衡惩罚
+//      - 稳定系数:仅样本极少(<10)时小幅降权,不主动奖励高样本(参数少的优化场景常见)
+//      - 风险临界:贴近过滤上限(回撤/单笔亏损)的方案脆弱,降分
+//      - 多空失衡:双向策略中一边亏损 / 完全靠一边 → 适应性差,降分
+//   3. combinedScore = utilityScore × (1 - w + w × robustnessScore) [在 page.tsx 中合成]
+export function scoreRows(filtered: ReturnType<typeof applyFilters>, weights: ScoreWeights, filters?: Filters) {
   const passed = filtered.filter(r => r.passed)
   if (passed.length === 0) return filtered.map(r => ({ ...r, finalScore: 0, utilityScore: 0 }))
   const N = passed.length
@@ -247,6 +294,10 @@ export function scoreRows(filtered: ReturnType<typeof applyFilters>, weights: Sc
     profitFactor: { min: pct(recalc.map(d=>d.profitFactor), pLow), max: pct(recalc.map(d=>d.profitFactor), pHigh) },
     netReturn: { min: pct(recalc.map(d=>d.returnPct), pLow), max: pct(recalc.map(d=>d.returnPct), pHigh) },
   }
+
+  const safeMaxDD   = Math.max(0.0001, filters?.maxDrawdown ?? 40)
+  const safeMaxLoss = Math.max(0.0001, filters?.maxSingleLossPct ?? 10)
+
   const passedSet = new Set(recalc.map(r => r.originalIndex))
   return filtered.map(row => {
     if (!passedSet.has(row.originalIndex)) return { ...row, calmarRatio: row.calmarRatio, finalScore: 0, utilityScore: 0 }
@@ -256,8 +307,37 @@ export function scoreRows(filtered: ReturnType<typeof applyFilters>, weights: Sc
       dynNorm(row.sortino, ranges.sortino.min, ranges.sortino.max) * weights.sortino +
       dynNorm(row.profitFactor, ranges.profitFactor.min, ranges.profitFactor.max) * weights.profitFactor +
       dynNorm(row.returnPct, ranges.netReturn.min, ranges.netReturn.max) * weights.netReturn
-    const stab = row.totalTrades >= 80 ? 1.03 : row.totalTrades >= 50 ? 1.01 : 1.0
-    return { ...row, calmarRatio: cr, finalScore: fs, utilityScore: fs * stab }
+
+    // ① 稳定系数(弱化版):仅样本极少时小幅降权,不奖励高样本
+    const stabilityCoeff = row.totalTrades < 10 ? 0.95 : 1.0
+
+    // ② 风险临界惩罚:贴近回撤/单笔亏损上限的方案脆弱
+    let riskPenalty = 0
+    const ddProx = row.ddPct / safeMaxDD
+    if (ddProx > 0.85) riskPenalty += 0.15 * (ddProx - 0.85) / 0.15
+    const lossProx = row.singleLossPct / safeMaxLoss
+    if (lossProx > 0.80) riskPenalty += 0.10 * (lossProx - 0.80) / 0.20
+
+    // ③ 多空失衡惩罚:双向策略中一边亏损 / 完全靠一边
+    let lsPenalty = 0
+    const hasLong  = (row.totalTradesLong  || 0) > 0
+    const hasShort = (row.totalTradesShort || 0) > 0
+    if (hasLong && hasShort) {
+      const l = row.netPnlLong || 0
+      const s = row.netPnlShort || 0
+      const tot = Math.abs(l) + Math.abs(s)
+      if (tot > 0) {
+        if (l < 0 || s < 0) {
+          lsPenalty = 0.08 * Math.abs(Math.min(l, s)) / tot
+        } else {
+          const dom = Math.max(l, s) / tot
+          if (dom > 0.90) lsPenalty = 0.03 * (dom - 0.90) / 0.10
+        }
+      }
+    }
+
+    const utilityScore = fs * stabilityCoeff - riskPenalty - lsPenalty
+    return { ...row, calmarRatio: cr, finalScore: fs, utilityScore }
   })
 }
 

@@ -253,18 +253,43 @@ def vectorbt_to_tv_csv(
     writer = csv.writer(output)
     writer.writerow(header)
 
+    # Extract detailed metrics
+    gross_profit = _round(metrics.get("gross_profit_abs", 0), 4)
+    gross_loss = _round(metrics.get("gross_loss_abs", 0), 4)
+    winning = metrics.get("win_trades", 0)
+    losing = metrics.get("loss_trades", 0)
+    avg_win = _round(metrics.get("avg_win_pct", 0), 4)
+    avg_loss = _round(metrics.get("avg_loss_pct", 0), 4)
+    largest_win = _round(metrics.get("max_win_pct", 0), 4)
+    largest_loss = _round(metrics.get("max_loss_pct", 0), 4)
+    pf = _round(metrics.get("profit_factor", 0), 4) if metrics.get("profit_factor") else ""
+    sharpe = _round(metrics.get("sharpe", 0), 4) if metrics.get("sharpe") else ""
+    sortino = _round(metrics.get("sortino", 0), 4) if metrics.get("sortino") else ""
+    calmar = _round(metrics.get("calmar", 0), 4) if metrics.get("calmar") else ""
+    
+    # Long/Short stats
+    long_net_pct = _round(metrics.get("return_pct_long", 0), 4) if metrics.get("return_pct_long") else ""
+    long_trades = metrics.get("total_trades_long", 0)
+    long_win_rate = _round(metrics.get("win_trades_long", 0) / long_trades * 100, 2) if long_trades else ""
+    long_avg_win = _round(metrics.get("avg_win_long_pct", 0), 4) if metrics.get("avg_win_long_pct") else ""
+    
+    short_net_pct = _round(metrics.get("return_pct_short", 0), 4) if metrics.get("return_pct_short") else ""
+    short_trades = metrics.get("total_trades_short", 0)
+    short_win_rate = _round(metrics.get("win_trades_short", 0) / short_trades * 100, 2) if short_trades else ""
+    short_avg_win = _round(metrics.get("avg_win_short_pct", 0), 4) if metrics.get("avg_win_short_pct") else ""
+
     # Summary row
     summary_row = [
         net_profit_pct, net_profit_abs,
-        "", "", # Gross P/L
+        gross_profit, gross_loss,
         win_rate_all,
-        trades_count, "", "", # Winning/Losing counts
-        "", "", "", "", # Avg win/loss/largest
+        trades_count, winning, losing,
+        avg_win, avg_loss, largest_win, largest_loss,
         _round(max_dd * 100, 4),
-        "", "", "", "", # PF/Sharpe/etc
+        pf, sharpe, sortino, calmar,
         initial_capital, net_profit_abs,
-        "", "", "", "", # Long stats
-        "", "", "", "", # Short stats
+        long_net_pct, long_trades, long_win_rate, long_avg_win,
+        short_net_pct, short_trades, short_win_rate, short_avg_win,
         0, 0, # Funding/Liq
         "", "", "", "", "", "", "", "", "", "",
     ] + param_values

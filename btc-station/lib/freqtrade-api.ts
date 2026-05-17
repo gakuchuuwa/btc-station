@@ -1,6 +1,5 @@
 /**
- * Client-side helpers for Phase 3.1 Freqtrade backend API.
- * Base URL is proxied via next.config.js → /py-api → FastAPI on Railway.
+ * 后端 API 工具函数，代理路径：/py-api → FastAPI localhost:8000
  */
 
 const BASE = "/py-api/api";
@@ -13,7 +12,7 @@ async function authHeaders(): Promise<HeadersInit> {
   return { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
 }
 
-// ── Templates ────────────────────────────────────────────���───────────────────
+// ── Templates ─────────────────────────────────────────────────────────────────
 
 export interface TemplateInfo {
   id: string;
@@ -34,7 +33,7 @@ export async function fetchTemplateCode(id: string): Promise<string> {
   return d.code as string;
 }
 
-// ── Strategy CRUD ───────────────────────────────────────────────────────���─────
+// ── Strategy CRUD ─────────────────────────────────────────────────────────────
 
 export interface StrategyMeta {
   id: string;
@@ -43,6 +42,12 @@ export interface StrategyMeta {
   class_name: string;
   strategy_type: string;
   created_at: string;
+}
+
+export async function deleteStrategy(id: string): Promise<void> {
+  const h = await authHeaders();
+  const r = await fetch(`${BASE}/strategies/${id}`, { method: "DELETE", headers: h });
+  if (!r.ok) throw new Error(await r.text());
 }
 
 export async function listMyStrategies(): Promise<StrategyMeta[]> {
@@ -79,7 +84,7 @@ export async function saveStrategy(data: {
   }
 }
 
-// ── Backtest ────────────────────────────���─────────────────────────────────────
+// ── Backtest ──────────────────────────────────────────────────────────────────
 
 export interface BacktestConfig {
   strategy_id: string;
@@ -91,13 +96,17 @@ export interface BacktestConfig {
   fee_pct: number;
 }
 
-export interface BacktestSubmitResult {
-  task_id: string;
-  backtest_id: string;
-  status: string;
+export interface BacktestMetrics {
+  net_profit_pct: number;
+  max_drawdown_pct: number;
+  win_rate_pct: number;
+  total_trades: number;
+  sharpe?: number;
+  sortino?: number;
+  profit_factor?: number;
 }
 
-export async function submitBacktest(cfg: BacktestConfig): Promise<BacktestSubmitResult> {
+export async function submitBacktest(cfg: BacktestConfig): Promise<{ backtest_id: string; status: string }> {
   const h = await authHeaders();
   const r = await fetch(`${BASE}/backtests`, {
     method: "POST",
@@ -129,144 +138,21 @@ export async function getQuota() {
   return r.json();
 }
 
-// ── WebSocket stream helper ───────────────────────────────────────────────────
+// ── WebSocket stream ──────────────────────────────────────────────────────────
 
 export type StreamMsg =
   | { type: "status"; value: string }
-  | { type: "progress"; percent: number }
   | { type: "log"; line: string; level: "info" | "warning" | "error" }
   | { type: "result"; result: BacktestMetrics }
   | { type: "error"; message: string };
-
-export interface BacktestMetrics {
-  net_profit_pct: number;
-  max_drawdown_pct: number;
-  win_rate_pct: number;
-  total_trades: number;
-  sharpe?: number;
-  sortino?: number;
-  profit_factor?: number;
-}
-
-// ── Live daemon ───────────────────────────────────────────────────────────────
-
-export interface LiveStartConfig {
-  strategy_id: string;
-  dry_run: boolean;
-  timeframe: string;
-  stake_amount: number;
-  okx_api_key?: string;
-  okx_secret?: string;
-  okx_password?: string;
-}
-
-export async function startLive(cfg: LiveStartConfig) {
-  const h = await authHeaders();
-  const r = await fetch(`${BASE}/live/start`, {
-    method: "POST",
-    headers: h,
-    body: JSON.stringify(cfg),
-  });
-  if (!r.ok) {
-    const err = await r.json().catch(() => ({ detail: r.statusText }));
-    throw new Error(err.detail ?? "启动失败");
-  }
-  return r.json();
-}
-
-export async function stopLive() {
-  const h = await authHeaders();
-  const r = await fetch(`${BASE}/live/stop`, { method: "POST", headers: h });
-  if (!r.ok) {
-    const err = await r.json().catch(() => ({ detail: r.statusText }));
-    throw new Error(err.detail ?? "停止失败");
-  }
-  return r.json();
-}
-
-export async function getLiveStatus() {
-  const h = await authHeaders();
-  const r = await fetch(`${BASE}/live/status`, { headers: h });
-  if (!r.ok) return null;
-  return r.json();
-}
-
-export async function getLiveMetrics() {
-  const h = await authHeaders();
-  const r = await fetch(`${BASE}/live/metrics`, { headers: h });
-  if (r.status === 503) return null; // not running
-  if (!r.ok) throw new Error("获取实盘数据失败");
-  return r.json();
-}
-
-// ── Hyperopt ──────────────────────────────────────────────────────────────────
-
-export interface HyperoptConfig {
-  strategy_id: string;
-  timeframe: string;
-  timerange: string;
-  epochs: number;
-  spaces: string[];
-  loss_function: string;
-  min_trades: number;
-}
-
-export interface EpochRecord {
-  epoch: number;
-  total_epochs: number;
-  profit_pct: number;
-  drawdown_pct: number;
-  trades: number;
-  params?: Record<string, string>;
-}
-
-export interface HyperoptResult {
-  total_epochs: number;
-  best: EpochRecord;
-  epochs: EpochRecord[];
-}
-
-export interface HyperoptTaskStatus {
-  task_id: string;
-  status: "running" | "completed" | "failed";
-  epochs_done: number;
-  epochs_total: number;
-  progress_pct: number;
-  latest_epochs: EpochRecord[];
-  result?: HyperoptResult;
-  error?: string;
-}
-
-export async function startHyperopt(cfg: HyperoptConfig): Promise<{ task_id: string; status: string; epochs_total: number }> {
-  const h = await authHeaders();
-  const r = await fetch(`${BASE}/hyperopt/start`, {
-    method: "POST",
-    headers: h,
-    body: JSON.stringify(cfg),
-  });
-  if (!r.ok) {
-    const err = await r.json().catch(() => ({ detail: r.statusText }));
-    throw new Error(err.detail ?? "提交调参失败");
-  }
-  return r.json();
-}
-
-export async function getHyperoptStatus(taskId: string): Promise<HyperoptTaskStatus> {
-  const h = await authHeaders();
-  const r = await fetch(`${BASE}/hyperopt/${taskId}`, { headers: h });
-  if (!r.ok) throw new Error("获取调参状态失败");
-  return r.json();
-}
 
 export function connectBacktestStream(
   backtestId: string,
   onMessage: (msg: StreamMsg) => void,
   onClose: () => void,
 ): WebSocket {
-  const wsBase = typeof window !== "undefined"
-    ? (window.location.protocol === "https:" ? "wss://" : "ws://") + window.location.host + "/py-api"
-    : "";
-  const ws = new WebSocket(`${wsBase}/api/backtests/${backtestId}/stream`);
+  const proto = window.location.protocol === "https:" ? "wss://" : "ws://";
+  const ws = new WebSocket(`${proto}${window.location.host}/py-api/api/backtests/${backtestId}/stream`);
   ws.onmessage = (e) => {
     try { onMessage(JSON.parse(e.data)); } catch { /* ignore */ }
   };
@@ -274,3 +160,14 @@ export function connectBacktestStream(
   ws.onerror = () => onClose();
   return ws;
 }
+
+// ── 未使用页面的存根（hyperopt / live 页面引用但功能已废弃）──
+export interface EpochRecord { epoch: number; profit_pct: number; drawdown_pct: number; loss: number; win_rate: number; trades: number; params: Record<string, string>; [k: string]: unknown }
+export interface HyperoptResult { best_epoch: EpochRecord; best: EpochRecord; epochs: EpochRecord[]; [k: string]: unknown }
+export interface LiveStartConfig { strategy_id: string; stake_amount: number; [k: string]: unknown }
+export async function startHyperopt(_cfg: unknown): Promise<{ task_id: string }> { return { task_id: '' } }
+export async function getHyperoptStatus(_id: string): Promise<{ status: string; progress_pct: number; epochs_done: number; latest_epochs: EpochRecord[]; error?: string; result?: HyperoptResult }> { return { status: 'idle', progress_pct: 0, epochs_done: 0, latest_epochs: [] } }
+export async function startLive(_cfg: LiveStartConfig): Promise<{ task_id: string }> { return { task_id: '' } }
+export async function stopLive(): Promise<void> {}
+export async function getLiveStatus(): Promise<{ running: boolean; dry_run?: boolean; strategy_class?: string; timeframe?: string; stake_amount?: number; pid?: number; log_tail?: string[] }> { return { running: false } }
+export async function getLiveMetrics(): Promise<{ running: boolean; dry_run: boolean; strategy_class?: string; timeframe?: string; stake_amount?: number; profit?: { profit_all_coin: number; profit_all_percent: number; profit_closed_coin: number; profit_closed_percent: number; trade_count: number; closed_trade_count: number; winning_trades: number; losing_trades: number; best_pair: string; best_rate: number }; open_trades?: { trade_id: number; pair: string; open_rate: number; current_rate: number; profit_pct: number; profit_abs: number; amount: number; open_date: string }[] }> { return { running: false, dry_run: true } }

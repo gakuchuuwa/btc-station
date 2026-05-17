@@ -80,7 +80,61 @@ def _count_monthly_backtests(user_id: str) -> int:
 import base64 as _b64
 
 DEV_MODE = os.environ.get("DEV_MODE", "false").lower() == "true"
-DEV_USER_ID = "dev-user-local"
+_DEV_USER_ID_CACHE: str | None = None
+
+def _ensure_dev_user() -> str:
+    """Create (or find) a dev user in Supabase Auth so the UUID is real."""
+    global _DEV_USER_ID_CACHE
+    if _DEV_USER_ID_CACHE:
+        return _DEV_USER_ID_CACHE
+
+    import requests as _req
+    email = "dev@btcstation.local"
+    headers = {
+        "apikey": _sb_key(),
+        "Authorization": f"Bearer {_sb_key()}",
+        "Content-Type": "application/json",
+    }
+    # Try to list existing users with this email
+    try:
+        r = _req.get(
+            f"{_sb_url()}/auth/v1/admin/users",
+            headers=headers, timeout=10,
+        )
+        if r.ok:
+            for u in r.json().get("users", []):
+                if u.get("email") == email:
+                    _DEV_USER_ID_CACHE = u["id"]
+                    logger.info(f"[DEV] Found existing dev user: {_DEV_USER_ID_CACHE}")
+                    return _DEV_USER_ID_CACHE
+    except Exception as e:
+        logger.warning(f"[DEV] Failed to list users: {e}")
+
+    # Create new dev user
+    try:
+        r = _req.post(
+            f"{_sb_url()}/auth/v1/admin/users",
+            headers=headers,
+            json={
+                "email": email,
+                "password": "dev-password-btcstation-2024",
+                "email_confirm": True,
+                "user_metadata": {"role": "dev"},
+            },
+            timeout=10,
+        )
+        if r.ok:
+            _DEV_USER_ID_CACHE = r.json()["id"]
+            logger.info(f"[DEV] Created dev user: {_DEV_USER_ID_CACHE}")
+            return _DEV_USER_ID_CACHE
+        else:
+            logger.error(f"[DEV] Create user failed: {r.status_code} {r.text[:200]}")
+    except Exception as e:
+        logger.error(f"[DEV] Create user exception: {e}")
+
+    # Last resort fallback
+    _DEV_USER_ID_CACHE = "00000000-0000-0000-0000-000000000000"
+    return _DEV_USER_ID_CACHE
 
 def _get_user_id(authorization: str | None = None) -> str:
     """
@@ -88,7 +142,7 @@ def _get_user_id(authorization: str | None = None) -> str:
     Tries fast base64 JWT decode first; falls back to Supabase Auth API.
     """
     if DEV_MODE:
-        return DEV_USER_ID
+        return _ensure_dev_user()
 
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="未登录")
@@ -176,7 +230,6 @@ class BacktestSubmit(BaseModel):
             raise ValueError("market 必须是 spot 或 futures")
         return v
 
-
 # ── Strategy CRUD ─────────────────────────────────────────────────────────────
 
 @router.post("/strategies", status_code=201)
@@ -234,87 +287,6 @@ async def delete_strategy(sid: str, user_id: str = Depends(current_user)):
     return Response(status_code=204)
 
 
-# ── Freqtrade → VectorBT auto-conversion ─────────────────────────────────────
-
-_VBT_TEMPLATES = {
-    "MaCrossStrategy": '''
-import vectorbt as vbt
-import pandas as pd
-
-def execute(df, parameters):
-    fast = parameters.get("fast_period", 20)
-    slow = parameters.get("slow_period", 50)
-    fast_ma = vbt.MA.run(df["close"], fast)
-    slow_ma = vbt.MA.run(df["close"], slow)
-    entries = fast_ma.ma_crossed_above(slow_ma)
-    exits = fast_ma.ma_crossed_below(slow_ma)
-    pf = vbt.Portfolio.from_signals(df["close"], entries, exits, init_cash=10000)
-    indicators = {"Fast MA": fast_ma.ma, "Slow MA": slow_ma.ma}
-    return pf, indicators
-''',
-    "RsiStrategy": '''
-import vectorbt as vbt
-import pandas as pd
-
-def execute(df, parameters):
-    rsi = vbt.RSI.run(df["close"], window=parameters.get("rsi_period", 14))
-    entries = rsi.rsi_below(parameters.get("rsi_buy", 30))
-    exits = rsi.rsi_above(parameters.get("rsi_sell", 70))
-    pf = vbt.Portfolio.from_signals(df["close"], entries, exits, init_cash=10000)
-    indicators = {"RSI": rsi.rsi}
-    return pf, indicators
-''',
-    "MacdStrategy": '''
-import vectorbt as vbt
-import pandas as pd
-
-def execute(df, parameters):
-    macd = vbt.MACD.run(df["close"],
-        fast_window=parameters.get("fast", 12),
-        slow_window=parameters.get("slow", 26),
-        signal_window=parameters.get("signal", 9))
-    entries = macd.macd_above(macd.signal) & macd.macd_above(0)
-    exits = macd.macd_below(macd.signal)
-    pf = vbt.Portfolio.from_signals(df["close"], entries, exits, init_cash=10000)
-    indicators = {"MACD": macd.macd, "Signal": macd.signal}
-    return pf, indicators
-''',
-    "BollingerBreakoutStrategy": '''
-import vectorbt as vbt
-import pandas as pd
-
-def execute(df, parameters):
-    bb = vbt.BBANDS.run(df["close"],
-        window=parameters.get("bb_period", 20),
-        alpha=parameters.get("bb_std", 2.0))
-    entries = df["close"] < bb.lower
-    exits = df["close"] > bb.upper
-    pf = vbt.Portfolio.from_signals(df["close"], entries, exits, init_cash=10000)
-    indicators = {"BB Upper": bb.upper, "BB Middle": bb.middle, "BB Lower": bb.lower}
-    return pf, indicators
-''',
-}
-
-# Generic fallback: simple MA cross
-_VBT_GENERIC = '''
-import vectorbt as vbt
-import pandas as pd
-
-def execute(df, parameters):
-    fast_ma = vbt.MA.run(df["close"], 20)
-    slow_ma = vbt.MA.run(df["close"], 50)
-    entries = fast_ma.ma_crossed_above(slow_ma)
-    exits = fast_ma.ma_crossed_below(slow_ma)
-    pf = vbt.Portfolio.from_signals(df["close"], entries, exits, init_cash=10000)
-    indicators = {"Fast MA (20)": fast_ma.ma, "Slow MA (50)": slow_ma.ma}
-    return pf, indicators
-'''
-
-def _freqtrade_to_vectorbt(class_name: str, freqtrade_code: str) -> str:
-    """Convert a Freqtrade IStrategy class name to equivalent VectorBT execute() code."""
-    return _VBT_TEMPLATES.get(class_name, _VBT_GENERIC)
-
-
 # ── Historical candles from local cache ────────────────────────────────────────
 
 @router.get("/candles/{timeframe}")
@@ -324,20 +296,21 @@ async def get_cached_candles(timeframe: str):
     feeder = DataFeeder('okx')
     df = feeder.get_local_data("BTC/USDT", timeframe)
     if df.empty:
-        df = feeder.fetch_ohlcv("BTC/USDT", timeframe, limit=5000)
+        tf_limits = {'1m': 1000, '5m': 2000, '15m': 5000, '1h': 10000, '4h': 18000, '1d': 3000, '1w': 500}
+        df = feeder.fetch_ohlcv("BTC/USDT", timeframe, limit=tf_limits.get(timeframe, 5000))
     if df.empty:
         raise HTTPException(404, "暂无该周期的K线数据")
-    
-    # Ensure timestamp column is datetime
+
+    # Ensure timestamp is naive UTC (no timezone info, already in UTC)
     if 'timestamp' in df.columns:
-        df['timestamp'] = pd.to_datetime(df['timestamp'])
-    
+        df['timestamp'] = pd.to_datetime(df['timestamp']).dt.tz_localize(None)
+
     # Convert to list of {time, open, high, low, close, volume}
     records = []
     for _, row in df.iterrows():
         ts = row.get('timestamp') if 'timestamp' in df.columns else row.name
         try:
-            unix_ts = int(pd.Timestamp(ts).timestamp())
+            unix_ts = int(pd.Timestamp(ts).value // 10**9)  # nanoseconds→seconds，避免本地时区偏移
         except Exception:
             continue
         records.append({
@@ -366,9 +339,7 @@ async def get_cached_candles(timeframe: str):
 TEMPLATE_DIR = os.path.join(os.path.dirname(__file__), "strategies")
 TEMPLATES = [
     {"id": "MaCrossStrategy",        "name": "MA 双均线交叉",     "category": "trend"},
-    {"id": "RsiStrategy",             "name": "RSI 超买超卖",      "category": "mean-reversion"},
     {"id": "MacdStrategy",            "name": "MACD 金叉死叉",     "category": "trend"},
-    {"id": "BollingerBreakoutStrategy","name": "布林带突破",        "category": "breakout"},
     {"id": "DcaStrategy",             "name": "DCA 定投补仓",      "category": "dca"},
     {"id": "AtrChannelStrategy",      "name": "ATR 通道动态止损",  "category": "trend"},
     {"id": "TurtleSslDualStrategy",   "name": "海龟SSL双系统6形态","category": "trend"},
@@ -442,8 +413,7 @@ async def submit_backtest(body: BacktestSubmit, user_id: str = Depends(current_u
 
     def _run_in_thread():
         logger.info(f"[BT {backtest_id[:8]}] 线程启动")
-        from csv_converter import vectorbt_to_tv_csv, validate_csv
-        raw = None  # 初始化，防止 engine 分支都未命中时 NameError
+        from csv_converter import vectorbt_to_tv_csv
         csv_text = ""
         try:
             def _log(line: str):
@@ -451,85 +421,34 @@ async def submit_backtest(body: BacktestSubmit, user_id: str = Depends(current_u
 
             _sb("patch", f"backtests?id=eq.{backtest_id}", {"status": "running"})
 
-            engine_to_use = body.engine or strategy.get("strategy_type", "vectorbt")
-            
-            # Auto-detect: if freqtrade is not installed, fallback to vectorbt
-            if engine_to_use == "freqtrade":
-                try:
-                    import importlib
-                    importlib.import_module("freqtrade")
-                except ImportError:
-                    _log("⚠ freqtrade 未安装，自动切换到 VectorBT 引擎")
-                    engine_to_use = "vectorbt"
-            
-            _log(f"使用回测引擎: {engine_to_use}")
+            feeder = DataFeeder('okx')
+            df = feeder.get_local_data("BTC/USDT", body.timeframe)
+            if df.empty:
+                _log("本地缓存无数据，尝试抓取最近数据...")
+                df = feeder.fetch_ohlcv("BTC/USDT", body.timeframe, limit=2000)
 
-            if engine_to_use == "vectorbt":
-                # VectorBT Path
-                feeder = DataFeeder('okx')
-                df = feeder.get_local_data("BTC/USDT", body.timeframe)
-                if df.empty:
-                    _log("本地缓存无数据，尝试抓取最近数据...")
-                    df = feeder.fetch_ohlcv("BTC/USDT", body.timeframe, limit=2000)
-                
-                # If the code is Freqtrade format (IStrategy), auto-generate VectorBT code
-                vbt_code = code
-                if "IStrategy" in code or "freqtrade" in code:
-                    _log("检测到 Freqtrade 格式策略，自动转换为 VectorBT 格式...")
-                    vbt_code = _freqtrade_to_vectorbt(class_name, code)
-                    _log(f"转换完成，使用 VectorBT 执行")
-                
-                res_data, err = run_dynamic_code(vbt_code, df, body.config_overrides, timeframe=body.timeframe)
-                if err:
-                    raise RuntimeError(f"VectorBT 执行错误: {err}")
-                
-                # Normalize VectorBT trades to Freqtrade format for frontend compatibility
-                normalized_trades = []
-                for t in res_data["trades"]:
-                    # Parse timestamps to milliseconds (frontend expects open_timestamp in ms)
-                    entry_ts = t.get("Entry Timestamp", "")
-                    exit_ts = t.get("Exit Timestamp", "")
-                    try:
-                        import pandas as _pd
-                        entry_ms = int(_pd.Timestamp(entry_ts).timestamp() * 1000) if entry_ts else 0
-                        exit_ms = int(_pd.Timestamp(exit_ts).timestamp() * 1000) if exit_ts else 0
-                    except Exception:
-                        entry_ms = 0
-                        exit_ms = 0
-                    
-                    normalized_trades.append({
-                        "pair": "BTC/USDT",
-                        "open_date": str(entry_ts),
-                        "close_date": str(exit_ts),
-                        "open_timestamp": entry_ms,
-                        "close_timestamp": exit_ms,
-                        "open_rate": t.get("Entry Price", 0),
-                        "close_rate": t.get("Exit Price", 0),
-                        "profit_ratio": t.get("Return", 0),
-                        "profit_abs": t.get("PnL", 0),
-                        "is_short": str(t.get("Direction", "Long")).lower() == "short",
-                    })
-                
-                # Mock a 'raw' dict similar to freqtrade for the downstream processing
-                raw = {
-                    "trades": normalized_trades,
-                    "strategy_comparison": [{
-                        "profit_total": res_data["metrics"]["total_return_pct"] / 100,
-                        "max_drawdown_account": res_data["metrics"]["max_drawdown_pct"] / 100,
-                        "winrate": res_data["metrics"]["win_rate_pct"] / 100,
-                        "trades": res_data["metrics"]["total_trades"]
-                    }],
-                    "results_per_pair": []
-                }
-                # VectorBT indicators for charting
-                _sb("patch", f"backtests?id=eq.{backtest_id}", {
-                    "config": {**body.model_dump(), "indicators": res_data.get("indicators", {})}
-                })
-                csv_text = vectorbt_to_tv_csv(res_data, {}, body.initial_capital)
-                _log("VectorBT 回测完成")
+            res_data, err = run_dynamic_code(code, df, body.config_overrides, timeframe=body.timeframe)
+            if err:
+                raise RuntimeError(f"VectorBT 执行错误: {err}")
 
-            if raw is None:
-                raise RuntimeError(f"未识别的回测引擎: {engine_to_use}（仅支持 vectorbt）")
+            _sb("patch", f"backtests?id=eq.{backtest_id}", {
+                "config": {**body.model_dump(), "indicators": res_data.get("indicators", {})}
+            })
+            # 将策略使用的参数透传给 CSV 导出，使各参数列能正确显示
+            params_dict = res_data.get("metrics", {}).get("raw_parameters", {})
+            csv_text = vectorbt_to_tv_csv(res_data, params_dict, body.initial_capital)
+            _log("VectorBT 回测完成")
+
+            raw = {
+                "trades": res_data["trades"],
+                "strategy_comparison": [{
+                    "profit_total": res_data["metrics"]["total_return_pct"] / 100,
+                    "max_drawdown_account": res_data["metrics"]["max_drawdown_pct"] / 100,
+                    "winrate": res_data["metrics"]["win_rate_pct"] / 100,
+                    "trades": res_data["metrics"]["total_trades"],
+                }],
+                "results_per_pair": [],
+            }
 
             summary = (raw.get("strategy_comparison") or raw.get("results_per_pair") or [{}])[0]
             trades_raw = raw.get("trades", [])
@@ -578,6 +497,9 @@ async def submit_backtest(body: BacktestSubmit, user_id: str = Depends(current_u
             }
             
             metrics = sanitize_nan(metrics)
+            # 注意: 此处截断仅影响写入 Supabase 数据库的持久化记录。
+            # Supabase JSON 列有行大小限制,交易过多会导致写入失败。
+            # 不影响: 策略研发页 S3 实时回测(直接返回完整 trades)、蒙特卡洛(用 sessionStorage)。
             trades_clean = sanitize_nan(trades_raw[:200])
 
             logger.info(f"[BT {backtest_id[:8]}] metrics={metrics}, trades_raw_count={len(trades_raw)}")
@@ -597,9 +519,7 @@ async def submit_backtest(body: BacktestSubmit, user_id: str = Depends(current_u
 
     threading.Thread(target=_run_in_thread, daemon=True).start()
 
-    _sb("patch", f"backtests?id=eq.{backtest_id}", {"celery_task_id": task_id})
-
-    return {"task_id": task_id, "backtest_id": backtest_id, "status": "pending"}
+    return {"backtest_id": backtest_id, "status": "pending"}
 
 
 # ── Task status polling ───────────────────────────────────────────────────────
@@ -635,33 +555,15 @@ async def backtest_stream(websocket: WebSocket, backtest_id: str):
     try:
         # Poll Supabase until terminal state or WS closes
         while True:
-            rows = _sb("get", f"backtests?id=eq.{backtest_id}&select=status,celery_task_id,metrics,error_message&limit=1")
+            rows = _sb("get", f"backtests?id=eq.{backtest_id}&select=status,metrics,error_message&limit=1")
             if not rows:
                 await websocket.send_json({"type": "error", "message": "回测记录未找到"})
                 break
 
             row = rows[0]
             status = row.get("status", "pending")
-            celery_id = row.get("celery_task_id")
 
-            # Try to get live log from Celery
-            log_line = None
-            if celery_id:
-                try:
-                    from celery.result import AsyncResult
-                    from celery_app import celery_app
-                    ar = AsyncResult(celery_id, app=celery_app)
-                    if ar.state == "PROGRESS":
-                        info = ar.info or {}
-                        log_line = info.get("log")
-                except Exception:
-                    pass
-
-            msg: dict = {"type": "status", "value": status}
-            await websocket.send_json(msg)
-
-            if log_line:
-                await websocket.send_json({"type": "log", "line": log_line, "level": "info"})
+            await websocket.send_json({"type": "status", "value": status})
 
             if status == "completed":
                 metrics = row.get("metrics")
@@ -739,4 +641,351 @@ async def get_quota(user_id: str = Depends(current_user)):
         "backtests_used": used,
         "backtests_limit": limit,
         "next_reset": next_reset,
+    }
+
+
+# ── Monte Carlo ───────────────────────────────────────────────────────────────
+
+class MonteCarloRequest(BaseModel):
+    code: str
+    parameters: dict = {}
+    timeframe: str = "4h"
+    n_simulations: int = 200
+    mode: str = "trade_shuffle"  # "trade_shuffle" | "param_perturbation" | "price_bootstrap"
+
+    @field_validator("n_simulations")
+    @classmethod
+    def clamp_sims(cls, v):
+        return max(50, min(v, 1000))
+
+    @field_validator("mode")
+    @classmethod
+    def valid_mode(cls, v):
+        allowed = {"trade_shuffle", "param_perturbation", "price_bootstrap"}
+        if v not in allowed:
+            raise ValueError(f"mode 必须是 {allowed} 之一")
+        return v
+
+
+def _equity_from_trades(trades: list, initial: float) -> list:
+    """从交易列表重建权益曲线，返回每笔交易后的权益值列表。"""
+    eq = initial
+    curve = [eq]
+    for t in trades:
+        pnl = t.get("PnL", 0) or 0
+        eq += float(pnl)
+        curve.append(eq)
+    return curve
+
+
+def _metrics_from_equity(equity: list, initial: float) -> dict:
+    import math
+    if len(equity) < 2:
+        return {"total_return_pct": 0, "max_drawdown_pct": 0, "sharpe": None}
+    final = equity[-1]
+    total_return = (final - initial) / initial * 100
+
+    peak = equity[0]
+    max_dd = 0.0
+    for v in equity:
+        if v > peak:
+            peak = v
+        dd = (peak - v) / peak * 100 if peak > 0 else 0
+        if dd > max_dd:
+            max_dd = dd
+
+    rets = [(equity[i] - equity[i - 1]) / equity[i - 1] for i in range(1, len(equity)) if equity[i - 1] != 0]
+    if len(rets) > 1:
+        mean_r = sum(rets) / len(rets)
+        std_r = (sum((r - mean_r) ** 2 for r in rets) / len(rets)) ** 0.5
+        sharpe = (mean_r / std_r * (252 ** 0.5)) if std_r > 0 else None
+    else:
+        sharpe = None
+
+    return {
+        "total_return_pct": round(total_return, 2),
+        "max_drawdown_pct": round(max_dd, 2),
+        "sharpe": round(sharpe, 3) if sharpe is not None and not math.isnan(sharpe) else None,
+    }
+
+
+@router.post("/monte-carlo/trade-shuffle")
+async def mc_trade_shuffle(body: MonteCarloRequest):
+    """
+    模式1：交易序列随机化
+    对历史回测的 trades 随机打乱顺序，模拟不同运气下的权益曲线分布。
+    """
+    import random
+    import math
+
+    feeder = DataFeeder('okx')
+    df = feeder.get_local_data("BTC/USDT:USDT", body.timeframe)
+    if df.empty:
+        df = feeder.get_local_data("BTC/USDT", body.timeframe)
+    if df.empty:
+        raise HTTPException(400, "无本地K线数据，请先运行数据更新")
+
+    res, err = run_dynamic_code(body.code, df.copy(), body.parameters, timeframe=body.timeframe)
+    if err:
+        raise HTTPException(400, f"策略执行失败: {err}")
+
+    trades = res.get("trades", [])
+    if len(trades) < 5:
+        raise HTTPException(400, f"交易笔数不足（{len(trades)} 笔），无法进行蒙特卡洛分析")
+
+    initial = body.parameters.get("initial_capital", 10000.0)
+    base_metrics = _metrics_from_equity(_equity_from_trades(trades, initial), initial)
+
+    rng = random.Random(42)
+    sim_returns = []
+    sim_drawdowns = []
+    sim_sharpes = []
+    equity_curves = []  # 最多返回 100 条曲线用于绘图
+
+    for i in range(body.n_simulations):
+        shuffled = trades[:]
+        rng.shuffle(shuffled)
+        eq = _equity_from_trades(shuffled, initial)
+        m = _metrics_from_equity(eq, initial)
+        sim_returns.append(m["total_return_pct"])
+        sim_drawdowns.append(m["max_drawdown_pct"])
+        if m["sharpe"] is not None:
+            sim_sharpes.append(m["sharpe"])
+        if i < 100:
+            equity_curves.append(eq)
+
+    def _pct(lst, p):
+        s = sorted(lst)
+        idx = int(len(s) * p / 100)
+        return round(s[min(idx, len(s) - 1)], 2)
+
+    def _mean(lst):
+        return round(sum(lst) / len(lst), 2) if lst else None
+
+    return {
+        "mode": "trade_shuffle",
+        "n_trades": len(trades),
+        "n_simulations": body.n_simulations,
+        "base": base_metrics,
+        "equity_curves": equity_curves,
+        "stats": {
+            "total_return": {
+                "p5":  _pct(sim_returns, 5),
+                "p25": _pct(sim_returns, 25),
+                "p50": _pct(sim_returns, 50),
+                "p75": _pct(sim_returns, 75),
+                "p95": _pct(sim_returns, 95),
+                "mean": _mean(sim_returns),
+            },
+            "max_drawdown": {
+                "p5":  _pct(sim_drawdowns, 5),
+                "p25": _pct(sim_drawdowns, 25),
+                "p50": _pct(sim_drawdowns, 50),
+                "p75": _pct(sim_drawdowns, 75),
+                "p95": _pct(sim_drawdowns, 95),
+                "mean": _mean(sim_drawdowns),
+            },
+            "sharpe": {
+                "p5":  _pct(sim_sharpes, 5) if sim_sharpes else None,
+                "p50": _pct(sim_sharpes, 50) if sim_sharpes else None,
+                "p95": _pct(sim_sharpes, 95) if sim_sharpes else None,
+                "mean": _mean(sim_sharpes),
+            },
+        },
+    }
+
+
+@router.post("/monte-carlo/param-perturbation")
+async def mc_param_perturbation(body: MonteCarloRequest):
+    """
+    模式2：参数扰动分析
+    在用户参数周围随机采样，评估策略对参数变化的敏感性。
+    """
+    import random
+    import math
+
+    feeder = DataFeeder('okx')
+    df = feeder.get_local_data("BTC/USDT:USDT", body.timeframe)
+    if df.empty:
+        df = feeder.get_local_data("BTC/USDT", body.timeframe)
+    if df.empty:
+        raise HTTPException(400, "无本地K线数据")
+
+    base_params = body.parameters.copy()
+    initial = base_params.get("initial_capital", 10000.0)
+
+    # 找出数值型参数（排除特殊字段）
+    skip_keys = {"initial_capital", "start_date", "end_date", "leverage", "fee_pct"}
+    numeric_params = {k: v for k, v in base_params.items()
+                      if k not in skip_keys and isinstance(v, (int, float)) and v != 0}
+
+    if not numeric_params:
+        raise HTTPException(400, "未找到可扰动的数值型参数（请确保策略参数包含数值型字段）")
+
+    rng = random.Random(42)
+    results = []
+
+    for i in range(body.n_simulations):
+        perturbed = base_params.copy()
+        perturbation_info = {}
+        for k, base_v in numeric_params.items():
+            ratio = rng.uniform(0.7, 1.3)
+            new_v = round(base_v * ratio, 6)
+            if isinstance(base_v, int):
+                new_v = max(1, int(new_v))
+            perturbed[k] = new_v
+            perturbation_info[k] = round(ratio, 3)
+
+        res, err = run_dynamic_code(body.code, df.copy(), perturbed, timeframe=body.timeframe)
+        if err:
+            continue
+
+        trades = res.get("trades", [])
+        eq = _equity_from_trades(trades, initial)
+        m = _metrics_from_equity(eq, initial)
+        results.append({
+            "params": {k: perturbed[k] for k in numeric_params},
+            "perturbation": perturbation_info,
+            "total_return_pct": m["total_return_pct"],
+            "max_drawdown_pct": m["max_drawdown_pct"],
+            "sharpe": m["sharpe"],
+            "n_trades": len(trades),
+        })
+
+    if not results:
+        raise HTTPException(500, "所有参数扰动模拟均失败，请检查策略代码")
+
+    returns = [r["total_return_pct"] for r in results]
+    drawdowns = [r["max_drawdown_pct"] for r in results]
+    profitable = sum(1 for r in returns if r > 0)
+
+    def _pct(lst, p):
+        s = sorted(lst)
+        idx = int(len(s) * p / 100)
+        return round(s[min(idx, len(s) - 1)], 2)
+
+    return {
+        "mode": "param_perturbation",
+        "n_simulations": len(results),
+        "base_params": {k: base_params[k] for k in numeric_params},
+        "results": results,
+        "stats": {
+            "profitable_ratio": round(profitable / len(results) * 100, 1),
+            "total_return": {
+                "p5":  _pct(returns, 5),
+                "p25": _pct(returns, 25),
+                "p50": _pct(returns, 50),
+                "p75": _pct(returns, 75),
+                "p95": _pct(returns, 95),
+            },
+            "max_drawdown": {
+                "p5":  _pct(drawdowns, 5),
+                "p50": _pct(drawdowns, 50),
+                "p95": _pct(drawdowns, 95),
+            },
+        },
+    }
+
+
+@router.post("/monte-carlo/price-bootstrap")
+async def mc_price_bootstrap(body: MonteCarloRequest):
+    """
+    模式3：价格路径 Bootstrap
+    从历史收益率序列中有放回抽样，生成随机价格路径并在其上运行策略。
+    """
+    import random
+    import math
+
+    feeder = DataFeeder('okx')
+    df = feeder.get_local_data("BTC/USDT:USDT", body.timeframe)
+    if df.empty:
+        df = feeder.get_local_data("BTC/USDT", body.timeframe)
+    if df.empty:
+        raise HTTPException(400, "无本地K线数据")
+
+    if 'timestamp' in df.columns:
+        df = df.set_index('timestamp')
+
+    import pandas as pd
+    import numpy as np
+
+    closes = df['close'].values.astype(float)
+    if len(closes) < 100:
+        raise HTTPException(400, "K线数量不足（至少需要 100 根）")
+
+    log_rets = np.diff(np.log(closes))
+    n_bars = len(closes)
+    initial = body.parameters.get("initial_capital", 10000.0)
+
+    rng_np = np.random.default_rng(42)
+    results = []
+    equity_curves = []
+
+    n_success = 0
+    n_attempt = 0
+    max_attempts = body.n_simulations * 3
+
+    while n_success < body.n_simulations and n_attempt < max_attempts:
+        n_attempt += 1
+        sampled_rets = rng_np.choice(log_rets, size=n_bars - 1, replace=True)
+        sim_closes = closes[0] * np.exp(np.concatenate([[0], np.cumsum(sampled_rets)]))
+
+        sim_df = df.copy()
+        scale = sim_closes / closes
+        sim_df['close'] = sim_closes
+        sim_df['open']  = df['open'].values * scale
+        sim_df['high']  = df['high'].values * scale
+        sim_df['low']   = df['low'].values * scale
+
+        sim_df = sim_df.reset_index()
+
+        res, err = run_dynamic_code(body.code, sim_df, body.parameters, timeframe=body.timeframe)
+        if err:
+            continue
+
+        trades = res.get("trades", [])
+        eq = _equity_from_trades(trades, initial)
+        m = _metrics_from_equity(eq, initial)
+        results.append({
+            "total_return_pct": m["total_return_pct"],
+            "max_drawdown_pct": m["max_drawdown_pct"],
+            "sharpe": m["sharpe"],
+            "n_trades": len(trades),
+        })
+        if len(equity_curves) < 80:
+            equity_curves.append(eq)
+        n_success += 1
+
+    if not results:
+        raise HTTPException(500, "价格路径模拟全部失败，请检查策略代码")
+
+    returns = [r["total_return_pct"] for r in results]
+    drawdowns = [r["max_drawdown_pct"] for r in results]
+    profitable = sum(1 for r in returns if r > 0)
+
+    def _pct(lst, p):
+        s = sorted(lst)
+        idx = int(len(s) * p / 100)
+        return round(s[min(idx, len(s) - 1)], 2)
+
+    return {
+        "mode": "price_bootstrap",
+        "n_simulations": len(results),
+        "equity_curves": equity_curves,
+        "results": results,
+        "stats": {
+            "profitable_ratio": round(profitable / len(results) * 100, 1),
+            "total_return": {
+                "p5":  _pct(returns, 5),
+                "p25": _pct(returns, 25),
+                "p50": _pct(returns, 50),
+                "p75": _pct(returns, 75),
+                "p95": _pct(returns, 95),
+            },
+            "max_drawdown": {
+                "p5":  _pct(drawdowns, 5),
+                "p50": _pct(drawdowns, 50),
+                "p95": _pct(drawdowns, 95),
+            },
+        },
     }

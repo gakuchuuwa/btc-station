@@ -302,7 +302,7 @@ pd.DataFrame(results).to_csv('output.csv', index=False)
 - 取消订阅、升级降级流程
 - 发票邮件（Stripe 自带）
 - 退款政策（前 7 天无理由）
-- 商业条款页面（特定商取引法に基づく表記）
+- 商业条款页面（基于特定商业交易法的标注）
 - 订阅管理页面 `/account/subscription`（已建 tab，启用）
 
 **Pro 分级最终方案**：

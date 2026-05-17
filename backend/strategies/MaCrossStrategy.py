@@ -10,16 +10,19 @@ import vectorbt as vbt
 def execute(df, parameters):
     fast = int(parameters.get("fast_period", 20))
     slow = int(parameters.get("slow_period", 50))
+    init_cash = float(parameters.get("initial_capital", 10000))
 
-    fast_ma = vbt.MA.run(df["close"], fast)
-    slow_ma = vbt.MA.run(df["close"], slow)
+    close = df["close"]
 
-    entries = fast_ma.ma_crossed_above(slow_ma)
-    exits   = fast_ma.ma_crossed_below(slow_ma)
+    fast_ma = close.rolling(fast).mean()
+    slow_ma = close.rolling(slow).mean()
+
+    entries = (fast_ma > slow_ma) & (fast_ma.shift(1) <= slow_ma.shift(1))
+    exits   = (fast_ma < slow_ma) & (fast_ma.shift(1) >= slow_ma.shift(1))
 
     pf = vbt.Portfolio.from_signals(
-        df["close"], entries, exits,
-        init_cash=10000, fees=0.0005,
+        close, entries, exits,
+        init_cash=init_cash, fees=0.0005,
     )
 
-    return pf, {"快线 MA": fast_ma.ma, "慢线 MA": slow_ma.ma}
+    return pf, {"快线 MA": fast_ma, "慢线 MA": slow_ma}

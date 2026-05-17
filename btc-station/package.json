@@ -15,6 +15,8 @@
     "@types/react-plotly.js": "^2.6.4",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
+    "echarts": "^6.0.0",
+    "echarts-for-react": "^3.0.6",
     "fast-xml-parser": "^4.4.0",
     "idb": "^8.0.3",
     "katex": "^0.16.45",
@@ -28,7 +30,8 @@
     "react-plotly.js": "^2.6.0",
     "recharts": "^3.8.1",
     "tailwind-merge": "^2.5.4",
-    "technicalindicators": "^3.1.0"
+    "technicalindicators": "^3.1.0",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

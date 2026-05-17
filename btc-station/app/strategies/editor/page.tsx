@@ -816,7 +816,7 @@ export default function EditorPage() {
         summary={testerSummary}
         trades={[]}
         equity={[]}
-        csvDownloadUrl={currentBtId ? csvDownloadUrl(currentBtId) : null}
+
         strategyName={strategyName}
         logs={btLogs}
         running={isRunning}

@@ -74,62 +74,58 @@ export default function PriceCard({ summary, klines, isUp, tf, onTfChange }: Pro
     : ['4月17', '4月18', '4月19', '4月20', '4月21', '4月22', '4月23', '今日']
 
   return (
-    <section className="card">
-      <div className="hero-top">
-        <div className="hero-left">
-          <div className="pair">
-            <div className="pair-icon">₿</div>
-            <span style={{ fontSize: 13, fontWeight: 500 }}>BTC / USDT</span>
-            <span className="chip chip-neutral">Spot</span>
-            <span className="chip chip-neutral">OKX</span>
-          </div>
-          <div className="big-price num">
-            {intPart}<span className="decimals">.{decPart}</span>{' '}
-            <span style={{ fontSize: 13, color: 'var(--text-mute)', fontWeight: 400 }}>USDT</span>
-          </div>
-          <div className="change-row">
-            <span className={`chip ${isUp ? 'chip-up' : 'chip-down'}`}>
-              <svg width="9" height="9" viewBox="0 0 10 10" fill="currentColor">
-                {isUp ? <path d="M5 1.5l3.5 5h-7z"/> : <path d="M5 8.5l3.5-5h-7z"/>}
-              </svg>
-              <span className="num">{formatPercent(summary.change24h)}</span>
-            </span>
-            <span className={`${isUp ? 'up' : 'down'} num`} style={{ fontSize: 13 }}>
-              {priceChange !== 0 ? `${isUp ? '+' : ''}${priceChange.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : ''}
-            </span>
-            <span className="text-dim" style={{ fontSize: 12 }}>· 24h</span>
-          </div>
+    <div style={{ border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden', background: 'var(--bg-elev)' }}>
+      {/* Topbar — TradingView 风格 */}
+      <div style={{
+        height: 40, display: 'flex', alignItems: 'center', padding: '0 12px', gap: 0,
+        background: 'var(--bg-elev)', borderBottom: '1px solid var(--border)',
+      }}>
+        {/* 交易对 + 价格 */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, paddingRight: 12, marginRight: 4, borderRight: '1px solid var(--border)', flexShrink: 0 }}>
+          <span style={{ fontWeight: 700, fontSize: 14, letterSpacing: '-.02em', color: 'var(--btc)' }}>BTC/USDT</span>
+          <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--text-mute)' }}>永续</span>
+          <span style={{ fontFamily: 'var(--mono)', fontSize: 15, fontWeight: 600, marginLeft: 4 }}>{intPart}<span style={{ color: 'var(--text-mute)' }}>.{decPart}</span></span>
+          <span style={{ fontFamily: 'var(--mono)', fontSize: 11, fontWeight: 500, color: isUp ? 'var(--up)' : 'var(--down)' }}>
+            {isUp ? '+' : ''}{formatPercent(summary.change24h)}
+          </span>
         </div>
-
-        <div className="hero-stats">
-          <div className="stat"><div className="section-label">24h 最高</div><div className="stat-val num">{summary.high24h > 0 ? summary.high24h.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—'}</div></div>
-          <div className="stat"><div className="section-label">24h 最低</div><div className="stat-val num">{summary.low24h > 0 ? summary.low24h.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—'}</div></div>
-          <div className="stat"><div className="section-label">24h 成交额</div><div className="stat-val num">{summary.volume24h > 0 ? formatVolume(summary.volume24h) : '—'}</div></div>
-          <div className="stat"><div className="section-label">市值</div><div className="stat-val num">{summary.marketCap > 0 ? formatVolume(summary.marketCap) : '—'}</div></div>
-          <div className="stat"><div className="section-label">开盘</div><div className="stat-val num dim">{summary.price > 0 && summary.change24h !== 0 ? (summary.price / (1 + summary.change24h / 100)).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—'}</div></div>
-          <div className="stat"><div className="section-label">流通</div><div className="stat-val num dim">{summary.price > 0 && summary.marketCap > 0 ? (summary.marketCap / summary.price / 1_000_000).toFixed(2) + 'M' : '—'}</div></div>
-          <div className="stat"><div className="section-label">占比</div><div className="stat-val num dim">{cgData?.dominance ? cgData.dominance.toFixed(1) + '%' : '—'}</div></div>
-          <div className="stat"><div className="section-label">ATH</div><div className="stat-val num dim">{cgData?.ath ? cgData.ath.toLocaleString('en-US', { maximumFractionDigits: 0 }) : '—'}</div></div>
-        </div>
-      </div>
-
-      {/* Chart toolbar */}
-      <div className="chart-toolbar">
-        <div className="tf-group">
-          {['1D', '3D', '7D', '1M', '3M', '1Y'].map(t => (
-            <button key={t} className={`tf-btn ${tf === t ? 'active' : ''}`} onClick={() => onTfChange(t)}>
-              {t}
-            </button>
+        {/* OHLC */}
+        <div style={{ display: 'flex', gap: 12, padding: '0 12px', marginRight: 4, borderRight: '1px solid var(--border)', flexShrink: 0 }}>
+          {[
+            { label: '开', val: summary.price > 0 && summary.change24h !== 0 ? (summary.price / (1 + summary.change24h / 100)).toLocaleString('en-US', { maximumFractionDigits: 0 }) : '—', color: 'var(--text)' },
+            { label: '高', val: summary.high24h > 0 ? summary.high24h.toLocaleString('en-US', { maximumFractionDigits: 0 }) : '—', color: 'var(--up)' },
+            { label: '低', val: summary.low24h > 0 ? summary.low24h.toLocaleString('en-US', { maximumFractionDigits: 0 }) : '—', color: 'var(--down)' },
+            { label: '量', val: summary.volume24h > 0 ? formatVolume(summary.volume24h) : '—', color: 'var(--text)' },
+          ].map(({ label, val, color }) => (
+            <span key={label} style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--text-mute)', whiteSpace: 'nowrap' }}>
+              {label} <b style={{ color, fontWeight: 500 }}>{val}</b>
+            </span>
           ))}
         </div>
-        <div className="chart-tools">
-          <button><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 9h6v6H9z"/></svg>指标</button>
-          <button><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 4h16v16H4z"/></svg>图表类型</button>
-          <Link href="/chart"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M7 17L17 7M8 7h9v9"/></svg>完整图表</Link>
+        {/* 时间框架 */}
+        <div style={{ display: 'flex', gap: 1, marginLeft: 4 }}>
+          {['1D', '3D', '7D', '1M', '3M', '1Y'].map(t => (
+            <button key={t} onClick={() => onTfChange(t)} style={{
+              padding: '3px 8px', borderRadius: 3, fontFamily: 'var(--mono)', fontSize: 11,
+              color: tf === t ? 'var(--accent)' : 'var(--text-mute)',
+              background: tf === t ? 'rgba(0,212,255,.1)' : 'transparent',
+              fontWeight: tf === t ? 600 : 400,
+              border: 'none', cursor: 'pointer', transition: '.12s',
+            }}>{t}</button>
+          ))}
+        </div>
+        {/* 右侧 */}
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--text-mute)', display: 'flex', alignItems: 'center', gap: 5 }}>
+            <span className="live-dot" />实时
+          </span>
+          <Link href="/strategy" className="btn btn-primary" style={{ height: 24, fontSize: 11, padding: '0 10px' }}>
+            ▶ 运行策略
+          </Link>
         </div>
       </div>
 
-      {/* Chart — 用 Canvas 替换静态 SVG，颜色和填充风格与设计稿一致 */}
+      {/* Chart */}
       <div className="chart-wrap">
         <AreaChart klines={klines} />
         <div className="x-axis mono">
@@ -137,25 +133,20 @@ export default function PriceCard({ summary, klines, isUp, tf, onTfChange }: Pro
         </div>
       </div>
 
-      {/* CTA strip */}
-      <div className="cta-strip">
-        <div className="cta-metrics">
-          <span className="m">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#26A69A" strokeWidth="2"><path d="M3 3v18h18"/><path d="M7 14l4-4 4 4 6-6"/></svg>
-            <span>7日 <span className={`${change7d >= 0 ? 'up' : 'down'} num`}>{formatPercent(change7d)}</span></span>
-          </span>
-          <span className="m"><span>波动率</span><span className="m-val num">{volStr}</span></span>
-          <span className="m"><span>夏普率</span><span className="m-val num">{sharpeStr}</span></span>
-        </div>
-        <div className="cta-actions">
-          <Link href="/strategy" className="btn btn-ghost btn-lg">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="12 2 15 9 22 9 16.5 13.5 18 21 12 17 6 21 7.5 13.5 2 9 9 9"/></svg>
-            运行策略
-          </Link>
-          <Link href="/chart" className="btn btn-primary btn-lg">打开完整图表 →</Link>
+      {/* 底部统计条 */}
+      <div style={{
+        display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between',
+        padding: '10px 16px', borderTop: '1px solid var(--border)',
+        background: 'var(--bg-elev)', gap: 16,
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 20, fontFamily: 'var(--mono)', fontSize: 11 }}>
+          <span style={{ color: 'var(--text-mute)' }}>7日 <span style={{ color: change7d >= 0 ? 'var(--up)' : 'var(--down)' }}>{formatPercent(change7d)}</span></span>
+          <span style={{ color: 'var(--text-mute)' }}>波动率 <span style={{ color: 'var(--text)' }}>{volStr}</span></span>
+          <span style={{ color: 'var(--text-mute)' }}>夏普 <span style={{ color: 'var(--gold)' }}>{sharpeStr}</span></span>
+          {cgData?.dominance ? <span style={{ color: 'var(--text-mute)' }}>BTC占比 <span style={{ color: 'var(--accent)' }}>{cgData.dominance.toFixed(1)}%</span></span> : null}
         </div>
       </div>
-    </section>
+    </div>
   )
 }
 
