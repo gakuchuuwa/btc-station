@@ -59,14 +59,15 @@ class DataFeeder:
             if batch:
                 all_ohlcv = list(batch)
 
-            # 后续批次：用当前最早时间戳作为 endTime（OKX 用 'until' 或 params={'before': earliest_ms}）反向往过去拉
+            # 后续批次：用 since 反向往过去拉
+            # 关键：OKX 公共接口 /market/candles 只有最近约 8 个月数据；要拿更早的历史
+            # 必须走 /market/history-candles，CCXT 在传 since（不传 until）时会自动路由到该接口
             while all_ohlcv and len(all_ohlcv) < limit:
                 earliest_ms = all_ohlcv[0][0]
-                # OKX 用 params.before（毫秒）表示返回此时间之前的数据
+                next_since = earliest_ms - 300 * tf_ms
                 try:
                     older = self.exchange.fetch_ohlcv(
-                        symbol, timeframe, limit=300,
-                        params={'until': earliest_ms}
+                        symbol, timeframe, since=next_since, limit=300
                     )
                 except Exception as inner:
                     print(f"  Reverse pagination hit error, stop: {inner}")
