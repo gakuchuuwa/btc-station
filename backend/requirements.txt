@@ -11,3 +11,4 @@ requests
 pydantic
 httpx
 python-multipart
+openpyxl
