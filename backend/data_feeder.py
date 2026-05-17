@@ -62,15 +62,35 @@ class DataFeeder:
             # 后续批次：用 since 反向往过去拉
             # 关键：OKX 公共接口 /market/candles 只有最近约 8 个月数据；要拿更早的历史
             # 必须走 /market/history-candles，CCXT 在传 since（不传 until）时会自动路由到该接口
+            # Railway 等海外节点访问 OKX 限流更严，遇到 50011 Too Many Requests 必须退避重试
+            batch_interval_sec = 0.5  # 拉取间隔 500ms（本地 100ms 在 Railway 上会触发限流）
             while all_ohlcv and len(all_ohlcv) < limit:
                 earliest_ms = all_ohlcv[0][0]
                 next_since = earliest_ms - 300 * tf_ms
-                try:
-                    older = self.exchange.fetch_ohlcv(
-                        symbol, timeframe, since=next_since, limit=300
-                    )
-                except Exception as inner:
-                    print(f"  Reverse pagination hit error, stop: {inner}")
+
+                older = None
+                for attempt in range(4):  # 最多 4 次尝试：原始 + 3 次重试
+                    try:
+                        older = self.exchange.fetch_ohlcv(
+                            symbol, timeframe, since=next_since, limit=300
+                        )
+                        break  # 成功，跳出重试循环
+                    except Exception as inner:
+                        msg = str(inner)
+                        if '50011' in msg or 'Too Many Requests' in msg:
+                            # 指数退避：1s, 2s, 4s, 8s
+                            backoff = 2 ** attempt
+                            print(f"  OKX 限流 (attempt {attempt+1}/4)，等待 {backoff}s 后重试...")
+                            time.sleep(backoff)
+                            continue
+                        # 非限流错误，直接放弃
+                        print(f"  Reverse pagination hit non-rate-limit error, stop: {inner}")
+                        older = None
+                        break
+
+                if older is None:
+                    # 4 次重试都失败 → 当前进度保存到 CSV，不再继续
+                    print(f"  连续重试失败，停止反向分页。已收集 {len(all_ohlcv)} 根。")
                     break
 
                 if not older:
@@ -81,7 +101,7 @@ class DataFeeder:
                 if not new_rows:
                     break  # 没有更早数据
                 all_ohlcv = sorted(new_rows + all_ohlcv, key=lambda r: r[0])
-                time.sleep(self.exchange.rateLimit / 1000.0)
+                time.sleep(batch_interval_sec)
 
         except Exception as e:
             print(f"Error during pagination fetch: {e}")

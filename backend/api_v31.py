@@ -291,15 +291,19 @@ async def delete_strategy(sid: str, user_id: str = Depends(current_user)):
 
 @router.get("/candles/{timeframe}")
 async def get_cached_candles(timeframe: str):
-    """Return all locally-cached candles for BTC/USDT in the given timeframe."""
+    """Return all locally-cached candles for BTC/USDT in the given timeframe.
+
+    API 只读 CSV 缓存，不主动触发 fetch_ohlcv：
+    后台 data_syncer 线程（main.py lifespan）负责写盘，API 仅读取。
+    这样避免 API 和 syncer 并发写同一个 CSV 导致互相覆盖（如 syncer 拉到 12600 根
+    后被 API 触发的 fetch_ohlcv 覆盖成 6600 根）。
+    若 CSV 还未建立（syncer 仍在拉取），返回 503 让前端重试。
+    """
     import pandas as pd
     feeder = DataFeeder('okx')
     df = feeder.get_local_data("BTC/USDT", timeframe)
     if df.empty:
-        tf_limits = {'1m': 1000, '5m': 2000, '15m': 5000, '1h': 10000, '4h': 18000, '1d': 3000, '1w': 500}
-        df = feeder.fetch_ohlcv("BTC/USDT", timeframe, limit=tf_limits.get(timeframe, 5000))
-    if df.empty:
-        raise HTTPException(404, "暂无该周期的K线数据")
+        raise HTTPException(503, "数据正在初始化，请稍后重试")
 
     # Ensure timestamp is naive UTC (no timezone info, already in UTC)
     if 'timestamp' in df.columns:
