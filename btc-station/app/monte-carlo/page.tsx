@@ -372,7 +372,15 @@ export default function MonteCarloPage() {
           const p95Max = Math.max(...p95Curve);
           return simulationMode === 'compounding' ? p95Max * 2 : p95Max * 1.2;
         },
-        splitLine: { lineStyle: { color: 'rgba(255,255,255,0.05)' } } 
+        splitLine: { lineStyle: { color: 'rgba(255,255,255,0.05)' } },
+        axisLabel: {
+          formatter: (value: number) => {
+            if (value >= 1e9) return (value / 1e9).toFixed(1).replace(/\.0$/, '') + 'B';
+            if (value >= 1e6) return (value / 1e6).toFixed(1).replace(/\.0$/, '') + 'M';
+            if (value >= 1e3) return (value / 1e3).toFixed(1).replace(/\.0$/, '') + 'K';
+            return value.toFixed(0);
+          }
+        }
       },
       series: [
         ...pathSeries,
