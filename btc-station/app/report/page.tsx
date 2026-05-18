@@ -348,8 +348,9 @@ export default function ReportPage() {
   const abortRef = useRef<(() => void) | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
-  // Auto-load from localStorage
+  // Auto-load from storage
   useEffect(() => {
+    // Priority 1: New data from Python Hyperopt via localStorage
     try {
       const saved = localStorage.getItem('optimize_epochs')
       if (saved) {
@@ -358,10 +359,43 @@ export default function ReportPage() {
           setRawData(epochsToRawRows(epochs))
           setSource('localStorage')
           setStratName(localStorage.getItem('optimize_strategy_name') || '策略')
+          
+          localStorage.removeItem('optimize_epochs')
+          localStorage.removeItem('optimize_strategy_name')
+          return
         }
       }
     } catch {}
+
+    // Priority 2: Session storage from this page (filters, csv uploads, etc.)
+    const session = sessionStorage.getItem('report_page_state')
+    if (session) {
+      try {
+        const st = JSON.parse(session)
+        if (st.rawData && st.rawData.length > 0) {
+          setRawData(st.rawData)
+          if (st.source) setSource(st.source)
+          if (st.stratName) setStratName(st.stratName)
+          if (st.filters) setFilters(st.filters)
+          if (st.weights) setWeights(st.weights)
+          if (st.robustnessWeight) setRobustnessWeight(st.robustnessWeight)
+          if (st.robustness) setRobustness(st.robustness)
+          if (st.showFilters !== undefined) setShowFilters(st.showFilters)
+          if (st.activeTab) setActiveTab(st.activeTab)
+          if (st.top10Sort) setTop10Sort(st.top10Sort)
+        }
+      } catch (e) {}
+    }
   }, [])
+
+  // Save session state
+  useEffect(() => {
+    if (rawData.length > 0) {
+      sessionStorage.setItem('report_page_state', JSON.stringify({
+        rawData, source, stratName, filters, weights, robustnessWeight, robustness, showFilters, activeTab, top10Sort
+      }))
+    }
+  }, [rawData, source, stratName, filters, weights, robustnessWeight, robustness, showFilters, activeTab, top10Sort])
 
   // Process pipeline
   const processed = useMemo(() => processRawData(rawData), [rawData])

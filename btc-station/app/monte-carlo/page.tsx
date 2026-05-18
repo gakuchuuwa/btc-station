@@ -110,6 +110,9 @@ export default function MonteCarloPage() {
           if (state.numSimulations) setNumSimulations(state.numSimulations)
           if (state.ruinThreshold) setRuinThreshold(state.ruinThreshold)
           if (state.simulationMode) setSimulationMode(state.simulationMode)
+          
+          if (state.simulations && state.simulations.length > 0) setSimulations(state.simulations)
+          if (state.stats) setStats(state.stats)
         }
       } catch (e) {}
     }
@@ -119,10 +122,11 @@ export default function MonteCarloPage() {
   useEffect(() => {
     if (fileData.length > 0) {
       sessionStorage.setItem('mc_page_state', JSON.stringify({
-        fileData, fileName, initialCapital, numSimulations, ruinThreshold, simulationMode
+        fileData, fileName, initialCapital, numSimulations, ruinThreshold, simulationMode,
+        simulations, stats
       }))
     }
-  }, [fileData, fileName, initialCapital, numSimulations, ruinThreshold, simulationMode])
+  }, [fileData, fileName, initialCapital, numSimulations, ruinThreshold, simulationMode, simulations, stats])
 
   // 1. 解析 Excel/CSV — 兼容 VectorBT 平台导出 / TradingView 导出 / 通用 CSV
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
