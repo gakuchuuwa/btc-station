@@ -442,7 +442,7 @@ export default function MonteCarloPage() {
 
 
   return (
-    <div style={{ maxWidth: 1200, margin: '0 auto', padding: '32px 24px', fontFamily: "'Space Grotesk', system-ui, sans-serif", color: '#d1d4dc' }}>
+    <div style={{ maxWidth: 1440, margin: '0 auto', padding: '32px 24px', fontFamily: "'Space Grotesk', system-ui, sans-serif", color: '#d1d4dc' }}>
       
       <div style={{ marginBottom: 32 }}>
         <h1 style={{ fontSize: 28, fontWeight: 700, color: '#fff', marginBottom: 8, letterSpacing: '-0.02em' }}>
@@ -454,7 +454,7 @@ export default function MonteCarloPage() {
         </p>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '320px 1fr', gap: 24, alignItems: 'start' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.618fr', gap: 32, alignItems: 'start' }}>
         
         {/* 左侧控制面板 */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
