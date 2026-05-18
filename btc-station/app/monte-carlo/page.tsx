@@ -9,6 +9,7 @@ import ReactECharts from 'echarts-for-react'
 interface Trade {
   id: number
   profitUSDT: number
+  profitPct: number
 }
 
 interface MCSimulation {
@@ -47,33 +48,39 @@ export default function MonteCarloPage() {
   const [numSimulations, setNumSimulations] = useState<number>(5000)
   const [ruinThreshold, setRuinThreshold] = useState<number>(30)
 
+  const [simulationMode, setSimulationMode] = useState<'absolute' | 'compounding'>('compounding')
   const [simulations, setSimulations] = useState<MCSimulation[]>([])
   const [stats, setStats] = useState<MCStats | null>(null)
-  const [originalStats, setOriginalStats] = useState<{ returnPct: number; maxDrawdownPct: number } | null>(null)
   
   const [isComputing, setIsComputing] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const originalStats = useMemo(() => {
+    if (fileData.length === 0) return null
+    let peak = initialCapital
+    let current = initialCapital
+    let maxDd = 0
+    fileData.forEach(t => {
+      if (simulationMode === 'compounding') {
+        current = current * (1 + (t.profitPct || 0) / 100)
+      } else {
+        current += (t.profitUSDT || 0)
+      }
+      if (current > peak) peak = current
+      const dd = (peak - current) / peak * 100
+      if (dd > maxDd) maxDd = dd
+    })
+    return {
+      returnPct: (current - initialCapital) / initialCapital * 100,
+      maxDrawdownPct: maxDd
+    }
+  }, [fileData, initialCapital, simulationMode])
 
   const loadTrades = (trades: Trade[], name: string) => {
     setFileName(name)
     setFileData(trades)
     setSimulations([])
     setStats(null)
-    
-    // 计算原始回测结果
-    let peak = initialCapital
-    let current = initialCapital
-    let maxDd = 0
-    trades.forEach(t => {
-      current += t.profitUSDT
-      if (current > peak) peak = current
-      const dd = (peak - current) / peak * 100
-      if (dd > maxDd) maxDd = dd
-    })
-    setOriginalStats({
-      returnPct: (current - initialCapital) / initialCapital * 100,
-      maxDrawdownPct: maxDd
-    })
   }
 
   useEffect(() => {
@@ -87,7 +94,7 @@ export default function MonteCarloPage() {
         }
       } catch (e) {}
     }
-  }, [initialCapital]) // 依赖 initialCapital，当加载时重新计算原始曲线
+  }, [initialCapital, simulationMode]) // 依赖 initialCapital，当加载时重新计算原始曲线
 
   // 1. 解析 Excel/CSV — 兼容 VectorBT 平台导出 / TradingView 导出 / 通用 CSV
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -141,7 +148,22 @@ export default function MonteCarloPage() {
         })
       }
 
+      // 查找"百分比"列
+      const pctColCandidates = [
+        '净损益 %', 'Net Profit %', 'Return %', 'return', 'Return', 'pct', '百分比'
+      ]
+      let pctCol = pctColCandidates.find(c => colNames.includes(c))
+
       let trades: Trade[] = []
+      
+      const parseVal = (v: any) => {
+        if (typeof v === 'number') return v
+        if (typeof v === 'string') {
+           const parsed = parseFloat(v.replace(/[^\d.-]/g, ''))
+           return isNaN(parsed) ? 0 : parsed
+        }
+        return 0
+      }
 
       // ── Strategy A: 有"类型"列 → 过滤出场行 ──
       if (typeCol && profitCol) {
@@ -152,9 +174,7 @@ export default function MonteCarloPage() {
 
         if (exitRows.length > 0) {
           trades = exitRows.map((r, i) => {
-            let profit = r[profitCol!]
-            if (typeof profit === 'string') profit = parseFloat(profit.replace(/[^\d.-]/g, ''))
-            return { id: i + 1, profitUSDT: Number(profit) || 0 }
+            return { id: i + 1, profitUSDT: parseVal(r[profitCol!]), profitPct: pctCol ? parseVal(r[pctCol]) : 0 }
           })
         }
       }
@@ -162,10 +182,8 @@ export default function MonteCarloPage() {
       // ── Strategy B: 无类型列或 A 失败 → 每行当一笔交易 ──
       if (trades.length === 0 && profitCol) {
         trades = rows.map((r, i) => {
-          let profit = r[profitCol!]
-          if (typeof profit === 'string') profit = parseFloat(profit.replace(/[^\d.-]/g, ''))
-          return { id: i + 1, profitUSDT: Number(profit) || 0 }
-        }).filter(t => t.profitUSDT !== 0)
+          return { id: i + 1, profitUSDT: parseVal(r[profitCol!]), profitPct: pctCol ? parseVal(r[pctCol]) : 0 }
+        }).filter(t => t.profitUSDT !== 0 || t.profitPct !== 0)
       }
 
       // ── Strategy C: 兜底 → 用第一个数字列当利润 ──
@@ -176,9 +194,7 @@ export default function MonteCarloPage() {
         })
         if (numericCol) {
           trades = rows.map((r, i) => {
-            let profit = r[numericCol]
-            if (typeof profit === 'string') profit = parseFloat(profit)
-            return { id: i + 1, profitUSDT: Number(profit) || 0 }
+            return { id: i + 1, profitUSDT: parseVal(r[numericCol]), profitPct: 0 }
           }).filter(t => t.profitUSDT !== 0)
         }
       }
@@ -225,7 +241,12 @@ export default function MonteCarloPage() {
           const randomIdx = Math.floor(Math.random() * nTrades)
           const trade = fileData[randomIdx]
           
-          currentEquity += trade.profitUSDT
+          if (simulationMode === 'compounding') {
+            currentEquity = currentEquity * (1 + (trade.profitPct || 0) / 100)
+          } else {
+            currentEquity += (trade.profitUSDT || 0)
+          }
+
           if (saveCurve) curve.push(currentEquity)
           
           if (currentEquity > peakEquity) peakEquity = currentEquity
@@ -414,6 +435,17 @@ export default function MonteCarloPage() {
           <div className="card" style={{ padding: 20 }}>
             <div style={{ fontSize: 13, fontWeight: 700, color: '#fff', marginBottom: 16 }}>模拟参数</div>
             
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ display: 'block', fontSize: 12, color: 'var(--text-mute)', marginBottom: 6 }}>资金累加模式</label>
+              <select 
+                value={simulationMode} onChange={e => { setSimulationMode(e.target.value as any); setSimulations([]); setStats(null); }}
+                style={{ width: '100%', padding: '8px 12px', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 4, color: '#fff' }}
+              >
+                <option value="compounding">复利比例模式 (推荐, 按百分比)</option>
+                <option value="absolute">固定金额模式 (按 USDT 加法)</option>
+              </select>
+            </div>
+
             <div style={{ marginBottom: 12 }}>
               <label style={{ display: 'block', fontSize: 12, color: 'var(--text-mute)', marginBottom: 6 }}>初始本金 (USDT)</label>
               <input 
