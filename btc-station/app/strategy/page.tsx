@@ -47,6 +47,7 @@ const LS_CODE_KEY = 'custom_strategy_code'
 const LS_NAME_KEY = 'custom_strategy_name'
 // S3 回测结果 sessionStorage 键名：跨页面切换保留，关闭 tab 才清；下次成功回测时覆盖
 const SS_BT_RESULT_KEY = 'strategy_s3_backtest_result'
+const SS_OPT_RESULT_KEY = 'strategy_s4_opt_result'
 const INDICATOR_COLORS = ['#26a69a', '#ef5350', '#FFD700', '#7B68EE', '#FF8C00', '#00CED1']
 
 export default function StrategyPage() {
@@ -150,7 +151,35 @@ export default function StrategyPage() {
       console.warn('回测结果恢复失败:', e)
       sessionStorage.removeItem(SS_BT_RESULT_KEY)
     }
+
+    // 恢复 S4 优化结果：跨页面切换或刷新后保留上次优化结果
+    try {
+      const rawOpt = sessionStorage.getItem(SS_OPT_RESULT_KEY)
+      if (rawOpt) {
+        const o = JSON.parse(rawOpt)
+        if (o.optimizeStatus) setOptimizeStatus(o.optimizeStatus)
+        if (Array.isArray(o.optimizeEpochs)) setOptimizeEpochs(o.optimizeEpochs)
+        if (o.optimizeError) setOptimizeError(o.optimizeError)
+        if (o.optimizeProgress) setOptimizeProgress(o.optimizeProgress)
+      }
+    } catch (e) {
+      console.warn('优化结果恢复失败:', e)
+      sessionStorage.removeItem(SS_OPT_RESULT_KEY)
+    }
   }, [])
+
+  // 监听 S4 优化结果变化并保存到 sessionStorage
+  useEffect(() => {
+    if (optimizeStatus !== 'idle' || optimizeEpochs.length > 0) {
+      try {
+        sessionStorage.setItem(SS_OPT_RESULT_KEY, JSON.stringify({
+          optimizeStatus, optimizeEpochs, optimizeError, optimizeProgress
+        }))
+      } catch (e) {
+        console.warn('优化结果保存失败:', e)
+      }
+    }
+  }, [optimizeStatus, optimizeEpochs, optimizeError, optimizeProgress])
 
   // Auto-save code
   const handleCodeChange = useCallback((val: string | undefined) => {
