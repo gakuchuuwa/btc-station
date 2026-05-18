@@ -89,49 +89,108 @@ export default function MonteCarloPage() {
     }
   }, [initialCapital]) // 依赖 initialCapital，当加载时重新计算原始曲线
 
-  // 1. 解析 Excel/CSV
+  // 1. 解析 Excel/CSV — 兼容 VectorBT 平台导出 / TradingView 导出 / 通用 CSV
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
     setFileName(file.name)
-    
+
     const reader = new FileReader()
     reader.onload = (evt) => {
       const data = new Uint8Array(evt.target?.result as ArrayBuffer)
       const workbook = XLSX.read(data, { type: 'array' })
-      
-      // 寻找交易清单 Sheet (CSV 只有一张表，可能不叫交易清单)
+
+      // ── Step 1: 选择工作表 ──
       let sheetName = workbook.SheetNames.find(n => n.includes('交易清单') || n.includes('List of Trades'))
       if (!sheetName) {
-        if (workbook.SheetNames.length === 1 || file.name.endsWith('.csv')) {
-          sheetName = workbook.SheetNames[0]
-        } else {
-          alert('未找到 "交易清单" 或 "List of Trades" 工作表。请确保上传的是 TradingView 完整的回测导出文件。')
-          return
-        }
+        sheetName = workbook.SheetNames[0]
       }
 
       const sheet = workbook.Sheets[sheetName]
-      const rows = XLSX.utils.sheet_to_json(sheet) as any[]
-      
-      // 过滤出所有“出场”记录（TradingView 的利润结算在出场时）
-      const exitRows = rows.filter(r => {
-        const type = String(r['类型'] || r['Type'] || '')
-        return type.includes('出场') || type.includes('Exit')
-      })
+      const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' }) as any[]
 
-      const trades: Trade[] = exitRows.map((r, i) => {
-        // 尝试获取绝对利润 (USDT / USD / 任意计价货币)
-        let profit = r['净损益 USDT'] ?? r['Net Profit USDT'] ?? r['净损益 USD'] ?? r['Net Profit USD'] ?? r['净损益'] ?? r['Net Profit']
-        if (typeof profit === 'string') profit = parseFloat(profit.replace(/[^\d.-]/g, ''))
-        return {
-          id: i + 1,
-          profitUSDT: Number(profit) || 0
+      if (rows.length === 0) {
+        alert('解析失败：工作表 "' + sheetName + '" 中没有数据行。')
+        return
+      }
+
+      // ── Step 2: 自动检测列名 ──
+      const colNames = Object.keys(rows[0])
+
+      // 查找"类型"列
+      const typeCol = colNames.find(c =>
+        c === '类型' || c === 'Type' || c.toLowerCase() === 'type'
+      )
+
+      // 查找"利润"列 — 按优先级尝试多种可能的列名
+      const profitColCandidates = [
+        '净损益 USDT', 'Net Profit USDT',
+        '净损益 USD', 'Net Profit USD',
+        '净损益', 'Net Profit',
+        'PnL', 'pnl', 'Profit', 'profit',
+        'P&L', 'Net P&L',
+        'profitUSDT', 'profit_usdt',
+      ]
+      let profitCol = profitColCandidates.find(c => colNames.includes(c))
+
+      // 如果精确匹配失败，模糊搜索
+      if (!profitCol) {
+        profitCol = colNames.find(c => {
+          const lower = c.toLowerCase()
+          return lower.includes('损益') || lower.includes('profit') || lower.includes('pnl')
+        })
+      }
+
+      let trades: Trade[] = []
+
+      // ── Strategy A: 有"类型"列 → 过滤出场行 ──
+      if (typeCol && profitCol) {
+        const exitRows = rows.filter(r => {
+          const type = String(r[typeCol] || '')
+          return type.includes('出场') || type.toLowerCase().includes('exit')
+        })
+
+        if (exitRows.length > 0) {
+          trades = exitRows.map((r, i) => {
+            let profit = r[profitCol!]
+            if (typeof profit === 'string') profit = parseFloat(profit.replace(/[^\d.-]/g, ''))
+            return { id: i + 1, profitUSDT: Number(profit) || 0 }
+          })
         }
-      })
+      }
+
+      // ── Strategy B: 无类型列或 A 失败 → 每行当一笔交易 ──
+      if (trades.length === 0 && profitCol) {
+        trades = rows.map((r, i) => {
+          let profit = r[profitCol!]
+          if (typeof profit === 'string') profit = parseFloat(profit.replace(/[^\d.-]/g, ''))
+          return { id: i + 1, profitUSDT: Number(profit) || 0 }
+        }).filter(t => t.profitUSDT !== 0)
+      }
+
+      // ── Strategy C: 兜底 → 用第一个数字列当利润 ──
+      if (trades.length === 0) {
+        const numericCol = colNames.find(c => {
+          const val = rows[0][c]
+          return typeof val === 'number' || (typeof val === 'string' && !isNaN(parseFloat(val)))
+        })
+        if (numericCol) {
+          trades = rows.map((r, i) => {
+            let profit = r[numericCol]
+            if (typeof profit === 'string') profit = parseFloat(profit)
+            return { id: i + 1, profitUSDT: Number(profit) || 0 }
+          }).filter(t => t.profitUSDT !== 0)
+        }
+      }
 
       if (trades.length === 0) {
-        alert('解析失败：未能从工作表中提取到交易利润数据。')
+        alert(
+          '解析失败：未能从工作表中提取到交易利润数据。\n\n' +
+          '检测到的工作表: ' + sheetName + '\n' +
+          '检测到的列名: ' + colNames.join(', ') + '\n' +
+          '数据行数: ' + rows.length + '\n\n' +
+          '请确保文件中包含利润相关的列（如"净损益 USDT"、"PnL"、"Profit"等）。'
+        )
         return
       }
 
@@ -163,7 +222,6 @@ export default function MonteCarloPage() {
         const curve = saveCurve ? [initialCapital] : []
 
         for (let j = 0; j < nTrades; j++) {
-          // 有放回随机抽样 (Bootstrapping)
           const randomIdx = Math.floor(Math.random() * nTrades)
           const trade = fileData[randomIdx]
           
@@ -172,12 +230,10 @@ export default function MonteCarloPage() {
           
           if (currentEquity > peakEquity) peakEquity = currentEquity
           
-          // 若当前权益 <= 0，已爆仓
           if (currentEquity <= 0) {
             maxDrawdown = 100
             currentEquity = 0
             if (saveCurve) {
-              // 填充剩余曲线为 0
               for (let k = j + 1; k < nTrades; k++) curve.push(0)
             }
             break
@@ -236,13 +292,11 @@ export default function MonteCarloPage() {
   const fanChartOption = useMemo(() => {
     if (simulations.length === 0) return {}
     
-    // 提取保存的曲线
     const savedSims = simulations.filter(s => s.curve.length > 0)
     if (savedSims.length === 0) return {}
     
     const xData = Array.from({ length: fileData.length + 1 }, (_, i) => i)
     
-    // 计算 5%, 50%, 95% 分位数曲线
     const p5Curve = []
     const p50Curve = []
     const p95Curve = []
@@ -267,8 +321,8 @@ export default function MonteCarloPage() {
         {
           name: 'P5 (悲观)', type: 'line', data: p5Curve,
           lineStyle: { opacity: 0 }, showSymbol: false,
-          areaStyle: { color: 'rgba(38,166,154,0.15)', origin: 'start' }, // 填充 P5 到 P95
-          fillTo: 'P95 (乐观)' // 仅 ECharts 5.4+ 支持更复杂的带状，这里用堆叠或透明带简化
+          areaStyle: { color: 'rgba(38,166,154,0.15)', origin: 'start' },
+          fillTo: 'P95 (乐观)'
         },
         {
           name: '中位数 (P50)', type: 'line', data: p50Curve,
@@ -287,8 +341,7 @@ export default function MonteCarloPage() {
   const ddHistOption = useMemo(() => {
     if (simulations.length === 0) return {}
     
-    // 将所有 maxDrawdown 放入 0-100 的桶中
-    const bins = Array(20).fill(0) // 0-5, 5-10, ...
+    const bins = Array(20).fill(0)
     simulations.forEach(s => {
       let idx = Math.floor(s.maxDrawdownPct / 5)
       if (idx >= 20) idx = 19
@@ -309,7 +362,6 @@ export default function MonteCarloPage() {
           data: bins,
           itemStyle: {
             color: (params: any) => {
-              // 超过用户设定的阈值标红
               const val = parseInt(params.name.split('-')[0])
               return val >= ruinThreshold ? 'rgba(239,83,80,0.8)' : 'rgba(38,166,154,0.8)'
             },
@@ -330,7 +382,7 @@ export default function MonteCarloPage() {
         </h1>
         <p style={{ fontSize: 14, color: 'var(--text-mute)', lineHeight: 1.6, maxWidth: 800 }}>
           蒙特卡洛模拟用于评估量化策略的**统计鲁棒性**。它通过**随机打乱（Bootstrapping）**历史交易序列，生成成千上万条可能的未来资金曲线。这能帮你甄别：你的历史收益是因为策略本身有效，还是仅仅因为行情的出现顺序恰好对你有利？<br/>
-          上传从 TradingView 导出的 <strong>回测结果 Excel/CSV（包含“交易清单”表）</strong>，即可验证策略在极端环境下的抗风险能力。
+          上传回测结果 <strong>Excel/CSV（包含"交易清单"表或利润列）</strong>，即可验证策略在极端环境下的抗风险能力。
         </p>
       </div>
 
@@ -347,8 +399,8 @@ export default function MonteCarloPage() {
               padding: '24px 16px', cursor: 'pointer', transition: 'all 0.2s', marginBottom: 12
             }}>
               <span style={{ fontSize: 24, marginBottom: 8 }}>📊</span>
-              <span style={{ fontSize: 13, color: '#00d4ff', fontWeight: 600 }}>上传 TV 导出文件 (.xlsx / .csv)</span>
-              <span style={{ fontSize: 11, color: 'var(--text-mute)', marginTop: 4, textAlign: 'center' }}>{fileName || '支持 TradingView 完整表现报告'}</span>
+              <span style={{ fontSize: 13, color: '#00d4ff', fontWeight: 600 }}>上传回测导出文件 (.xlsx / .csv)</span>
+              <span style={{ fontSize: 11, color: 'var(--text-mute)', marginTop: 4, textAlign: 'center' }}>{fileName || '支持平台导出 & TradingView 报告'}</span>
               <input type="file" accept=".xlsx, .xls, .csv" style={{ display: 'none' }} ref={fileInputRef} onChange={handleFileUpload} />
             </label>
 
@@ -389,7 +441,7 @@ export default function MonteCarloPage() {
                 style={{ width: '100%', padding: '8px 12px', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 4, color: '#fff' }}
               />
               <div style={{ fontSize: 11, color: 'var(--text-mute)', marginTop: 4 }}>
-                若回撤超过此值，视为账户“破产”
+                若回撤超过此值，视为账户"破产"
               </div>
             </div>
 
