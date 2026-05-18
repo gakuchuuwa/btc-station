@@ -48,6 +48,7 @@ const LS_NAME_KEY = 'custom_strategy_name'
 // S3 回测结果 sessionStorage 键名：跨页面切换保留，关闭 tab 才清；下次成功回测时覆盖
 const SS_BT_RESULT_KEY = 'strategy_s3_backtest_result'
 const SS_OPT_RESULT_KEY = 'strategy_s4_opt_result'
+const SS_UI_STATE_KEY = 'strategy_ui_state'
 const INDICATOR_COLORS = ['#26a69a', '#ef5350', '#FFD700', '#7B68EE', '#FF8C00', '#00CED1']
 
 export default function StrategyPage() {
@@ -166,7 +167,34 @@ export default function StrategyPage() {
       console.warn('优化结果恢复失败:', e)
       sessionStorage.removeItem(SS_OPT_RESULT_KEY)
     }
+
+    // 恢复 UI 状态：tf 和各面板高度
+    try {
+      const rawUI = sessionStorage.getItem(SS_UI_STATE_KEY)
+      if (rawUI) {
+        const u = JSON.parse(rawUI)
+        if (u.tf) setTf(u.tf)
+        if (u.s1Height) setS1Height(u.s1Height)
+        if (u.s2Height) setS2Height(u.s2Height)
+        if (u.s3Height) setS3Height(u.s3Height)
+        if (u.s4Height) setS4Height(u.s4Height)
+      }
+    } catch (e) {
+      console.warn('UI 状态恢复失败:', e)
+      sessionStorage.removeItem(SS_UI_STATE_KEY)
+    }
   }, [])
+
+  // 监听 UI 状态变化并保存到 sessionStorage
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(SS_UI_STATE_KEY, JSON.stringify({
+        tf, s1Height, s2Height, s3Height, s4Height
+      }))
+    } catch (e) {
+      console.warn('UI 状态保存失败:', e)
+    }
+  }, [tf, s1Height, s2Height, s3Height, s4Height])
 
   // 监听 S4 优化结果变化并保存到 sessionStorage
   useEffect(() => {
