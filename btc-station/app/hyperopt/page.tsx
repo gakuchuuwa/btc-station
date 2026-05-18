@@ -177,14 +177,88 @@ export default function HyperoptPage() {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
-    listMyStrategies().then(s => { setStrategies(s); if (s.length > 0) setStrategyId(s[0].id); });
+    listMyStrategies().then(s => { 
+      setStrategies(s); 
+      setStrategyId(prev => prev || (s.length > 0 ? s[0].id : "")); 
+    });
   }, []);
 
   const stopPoll = useCallback(() => {
     if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
   }, []);
 
+  const startPolling = useCallback((tid: string) => {
+    stopPoll();
+    pollRef.current = setInterval(async () => {
+      try {
+        const st = await getHyperoptStatus(tid);
+        setPct(st.progress_pct);
+        setEpochsDone(st.epochs_done);
+        setAllEpochs(prev => {
+          const existing = new Set(prev.map(ep => ep.epoch));
+          const fresh = st.latest_epochs.filter(ep => !existing.has(ep.epoch));
+          return fresh.length ? [...prev, ...fresh] : prev;
+        });
+
+        if (st.status === "completed") {
+          stopPoll();
+          setStatus("completed");
+          if (st.result) {
+            setResult(st.result);
+            setAllEpochs(st.result.epochs);
+          }
+        } else if (st.status === "failed") {
+          stopPoll();
+          setStatus("failed");
+          setError(st.error ?? "调参失败");
+        }
+      } catch { /* ignore intermittent */ }
+    }, 4000);
+  }, [stopPoll]);
+
   useEffect(() => () => stopPoll(), [stopPoll]);
+
+  // 初始化读取状态
+  useEffect(() => {
+    const localSession = sessionStorage.getItem('hyperopt_page_state')
+    if (localSession) {
+      try {
+        const state = JSON.parse(localSession)
+        if (state.strategyId) setStrategyId(state.strategyId)
+        if (state.timeframe) setTimeframe(state.timeframe)
+        if (state.timerange) setTimerange(state.timerange)
+        if (state.epochs) setEpochs(state.epochs)
+        if (state.spaces) setSpaces(state.spaces)
+        if (state.lossFunc) setLossFunc(state.lossFunc)
+        if (state.minTrades) setMinTrades(state.minTrades)
+        
+        if (state.allEpochs && state.allEpochs.length > 0) setAllEpochs(state.allEpochs)
+        if (state.result) setResult(state.result)
+        if (state.appliedParams) setAppliedParams(state.appliedParams)
+        
+        if (state.status === "completed" || state.status === "failed") {
+          setStatus(state.status)
+          if (state.error) setError(state.error)
+        } else if (state.status === "running" && state.taskId) {
+          setTaskId(state.taskId)
+          setStatus("running")
+          setPct(state.pct || 0)
+          setEpochsDone(state.epochsDone || 0)
+          startPolling(state.taskId)
+        }
+      } catch (e) {}
+    }
+  }, [startPolling])
+
+  // 关键状态变更时保存
+  useEffect(() => {
+    if (strategyId) {
+      sessionStorage.setItem('hyperopt_page_state', JSON.stringify({
+        strategyId, timeframe, timerange, epochs, spaces, lossFunc, minTrades,
+        taskId, status, pct, epochsDone, allEpochs, result, error, appliedParams
+      }))
+    }
+  }, [strategyId, timeframe, timerange, epochs, spaces, lossFunc, minTrades, taskId, status, pct, epochsDone, allEpochs, result, error, appliedParams])
 
   function toggleSpace(s: string) {
     setSpaces(prev => prev.includes(s) ? prev.filter(x => x !== s) : [...prev, s]);
@@ -204,33 +278,7 @@ export default function HyperoptPage() {
     try {
       const res = await startHyperopt({ strategy_id: strategyId, timeframe, timerange, epochs, spaces, loss_function: lossFunc, min_trades: minTrades });
       setTaskId(res.task_id);
-
-      pollRef.current = setInterval(async () => {
-        try {
-          const st = await getHyperoptStatus(res.task_id);
-          setPct(st.progress_pct);
-          setEpochsDone(st.epochs_done);
-          // Accumulate streaming epochs into full list
-          setAllEpochs(prev => {
-            const existing = new Set(prev.map(ep => ep.epoch));
-            const fresh = st.latest_epochs.filter(ep => !existing.has(ep.epoch));
-            return fresh.length ? [...prev, ...fresh] : prev;
-          });
-
-          if (st.status === "completed") {
-            stopPoll();
-            setStatus("completed");
-            if (st.result) {
-              setResult(st.result);
-              setAllEpochs(st.result.epochs);
-            }
-          } else if (st.status === "failed") {
-            stopPoll();
-            setStatus("failed");
-            setError(st.error ?? "调参失败");
-          }
-        } catch { /* ignore intermittent */ }
-      }, 4000);
+      startPolling(res.task_id);
     } catch (err: unknown) {
       setStatus("failed");
       setError(err instanceof Error ? err.message : "提交失败");
