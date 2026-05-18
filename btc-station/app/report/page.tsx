@@ -745,7 +745,10 @@ export default function ReportPage() {
                               return (
                                 <th key={key}
                                   onClick={() => handleTop10Sort(key)}
-                                  style={{ ...thS, cursor: 'pointer', userSelect: 'none', color: active ? '#26a69a' : (thS.color as string) }}
+                                  style={{
+                                    ...thS, cursor: 'pointer', userSelect: 'none', color: active ? '#26a69a' : (thS.color as string),
+                                    ...(key === 'originalIndex' ? { position: 'sticky', left: 0, zIndex: 10, background: '#131722', borderRight: '1px solid rgba(255,255,255,0.06)' } : { zIndex: 1, background: '#131722' })
+                                  }}
                                   title="点击切换排序方向"
                                 >
                                   {label}{active ? (top10Sort.dir === 'desc' ? ' ↓' : ' ↑') : ' ⇅'}
@@ -763,10 +766,13 @@ export default function ReportPage() {
                             const isTopRec = ranked[0]?.originalIndex === row.originalIndex
                             return (
                             <tr key={row.originalIndex} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)', background: isTopRec ? 'rgba(38,166,154,0.04)' : 'transparent' }}>
-                              <td style={{ padding: '7px 10px', fontFamily: "'JetBrains Mono',monospace", color: '#787b86', display: 'flex', alignItems: 'center', gap: 6 }}>
+                              <td style={{
+                                padding: '7px 10px', fontFamily: "'JetBrains Mono',monospace", color: '#787b86', display: 'flex', alignItems: 'center', gap: 6,
+                                position: 'sticky', left: 0, zIndex: 1, background: isTopRec ? '#161e22' : '#131722', borderRight: '1px solid rgba(255,255,255,0.06)'
+                              }}>
                                 <span>{row.originalIndex}</span>
-                                {isTopRec && <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#26a69a', display: 'inline-block' }} title="原始 Top 1 推荐" />}
-                                {row.isPareto && <span title="Pareto 前沿:不被任何其他方案同时支配(高收益+低回撤+高 Sortino+高 PF)" style={{ padding: '1px 5px', borderRadius: 3, fontSize: 9, fontWeight: 700, background: 'rgba(255,165,0,0.15)', color: '#FFA500', border: '1px solid rgba(255,165,0,0.4)', letterSpacing: '.04em' }}>★</span>}
+                                {isTopRec && <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#26a69a', display: 'inline-block', flexShrink: 0 }} title="原始 Top 1 推荐" />}
+                                {row.isPareto && <span title="Pareto 前沿:不被任何其他方案同时支配(高收益+低回撤+高 Sortino+高 PF)" style={{ padding: '1px 5px', borderRadius: 3, fontSize: 9, fontWeight: 700, background: 'rgba(255,165,0,0.15)', color: '#FFA500', border: '1px solid rgba(255,165,0,0.4)', letterSpacing: '.04em', flexShrink: 0 }}>★</span>}
                               </td>
                               <td style={{ padding: '7px 10px', fontFamily: 'monospace', fontWeight: 700, color: '#26a69a' }}>{fmt(row.combinedScore, 3)}</td>
                               <td style={{ padding: '7px 10px', fontFamily: 'monospace', color: '#d1d4dc' }}>{fmt(row.utilityScore, 3)}</td>
@@ -820,7 +826,10 @@ export default function ReportPage() {
                     <thead>
                       <tr>
                         {['行号', '综合分', '稳健性', '收益%', '回撤%', '交易数', '状态'].map(h => (
-                          <th key={h} style={thS}>{h}</th>
+                          <th key={h} style={{
+                            ...thS,
+                            ...(h === '行号' ? { position: 'sticky', left: 0, zIndex: 10, background: '#131722', borderRight: '1px solid rgba(255,255,255,0.06)' } : { zIndex: 1, background: '#131722' })
+                          }}>{h}</th>
                         ))}
                       </tr>
                     </thead>
@@ -830,7 +839,10 @@ export default function ReportPage() {
                         const enriched = ranked.find(r => r.originalIndex === row.originalIndex)
                         return (
                           <tr key={row.originalIndex} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
-                            <td style={{ padding: '5px 10px', color: '#787b86', fontFamily: 'monospace', whiteSpace: 'nowrap' }}>
+                            <td style={{
+                              padding: '5px 10px', color: '#787b86', fontFamily: 'monospace', whiteSpace: 'nowrap',
+                              position: 'sticky', left: 0, zIndex: 1, background: '#131722', borderRight: '1px solid rgba(255,255,255,0.06)'
+                            }}>
                               {row.originalIndex}
                               {enriched?.isPareto && <span title="Pareto 前沿" style={{ marginLeft: 5, padding: '1px 4px', borderRadius: 3, fontSize: 9, fontWeight: 700, background: 'rgba(255,165,0,0.15)', color: '#FFA500', border: '1px solid rgba(255,165,0,0.4)' }}>★</span>}
                             </td>
