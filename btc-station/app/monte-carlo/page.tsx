@@ -318,9 +318,9 @@ export default function MonteCarloPage() {
     
     const xData = Array.from({ length: fileData.length + 1 }, (_, i) => i)
     
-    const p5Curve = []
-    const p50Curve = []
-    const p95Curve = []
+    const p5Curve: number[] = []
+    const p50Curve: number[] = []
+    const p95Curve: number[] = []
     
     for (let step = 0; step <= fileData.length; step++) {
       const stepVals = savedSims.map(s => s.curve[step]).sort((a, b) => a - b)
