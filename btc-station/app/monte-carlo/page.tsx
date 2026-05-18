@@ -247,7 +247,7 @@ export default function MonteCarloPage() {
             currentEquity += (trade.profitUSDT || 0)
           }
 
-          if (saveCurve) curve.push(currentEquity)
+          if (saveCurve) curve.push(Math.max(1, currentEquity))
           
           if (currentEquity > peakEquity) peakEquity = currentEquity
           
@@ -255,7 +255,7 @@ export default function MonteCarloPage() {
             maxDrawdown = 100
             currentEquity = 0
             if (saveCurve) {
-              for (let k = j + 1; k < nTrades; k++) curve.push(0)
+              for (let k = j + 1; k < nTrades; k++) curve.push(1)
             }
             break
           }
@@ -333,7 +333,12 @@ export default function MonteCarloPage() {
       tooltip: { trigger: 'axis' },
       grid: { left: '3%', right: '4%', bottom: '3%', top: '10%', containLabel: true },
       xAxis: { type: 'category', data: xData, boundaryGap: false },
-      yAxis: { type: 'value', splitLine: { lineStyle: { color: 'rgba(255,255,255,0.05)' } } },
+      yAxis: { 
+        type: simulationMode === 'compounding' ? 'log' : 'value', 
+        logBase: 10,
+        min: simulationMode === 'compounding' ? 1 : undefined,
+        splitLine: { lineStyle: { color: 'rgba(255,255,255,0.05)' } } 
+      },
       series: [
         {
           name: 'P95 (乐观)', type: 'line', data: p95Curve,
@@ -351,7 +356,7 @@ export default function MonteCarloPage() {
         }
       ]
     }
-  }, [simulations, fileData])
+  }, [simulations, fileData, simulationMode])
 
   const currentRiskOfRuin = useMemo(() => {
     if (simulations.length === 0) return 0
