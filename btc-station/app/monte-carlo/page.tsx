@@ -83,18 +83,46 @@ export default function MonteCarloPage() {
     setStats(null)
   }
 
+  // 在初始化时读取状态
   useEffect(() => {
-    const cachedStr = sessionStorage.getItem('mc_trades_cache')
-    if (cachedStr) {
+    // 1. 检查是否有新的 S3 缓存传入
+    const newS3Cache = sessionStorage.getItem('mc_trades_cache')
+    if (newS3Cache) {
       try {
-        const cachedTrades = JSON.parse(cachedStr)
+        const cachedTrades = JSON.parse(newS3Cache)
         if (Array.isArray(cachedTrades) && cachedTrades.length > 0) {
           loadTrades(cachedTrades, '策略回测结果 (来自 S3 缓存)')
           sessionStorage.removeItem('mc_trades_cache') // 读取后清除
+          return // 如果是从外部新传进来的，优先用外部的
         }
       } catch (e) {}
     }
-  }, [initialCapital, simulationMode]) // 依赖 initialCapital，当加载时重新计算原始曲线
+
+    // 2. 如果没有新传入的，检查是否有本地页面的停留缓存
+    const localSession = sessionStorage.getItem('mc_page_state')
+    if (localSession) {
+      try {
+        const state = JSON.parse(localSession)
+        if (state.fileData && state.fileData.length > 0) {
+          setFileData(state.fileData)
+          if (state.fileName) setFileName(state.fileName)
+          if (state.initialCapital) setInitialCapital(state.initialCapital)
+          if (state.numSimulations) setNumSimulations(state.numSimulations)
+          if (state.ruinThreshold) setRuinThreshold(state.ruinThreshold)
+          if (state.simulationMode) setSimulationMode(state.simulationMode)
+        }
+      } catch (e) {}
+    }
+  }, []) // 只在挂载时执行一次
+
+  // 当关键数据变化时，保存到本地停留缓存
+  useEffect(() => {
+    if (fileData.length > 0) {
+      sessionStorage.setItem('mc_page_state', JSON.stringify({
+        fileData, fileName, initialCapital, numSimulations, ruinThreshold, simulationMode
+      }))
+    }
+  }, [fileData, fileName, initialCapital, numSimulations, ruinThreshold, simulationMode])
 
   // 1. 解析 Excel/CSV — 兼容 VectorBT 平台导出 / TradingView 导出 / 通用 CSV
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
