@@ -145,18 +145,21 @@ export default function MonteCarloPage() {
     if (fileData.length === 0) return
     setIsComputing(true)
     
-    // 使用 setTimeout 避免阻塞 UI 渲染
-    setTimeout(() => {
-      const nTrades = fileData.length
-      const sims: MCSimulation[] = []
-      
-      for (let i = 0; i < numSimulations; i++) {
+    // 使用时间分片 (Time Slicing) 避免阻塞 UI 渲染，解决 INP 性能问题
+    const nTrades = fileData.length
+    const sims: MCSimulation[] = []
+    let currentSimIndex = 0
+
+    const computeChunk = () => {
+      const startTime = performance.now()
+
+      while (currentSimIndex < numSimulations) {
         let currentEquity = initialCapital
         let peakEquity = initialCapital
         let maxDrawdown = 0
         
         // 降低扇形图的渲染压力，只保存少量曲线用于绘图
-        const saveCurve = i < 100 // 只保存 100 条用于画扇形图
+        const saveCurve = currentSimIndex < 100
         const curve = saveCurve ? [initialCapital] : []
 
         for (let j = 0; j < nTrades; j++) {
@@ -190,6 +193,14 @@ export default function MonteCarloPage() {
           maxDrawdownPct: maxDrawdown,
           curve
         })
+
+        currentSimIndex++
+
+        // 每隔 16ms (大约一帧的时间) 释放主线程，防止阻塞导致高 INP
+        if (performance.now() - startTime > 16) {
+          requestAnimationFrame(computeChunk)
+          return
+        }
       }
 
       // 统计分析
@@ -216,7 +227,9 @@ export default function MonteCarloPage() {
       setSimulations(sims)
       setStats({ returns, drawdowns, riskOfRuin })
       setIsComputing(false)
-    }, 50)
+    }
+
+    requestAnimationFrame(computeChunk)
   }
 
   // 3. 图表配置
@@ -264,6 +277,12 @@ export default function MonteCarloPage() {
       ]
     }
   }, [simulations, fileData])
+
+  const currentRiskOfRuin = useMemo(() => {
+    if (simulations.length === 0) return 0
+    const ruinCount = simulations.filter(s => s.maxDrawdownPct >= ruinThreshold).length
+    return (ruinCount / simulations.length) * 100
+  }, [simulations, ruinThreshold])
 
   const ddHistOption = useMemo(() => {
     if (simulations.length === 0) return {}
@@ -407,7 +426,7 @@ export default function MonteCarloPage() {
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16 }}>
                 <StatCard 
                   label="破产概率 (Risk of Ruin)" 
-                  value={<span style={{ color: stats.riskOfRuin > 10 ? 'var(--down)' : 'var(--up)' }}>{stats.riskOfRuin.toFixed(2)}%</span>} 
+                  value={<span style={{ color: currentRiskOfRuin > 10 ? 'var(--down)' : 'var(--up)' }}>{currentRiskOfRuin.toFixed(2)}%</span>} 
                 />
                 <StatCard label="原始回测收益" value={`${originalStats?.returnPct.toFixed(2)}%`} color="#fff" />
                 <StatCard 
@@ -456,8 +475,8 @@ export default function MonteCarloPage() {
                     <strong>风险预警：</strong>在最倒霉的 1% 情况下，您将面临高达 <strong>{stats.drawdowns.p99.toFixed(2)}%</strong> 的最大回撤。
                   </li>
                   <li>
-                    策略触发 {ruinThreshold}% 回撤（破产）的概率为 <strong>{stats.riskOfRuin.toFixed(2)}%</strong>。
-                    {stats.riskOfRuin > 5 ? (
+                    策略触发 {ruinThreshold}% 回撤（破产）的概率为 <strong>{currentRiskOfRuin.toFixed(2)}%</strong>。
+                    {currentRiskOfRuin > 5 ? (
                       <span style={{ color: 'var(--down)', fontWeight: 600, marginLeft: 8 }}>⚠ 破产风险过高，建议降低单笔仓位大小（或加减杠杆）！</span>
                     ) : (
                       <span style={{ color: 'var(--up)', fontWeight: 600, marginLeft: 8 }}>✓ 破产风险在安全范围内。</span>
