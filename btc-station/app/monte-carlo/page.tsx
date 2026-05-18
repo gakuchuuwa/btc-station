@@ -364,7 +364,8 @@ export default function MonteCarloPage() {
       yAxis: { 
         type: simulationMode === 'compounding' ? 'log' : 'value', 
         logBase: 10,
-        min: simulationMode === 'compounding' ? 1 : undefined,
+        min: 'dataMin',
+        max: 'dataMax',
         splitLine: { lineStyle: { color: 'rgba(255,255,255,0.05)' } } 
       },
       series: [
