@@ -364,8 +364,14 @@ export default function MonteCarloPage() {
       yAxis: { 
         type: simulationMode === 'compounding' ? 'log' : 'value', 
         logBase: 10,
-        min: 'dataMin',
-        max: 'dataMax',
+        min: (value: { min: number, max: number }) => {
+          const p5Min = Math.min(...p5Curve);
+          return simulationMode === 'compounding' ? Math.max(1, p5Min * 0.5) : p5Min * 0.8;
+        },
+        max: (value: { min: number, max: number }) => {
+          const p95Max = Math.max(...p95Curve);
+          return simulationMode === 'compounding' ? p95Max * 2 : p95Max * 1.2;
+        },
         splitLine: { lineStyle: { color: 'rgba(255,255,255,0.05)' } } 
       },
       series: [
