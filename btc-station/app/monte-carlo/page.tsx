@@ -329,9 +329,37 @@ export default function MonteCarloPage() {
       p95Curve.push(stepVals[Math.floor(stepVals.length * 0.95)])
     }
 
+    const pathSeries = savedSims.map((sim, i) => ({
+      name: `模拟路径 ${i}`,
+      type: 'line',
+      data: sim.curve,
+      lineStyle: { color: 'rgba(0, 212, 255, 0.08)', width: 1 },
+      showSymbol: false,
+      animation: false,
+      z: 1
+    }))
+
     return {
-      tooltip: { trigger: 'axis' },
-      grid: { left: '3%', right: '4%', bottom: '3%', top: '10%', containLabel: true },
+      tooltip: { 
+        trigger: 'axis',
+        backgroundColor: 'rgba(19, 23, 34, 0.9)',
+        borderColor: 'rgba(255,255,255,0.1)',
+        textStyle: { color: '#d1d4dc' },
+        formatter: (params: any[]) => {
+          const step = params[0].name;
+          const p95 = params.find(p => p.seriesName === 'P95 (乐观)')?.value;
+          const p50 = params.find(p => p.seriesName === '中位数 (P50)')?.value;
+          const p5 = params.find(p => p.seriesName === 'P5 (悲观)')?.value;
+          if (!p50) return '';
+          return `<div style="font-family: 'Space Grotesk', sans-serif">
+                    <div style="font-size: 12px; color: #787b86; margin-bottom: 6px">交易步数: ${step}</div>
+                    <div style="font-weight: bold; margin-bottom: 4px"><span style="color: #26a69a; margin-right: 6px">●</span> P95: $${Number(p95).toLocaleString(undefined, {maximumFractionDigits:2})}</div>
+                    <div style="font-weight: bold; margin-bottom: 4px"><span style="color: #00d4ff; margin-right: 6px">●</span> P50: $${Number(p50).toLocaleString(undefined, {maximumFractionDigits:2})}</div>
+                    <div style="font-weight: bold;"><span style="color: #ef5350; margin-right: 6px">●</span> P5: $${Number(p5).toLocaleString(undefined, {maximumFractionDigits:2})}</div>
+                  </div>`;
+        }
+      },
+      grid: { left: '4%', right: '4%', bottom: '3%', top: '10%', containLabel: true },
       xAxis: { type: 'category', data: xData, boundaryGap: false },
       yAxis: { 
         type: simulationMode === 'compounding' ? 'log' : 'value', 
@@ -340,19 +368,18 @@ export default function MonteCarloPage() {
         splitLine: { lineStyle: { color: 'rgba(255,255,255,0.05)' } } 
       },
       series: [
+        ...pathSeries,
         {
           name: 'P95 (乐观)', type: 'line', data: p95Curve,
-          lineStyle: { opacity: 0 }, showSymbol: false,
+          lineStyle: { color: 'rgba(38,166,154,0.8)', width: 2, type: 'dashed' }, showSymbol: false, z: 5
         },
         {
           name: 'P5 (悲观)', type: 'line', data: p5Curve,
-          lineStyle: { opacity: 0 }, showSymbol: false,
-          areaStyle: { color: 'rgba(38,166,154,0.15)', origin: 'start' },
-          fillTo: 'P95 (乐观)'
+          lineStyle: { color: 'rgba(239,83,80,0.8)', width: 2, type: 'dashed' }, showSymbol: false, z: 5
         },
         {
           name: '中位数 (P50)', type: 'line', data: p50Curve,
-          lineStyle: { color: '#00d4ff', width: 2 }, showSymbol: false, z: 10
+          lineStyle: { color: '#00d4ff', width: 3 }, showSymbol: false, z: 10
         }
       ]
     }
