@@ -345,7 +345,7 @@ def _fetch_macro_data() -> dict:
 @router.get("/macro")
 def get_macro():
     """宏观指标：恐惧贪婪 / DXY / BTC-SPX 相关性 / 200W SMA / Pi Cycle"""
-    cached = _get_cached("macro", ttl=3600)
+    cached = _get_cached("macro", ttl=60)  # 1 分钟缓存（原 1 小时太长，新部署后用户等不及）
     if cached:
         return cached
     data = _fetch_macro_data()
