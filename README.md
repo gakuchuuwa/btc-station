@@ -97,7 +97,12 @@
 
 数据来源：
 - 自动：通过策略研发页回测结果直接一键 sessionStorage 传入。
-- 手动：支持拖入 TradingView 格式的完整 Excel / CSV 回测报告（自动解析“交易清单”）。
+- 手动：支持拖入 TradingView 格式的完整 Excel / CSV 回测报告（自动解析“交易清单 / List of trades”工作表）。
+
+> 文件兼容性（线上地址：[quant-lab.org/monte-carlo](https://quant-lab.org/monte-carlo)）
+> - ✅ BTC Station S3 导出的中文版 XLSX（含 `表现` / `交易分析` / `风险调整后的表现` / `交易清单` / `属性` 5 张中文 sheet）
+> - ✅ TradingView 网站原生导出的英文版 XLSX（含 `Performance` / `Trades analysis` / `List of trades` ... 等英文 sheet）
+> - 解析器对 sheet 名大小写不敏感；利润列同时识别中文 `净损益 USDT` 与英文 `Net P&L USDT`
 
 必须包含：
 - 历史交易记录的 Bootstrap 随机有放回重抽样（Shuffling）。

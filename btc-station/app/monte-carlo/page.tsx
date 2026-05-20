@@ -140,9 +140,23 @@ export default function MonteCarloPage() {
       const workbook = XLSX.read(data, { type: 'array' })
 
       // ── Step 1: 选择工作表 ──
-      let sheetName = workbook.SheetNames.find(n => n.includes('交易清单') || n.includes('List of Trades'))
-      if (!sheetName) {
+      // 优先按名称匹配「交易清单 / List of trades」（大小写不敏感，兼容 TV 英文导出的小写 trades）
+      let sheetName = workbook.SheetNames.find(n => {
+        const lower = n.toLowerCase()
+        return n.includes('交易清单') || lower.includes('list of trades')
+      })
+      // 单 sheet 文件（CSV 转 XLSX 或单表导出）直接用第一个
+      if (!sheetName && workbook.SheetNames.length === 1) {
         sheetName = workbook.SheetNames[0]
+      }
+      // 多 sheet 文件没找到目标表 → 明确报错，不再静默回退到第一个 sheet（会拿到错误的概览表）
+      if (!sheetName) {
+        alert(
+          '解析失败：未在文件中找到「交易清单」工作表。\n\n' +
+          '当前文件包含的工作表：' + workbook.SheetNames.join('、') + '\n\n' +
+          '请确保上传的是 BTC Station S3 导出的 XLSX，或 TradingView 原生导出（含 List of trades 表）。'
+        )
+        return
       }
 
       const sheet = workbook.Sheets[sheetName]
@@ -161,28 +175,30 @@ export default function MonteCarloPage() {
         c === '类型' || c === 'Type' || c.toLowerCase() === 'type'
       )
 
-      // 查找"利润"列 — 按优先级尝试多种可能的列名
+      // 查找"利润"列 — 按优先级尝试多种可能的列名（含 TradingView 英文导出的 Net P&L USDT）
       const profitColCandidates = [
-        '净损益 USDT', 'Net Profit USDT',
-        '净损益 USD', 'Net Profit USD',
-        '净损益', 'Net Profit',
+        '净损益 USDT', 'Net Profit USDT', 'Net P&L USDT',
+        '净损益 USD', 'Net Profit USD', 'Net P&L USD',
+        '净损益', 'Net Profit', 'Net P&L',
         'PnL', 'pnl', 'Profit', 'profit',
-        'P&L', 'Net P&L',
+        'P&L',
         'profitUSDT', 'profit_usdt',
       ]
       let profitCol = profitColCandidates.find(c => colNames.includes(c))
 
-      // 如果精确匹配失败，模糊搜索
+      // 如果精确匹配失败，模糊搜索（补上 p&l，避免漏匹配 TV 的 Net P&L USDT 等带后缀列名）
       if (!profitCol) {
         profitCol = colNames.find(c => {
           const lower = c.toLowerCase()
-          return lower.includes('损益') || lower.includes('profit') || lower.includes('pnl')
+          // 排除累计列（Cumulative P&L），那是累计值不是单笔利润
+          if (lower.includes('cumulative') || lower.includes('累计')) return false
+          return lower.includes('损益') || lower.includes('profit') || lower.includes('pnl') || lower.includes('p&l')
         })
       }
 
-      // 查找"百分比"列
+      // 查找"百分比"列（含 TradingView 英文导出的 Net P&L %）
       const pctColCandidates = [
-        '净损益 %', 'Net Profit %', 'Return %', 'return', 'Return', 'pct', '百分比'
+        '净损益 %', 'Net Profit %', 'Net P&L %', 'Return %', 'return', 'Return', 'pct', '百分比'
       ]
       let pctCol = pctColCandidates.find(c => colNames.includes(c))
 
