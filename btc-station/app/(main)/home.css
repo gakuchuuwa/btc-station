@@ -124,8 +124,14 @@
 .home-page .grid{
   display:grid;
   grid-template-columns:repeat(6,1fr);
-  grid-auto-rows:minmax(200px, auto);  /* 原 158px 太挤，资金费率均值等被截；统一增高 */
+  grid-auto-rows:minmax(158px, auto);  /* 还原 mockup 默认 */
   grid-auto-flow:dense;
+}
+
+/* 资金费率 widget：fmatrix 改自然高度（原 height:100% 把均值挤出 w-body） */
+.home-page .w[data-w="funding"] .wg-fmatrix{height:auto}
+.home-page .w[data-w="funding"] .w-body{
+  display:flex;flex-direction:column;justify-content:center;gap:6px;
 }
 .home-page .w.span1{grid-column:span 1}
 .home-page .w.span2{grid-column:span 2}

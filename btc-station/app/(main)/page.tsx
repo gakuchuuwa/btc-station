@@ -503,7 +503,7 @@ function W({ widget, children }: { widget: WidgetDef; children: React.ReactNode 
   // row 高度通过 inline style 兜底（CSS .row2 已定义，.row3/.row4 通过 style 覆盖）
   const style = widget.row && widget.row > 2 ? { gridRow: `span ${widget.row}` } : undefined
   return (
-    <div className={cls} style={style}>
+    <div className={cls} data-w={widget.id} style={style}>
       <div className="w-h">
         <div className="w-t">
           <span className={`w-d ${layerKey}`} />
