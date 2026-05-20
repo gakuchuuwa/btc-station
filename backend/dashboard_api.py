@@ -76,22 +76,20 @@ def _fetch_market_data() -> dict:
     except Exception:
         oi["okx_btc"] = None
 
-    # ── 24h 爆仓 ──
-    liq = {"long_usd": 0.0, "short_usd": 0.0}
+    # ── 多空账户比例（替代原 24h 爆仓——allForceOrders 端点 2022 起需 API key，免费拿不到）──
+    # Binance Futures 公开端点：返回 BTCUSDT 大户的多头/空头账户占比
+    ls_ratio = None
     try:
-        j = _get_json("https://fapi.binance.com/fapi/v1/allForceOrders?symbol=BTCUSDT")
-        if j:
-            cutoff = (time.time() - 86400) * 1000  # 24 小时前的毫秒时间戳
-            for order in j:
-                if order.get("time", 0) < cutoff:
-                    continue
-                amount = float(order.get("price", 0)) * float(order.get("executedQty", 0))
-                side = order.get("side", "").upper()
-                # SELL 方向 = 多头被强平; BUY 方向 = 空头被强平
-                if side == "SELL":
-                    liq["long_usd"] += amount
-                elif side == "BUY":
-                    liq["short_usd"] += amount
+        j = _get_json(
+            "https://fapi.binance.com/futures/data/topLongShortAccountRatio"
+            "?symbol=BTCUSDT&period=1h&limit=1"
+        )
+        if j and len(j) > 0:
+            ls_ratio = {
+                "long_pct": round(float(j[0]["longAccount"]) * 100, 1),
+                "short_pct": round(float(j[0]["shortAccount"]) * 100, 1),
+                "ratio": round(float(j[0]["longShortRatio"]), 2),
+            }
     except Exception:
         pass
 
@@ -125,7 +123,7 @@ def _fetch_market_data() -> dict:
     return {
         "funding_rates": funding,
         "open_interest": oi,
-        "liquidations_24h": liq,
+        "long_short_ratio": ls_ratio,
         "prices": prices,
         "spread_pct": spread_pct,
         "updated_at": int(time.time()),

@@ -12,7 +12,8 @@ import type { BtcSummary, NewsItem } from '@/types/btc'
 interface MarketData {
   funding_rates: Record<string, number | null>
   open_interest: { binance_usd?: number | null; okx_btc?: number | null }
-  liquidations_24h: { long_usd: number | null; short_usd: number | null }
+  // Binance Futures 大户多空账户比（替代原 24h 爆仓——allForceOrders 端点不开放）
+  long_short_ratio: { long_pct: number; short_pct: number; ratio: number } | null
   prices: Record<string, number | null>
   spread_pct: number | null
 }
@@ -78,14 +79,14 @@ const WIDGETS: WidgetDef[] = [
   // ── 双倍宽：距离/趋势条 ──
   { id: 'wma200', layer: 'cycle', name: '200 周均线距离', src: '计算', type: 'distance', span: 4 },
   // ── 衍生品 4 个 ──
-  { id: 'liq', layer: 'derivative', name: '24H 全网爆仓', src: 'Binance+OKX', type: 'split_liq', span: 2 },
+  { id: 'liq', layer: 'derivative', name: '多空账户比', src: 'Binance 大户', type: 'split_liq', span: 2 },
   { id: 'oi', layer: 'derivative', name: '持仓量 OI', src: 'OKX', type: 'spark_oi', span: 2 },
   { id: 'funding', layer: 'derivative', name: '资金费率矩阵', src: '多交易所', type: 'fund_matrix', span: 2 },
   { id: 'spread', layer: 'derivative', name: '多交易所价差', src: 'CCXT', type: 'spread_table', span: 2 },
   // ── 链上 3 个 ──
   { id: 'hash', layer: 'onchain', name: '全网算力', src: 'mempool.space', type: 'spark_hash', span: 2 },
   { id: 'mempool', layer: 'onchain', name: '内存池堆积', src: 'mempool.space', type: 'mempool_bars', span: 2 },
-  { id: 'block', layer: 'onchain', name: '下一区块', src: 'mempool.space', type: 'countdown', span: 2 },
+  { id: 'block', layer: 'onchain', name: '平均区块间隔', src: 'mempool.space', type: 'countdown', span: 2 },
   // ── 宏观 2 个 ──
   { id: 'dxy', layer: 'macro', name: '美元指数 DXY', src: 'Yahoo', type: 'spark_dxy', span: 2 },
   { id: 'corr', layer: 'macro', name: 'BTC/SPX 30D 相关性', src: '计算', type: 'correlation', span: 2 },
@@ -580,27 +581,26 @@ function W_GaugeFng({ fg, large }: { fg: MacroData['fear_greed'] | undefined; la
   )
 }
 
-function W_SplitLiq({ liq }: { liq: MarketData['liquidations_24h'] | undefined }) {
-  if (!liq || (liq.long_usd == null && liq.short_usd == null)) return <Dash />
-  const long = liq.long_usd ?? 0
-  const short = liq.short_usd ?? 0
-  const total = long + short
-  const longFlex = total > 0 ? long / total : 0.5
-  const shortFlex = 1 - longFlex
-  const dom = long >= short ? 'long' : 'short'
+function W_SplitLiq({ ratio }: { ratio: MarketData['long_short_ratio'] }) {
+  if (!ratio) return <Dash />
+  const longPct = ratio.long_pct
+  const shortPct = ratio.short_pct
+  const dom = ratio.ratio >= 1 ? 'long' : 'short'
   return (
     <>
       <div className="wg-split-stat">
-        <div className="wg-split-big">{fmtCompact(total)}</div>
-        <div className="wg-split-pct">{dom === 'long' ? '多头主导' : '空头主导'}</div>
+        <div className="wg-split-big">{ratio.ratio.toFixed(2)}</div>
+        <div className="wg-split-pct" style={{ color: dom === 'long' ? 'var(--up)' : 'var(--dn)' }}>
+          {dom === 'long' ? '多头主导' : '空头主导'}
+        </div>
       </div>
       <div className="wg-split-bar">
-        <div className="wg-split-long" style={{ flex: longFlex }} />
-        <div className="wg-split-short" style={{ flex: shortFlex }} />
+        <div className="wg-split-long" style={{ flex: longPct }} />
+        <div className="wg-split-short" style={{ flex: shortPct }} />
       </div>
       <div className="wg-split-legend">
-        <span className="wg-split-l">多 {fmtCompact(long)}</span>
-        <span className="wg-split-s">空 {fmtCompact(short)}</span>
+        <span className="wg-split-l">多 {longPct.toFixed(1)}%</span>
+        <span className="wg-split-s">空 {shortPct.toFixed(1)}%</span>
       </div>
     </>
   )
@@ -791,8 +791,13 @@ function W_Correlation({ corr }: { corr: number | null | undefined }) {
 
 function W_Countdown({ interval, diff }: { interval: number | null | undefined; diff: OnchainData['difficulty_adjustment'] }) {
   if (interval == null) return <Dash />
-  const minutes = Math.max(0, 10 - interval / 60)
-  const progress = Math.min(100, Math.max(0, (interval / 600) * 100))
+  // 实际平均区块间隔（分钟）。BTC 目标 10 分钟。
+  const minutes = interval / 60
+  // 速度指示：< 8 偏快（绿）/ 8-12 正常（白）/ > 12 偏慢（金）
+  const status = minutes < 8 ? '偏快' : minutes > 12 ? '偏慢' : '正常'
+  const statusColor = minutes < 8 ? 'var(--up)' : minutes > 12 ? 'var(--gld)' : 'var(--tx)'
+  // 进度条：以 15 分钟为最大值，实际/15 表示当前慢度
+  const progress = Math.min(100, (minutes / 15) * 100)
   return (
     <div className="wg-cd">
       <div>
@@ -801,11 +806,11 @@ function W_Countdown({ interval, diff }: { interval: number | null | undefined; 
           <span className="wg-cd-unit">分钟</span>
         </div>
         <div className="wg-cd-prog">
-          <div className="wg-cd-pf" style={{ width: `${progress}%` }} />
+          <div className="wg-cd-pf" style={{ width: `${progress}%`, background: statusColor }} />
         </div>
       </div>
       <div className="wg-cd-meta">
-        <span>区块间隔 {(interval / 60).toFixed(1)}m</span>
+        <span style={{ color: statusColor }}>{status} · 目标 10 分钟</span>
         {diff && <span>难度 {fmtPct(diff.change_pct, 1)}</span>}
       </div>
     </div>
@@ -852,7 +857,7 @@ export default function HomePage() {
     switch (w.type) {
       case 'news_feed':    body = <W_NewsFeed news={news} />; break
       case 'gauge_fng':    body = macroLoaded ? <W_GaugeFng fg={macro?.fear_greed ?? undefined} /> : <Empty />; break
-      case 'split_liq':    body = marketLoaded ? <W_SplitLiq liq={market?.liquidations_24h} /> : <Empty />; break
+      case 'split_liq':    body = marketLoaded ? <W_SplitLiq ratio={market?.long_short_ratio ?? null} /> : <Empty />; break
       case 'spark_oi':     body = marketLoaded ? <W_SparkOi oi={market?.open_interest?.binance_usd ?? null} /> : <Empty />; break
       case 'fund_matrix':  body = marketLoaded ? <W_FundMatrix rates={market?.funding_rates} /> : <Empty />; break
       case 'spread_table': body = marketLoaded ? <W_SpreadTable prices={market?.prices} /> : <Empty />; break
