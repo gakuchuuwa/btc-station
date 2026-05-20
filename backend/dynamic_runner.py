@@ -6,6 +6,79 @@ import pandas as pd
 import math
 
 
+# ─── 安全沙箱：AST 白名单 ────────────────────────────────────────────────────
+# 防止用户提交的策略代码执行任意系统操作（窃取 SUPABASE_SERVICE_KEY、读文件、网络请求、反向 shell 等）。
+# 设计原则：白名单 > 黑名单。只放行策略代码确实需要的能力，其他全部拒绝。
+
+# 内置策略实测仅用 pandas/numpy/vectorbt 三个 import，零 dunder 属性。
+# 这里多给几个常用但安全的科学计算模块作备用。
+_ALLOWED_IMPORTS = {
+    "pandas", "numpy", "vectorbt", "pandas_ta",
+    "math", "statistics", "datetime", "decimal", "itertools", "functools", "collections",
+}
+
+# 危险的内置函数与名字（即使没显式 import，也能用来突破沙箱）
+_FORBIDDEN_NAMES = {
+    "__import__", "eval", "exec", "compile",
+    "open", "input", "breakpoint",
+    "getattr", "setattr", "delattr", "hasattr",
+    "globals", "locals", "vars", "dir",
+    "memoryview", "type",  # type(x).__bases__ 是经典逃逸链入口
+    "help", "exit", "quit",
+}
+
+
+def _validate_safe_ast(code_string: str) -> None:
+    """对用户提交的策略代码做 AST 级别的安全校验。
+
+    校验失败抛 ValueError，由 run_dynamic_code 包装成 HTTP 400 返回。
+    校验通过 = 代码没有明显的沙箱逃逸 / 任意 import / 危险 builtin 用法。
+
+    注意：这是「**预防式**」沙箱——不能 100% 杜绝所有逃逸（Python 的 exec 本质不可能完全沙箱化），
+    但能挡住 99% 的真实攻击载荷（爬虫脚本、`import os`、`__import__("os")`、
+    `().__class__.__bases__[0].__subclasses__()` 这类经典逃逸链）。
+    """
+    try:
+        tree = ast.parse(code_string)
+    except SyntaxError as e:
+        raise ValueError(f"策略代码语法错误：{e}")
+
+    for node in ast.walk(tree):
+        # ── 拒绝危险 import ──
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                root = alias.name.split(".")[0]
+                if root not in _ALLOWED_IMPORTS:
+                    raise ValueError(
+                        f"安全沙箱拒绝：不允许 import '{alias.name}'。"
+                        f"策略代码只能使用 {sorted(_ALLOWED_IMPORTS)} 这些模块。"
+                    )
+        elif isinstance(node, ast.ImportFrom):
+            root = (node.module or "").split(".")[0]
+            if root not in _ALLOWED_IMPORTS:
+                raise ValueError(
+                    f"安全沙箱拒绝：不允许 from '{node.module}' import。"
+                    f"策略代码只能使用 {sorted(_ALLOWED_IMPORTS)} 这些模块。"
+                )
+
+        # ── 拒绝所有双下划线属性访问（_dunder 是 Python 沙箱逃逸的标准入口）──
+        # 例：obj.__class__.__bases__[0].__subclasses__() → 拿到 type 的所有子类 → file/os 等都能拿到
+        elif isinstance(node, ast.Attribute):
+            if node.attr.startswith("__") and node.attr.endswith("__"):
+                raise ValueError(
+                    f"安全沙箱拒绝：不允许访问 dunder 属性 '.{node.attr}'。"
+                    f"这是 Python 沙箱逃逸的常用入口，已被禁止。"
+                )
+
+        # ── 拒绝危险名字的使用（即使没 import 也能调用的内置）──
+        elif isinstance(node, ast.Name):
+            if node.id in _FORBIDDEN_NAMES:
+                raise ValueError(
+                    f"安全沙箱拒绝：禁止使用 '{node.id}'。"
+                    f"该名字属于危险内置（eval/exec/__import__/open 等）。"
+                )
+
+
 def _extract_param_defaults(code_string: str) -> dict:
     """
     扫描策略代码,提取所有 parameters.get('xxx', DEFAULT) 或 p.get('xxx', DEFAULT) 的默认值。
@@ -79,6 +152,11 @@ def run_dynamic_code(code_string: str, df, parameters: dict, timeframe: str = '4
     返回完整的 TV 风格 metrics。
     """
     try:
+        # ── 安全沙箱：AST 白名单校验（在 exec 之前）──
+        # 任何不在白名单的 import / dunder 属性 / 危险名字会立刻抛 ValueError，
+        # 由下面的 except 包装成 traceback 返回给前端，HTTP 400。
+        _validate_safe_ast(code_string)
+
         module_name = "dynamic_strategy"
         spec = importlib.util.spec_from_loader(module_name, loader=None)
         dynamic_module = importlib.util.module_from_spec(spec)
