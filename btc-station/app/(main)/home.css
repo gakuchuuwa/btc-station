@@ -2,7 +2,7 @@
 --bg:#09090e;--bg1:#0e0f16;--bg2:#12141c;--bg3:#181a24;
   --bd:rgba(255,255,255,.065);--bd-hi:rgba(255,255,255,.13);
   --bd-a:rgba(0,212,255,.2);
-  --tx:#dde1ee;--mu:#52566e;--di:#272a3c;
+  --tx:#dde1ee;--mu:#8a90a3;--di:#3a3f52;  /* mu/di 调亮：原 #52566e/#272a3c 在黑底对比度不足 */
   --acc:#00d4ff;--ac-s:rgba(0,212,255,.07);
   --btc:#f7931a;--bt-s:rgba(247,147,26,.09);
   --up:#22d3a0;--up-s:rgba(34,211,160,.09);
@@ -546,7 +546,7 @@
 .home-page .compass-side-h { font-size: 11.5px; }
 .home-page .compass-side-score { font-size: 50px; }
 .home-page .compass-side-score span { font-size: 18px; }
-.home-page .compass-side-sub { font-size: 12.5px; }
+.home-page .compass-side-sub { font-size: 12.5px; color: #9aa3b4; }  /* 中灰偏亮，黑底可读 */
 .home-page .compass-side-it { font-size: 13px; padding: 5px 0; }
 .home-page .compass-side-it-v { font-size: 12.5px; }
 .home-page .snap-l { font-size: 11px; }

@@ -742,7 +742,7 @@ function W_Distance({ wma }: { wma: MacroData['wma200'] | undefined }) {
     <div className="wg-dist">
       <div className="wg-dist-stat">
         <div className="wg-dist-big" style={{ color }}>{fmtPct(pct, 0)}</div>
-        <div className="wg-dist-lbl">距 200WMA · {pct >= 0 ? '偏贵' : '偏便宜'}</div>
+        <div className="wg-dist-lbl">距 200WMA · {pct >= 0 ? '高于均线' : '低于均线'}</div>
       </div>
       <div className="wg-dist-trk">
         <div className="wg-dist-fill" style={{ width: `${fill}%`, background: pct >= 0 ? 'linear-gradient(90deg,var(--up),var(--acc))' : 'linear-gradient(90deg,var(--dn),var(--gld))' }} />
