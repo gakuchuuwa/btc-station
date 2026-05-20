@@ -27,6 +27,9 @@ from optimizer.vbt_optimizer import router as vbt_optimizer_router
 # 形态归因分析（TradingView 交易清单上传分析）
 from pattern_report import router as pattern_report_router
 
+# Dashboard 市场总览 / 链上 / 宏观
+from dashboard_api import router as dashboard_router
+
 feeder = DataFeeder('okx')
 
 @asynccontextmanager
@@ -58,6 +61,9 @@ app.include_router(vbt_optimizer_router, prefix="/api/vbt")
 
 # 形态归因分析
 app.include_router(pattern_report_router, prefix="/api")
+
+# Dashboard 市场总览 / 链上 / 宏观
+app.include_router(dashboard_router, prefix="/api")
 
 class StrategyRequest(BaseModel):
     code: str

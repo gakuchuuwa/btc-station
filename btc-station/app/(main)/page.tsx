@@ -423,7 +423,11 @@ function MainCompass({ summary, market, macro, isUp }: { summary: BtcSummary | n
           </div>
           <div className="snap-cell">
             <div className="snap-l">24H 成交量</div>
-            <div className="snap-v">{summary?.volume24h ? `${(summary.volume24h / 1e9).toFixed(2)}B` : '—'}</div>
+            <div className="snap-v">{summary?.volume24h
+              ? (summary.volume24h >= 1e6
+                  ? `${(summary.volume24h / 1e6).toFixed(2)}M BTC`
+                  : `${Math.round(summary.volume24h).toLocaleString('en-US')} BTC`)
+              : '—'}</div>
           </div>
           <div className="snap-cell">
             <div className="snap-l">市值</div>
