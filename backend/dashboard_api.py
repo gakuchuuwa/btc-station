@@ -277,9 +277,14 @@ def _fetch_macro_data() -> dict:
                 [float(k[4]) for k in btc_j],
                 index=pd.to_datetime([k[0] for k in btc_j], unit="ms"),
             )
-            # 对齐到工作日
+            # 计算日收益
             spx_ret = spx["Close"].pct_change().dropna()
             btc_ret = btc_closes.pct_change().dropna()
+
+            # 规范化两个 index 到无时区的纯日期（SPX 默认带美东时区，BTC 是 UTC 时间戳）
+            # 否则 intersection 永远返回空（dtype 不兼容 → 0 个共同日期 → 永远 null）
+            spx_ret.index = spx_ret.index.tz_localize(None).normalize()
+            btc_ret.index = btc_ret.index.normalize()
 
             # 取两者都有数据的日期
             common = spx_ret.index.intersection(btc_ret.index)
