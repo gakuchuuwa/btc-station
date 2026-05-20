@@ -87,8 +87,12 @@ def _load_dataframe(filename: str, raw: bytes) -> tuple[pd.DataFrame, Optional[p
     if lower.endswith(".xlsx") or lower.endswith(".xls"):
         xls = pd.ExcelFile(io.BytesIO(raw))
         target = None
+        # 兼容 BTC Station 中文（"交易清单"）与 TradingView 英文（"List of trades"，小写 t）。
+        # 注意不能用宽松的 "trades" 子串匹配，否则 TradingView 的 "Trades analysis"
+        # 汇总表会先于 "List of trades" 命中，结果选错 sheet（拿不到 Trade # 列）。
         for name in xls.sheet_names:
-            if "交易清单" in name or "List of Trades" in name or "trades" in name.lower():
+            name_lower = name.lower()
+            if "交易清单" in name or "list of trades" in name_lower:
                 target = name
                 break
         if target is None:
