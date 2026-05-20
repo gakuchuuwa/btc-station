@@ -230,13 +230,13 @@ function buildCompassSignals(
   ]
 }
 
-// 罗盘得分对应颜色（0 = 蓝深 / 50 = 灰中 / 100 = 红深）
+// 罗盘得分对应颜色（5 阶段，全部亮色保证暗底可见）
 function scoreColor(s: number): string {
-  if (s <= 20) return 'var(--up)'        // 极度便宜（绿）
-  if (s <= 40) return '#22d3a0'
-  if (s <= 60) return 'var(--mu)'         // 中性
-  if (s <= 80) return 'var(--gld)'        // 偏热（金）
-  return 'var(--dn)'                       // 过热（红）
+  if (s <= 25) return 'var(--up)'        // 极度便宜：青绿（亮）
+  if (s <= 45) return '#7dd3c0'           // 偏便宜：浅薄荷
+  if (s <= 60) return '#dde1ee'           // 中性：浅灰白（var(--tx)，原 var(--mu) 太暗）
+  if (s <= 80) return 'var(--gld)'        // 偏过热：金黄
+  return 'var(--dn)'                       // 极度过热：红
 }
 
 function scoreLabel(s: number): string {
@@ -516,13 +516,14 @@ function W({ widget, children }: { widget: WidgetDef; children: React.ReactNode 
 }
 
 const Empty = () => <div style={{ color: 'var(--mu)', fontSize: 11, padding: 6 }}>加载中…</div>
+const Dash = () => <div style={{ color: 'var(--mu)', fontSize: 22, padding: 6, fontFamily: 'var(--mono)' }}>—</div>
 
 // ════════════════════════════════════════════════════════════════════════════
 // Widget 内容
 // ════════════════════════════════════════════════════════════════════════════
 
 function W_NewsFeed({ news }: { news: NewsItem[] }) {
-  if (!news.length) return <Empty />
+  if (!news.length) return <Dash />
   return (
     <div className="wg-news">
       {news.slice(0, 18).map((n, i) => (
@@ -537,7 +538,7 @@ function W_NewsFeed({ news }: { news: NewsItem[] }) {
 }
 
 function W_GaugeFng({ fg, large }: { fg: MacroData['fear_greed'] | undefined; large?: boolean }) {
-  if (!fg) return <Empty />
+  if (!fg) return <Dash />
   const v = fg.value
   const circ = 2 * Math.PI * 42
   const dash = (v / 100) * circ
@@ -580,7 +581,7 @@ function W_GaugeFng({ fg, large }: { fg: MacroData['fear_greed'] | undefined; la
 }
 
 function W_SplitLiq({ liq }: { liq: MarketData['liquidations_24h'] | undefined }) {
-  if (!liq || (liq.long_usd == null && liq.short_usd == null)) return <Empty />
+  if (!liq || (liq.long_usd == null && liq.short_usd == null)) return <Dash />
   const long = liq.long_usd ?? 0
   const short = liq.short_usd ?? 0
   const total = long + short
@@ -606,7 +607,7 @@ function W_SplitLiq({ liq }: { liq: MarketData['liquidations_24h'] | undefined }
 }
 
 function W_SparkOi({ oi }: { oi: number | null | undefined }) {
-  if (oi == null) return <Empty />
+  if (oi == null) return <Dash />
   return (
     <>
       <div className="wg-stat-row">
@@ -620,7 +621,7 @@ function W_SparkOi({ oi }: { oi: number | null | undefined }) {
 }
 
 function W_FundMatrix({ rates }: { rates: Record<string, number | null> | undefined }) {
-  if (!rates || !Object.keys(rates).length) return <Empty />
+  if (!rates || !Object.keys(rates).length) return <Dash />
   const entries = Object.entries(rates)
   const avg = entries
     .filter(([, v]) => v != null)
@@ -644,9 +645,9 @@ function W_FundMatrix({ rates }: { rates: Record<string, number | null> | undefi
 }
 
 function W_SpreadTable({ prices }: { prices: Record<string, number | null> | undefined }) {
-  if (!prices) return <Empty />
+  if (!prices) return <Dash />
   const entries = Object.entries(prices).filter(([, v]) => v != null) as [string, number][]
-  if (!entries.length) return <Empty />
+  if (!entries.length) return <Dash />
   const vals = entries.map(([, v]) => v)
   const max = Math.max(...vals)
   const min = Math.min(...vals)
@@ -670,7 +671,7 @@ function W_SpreadTable({ prices }: { prices: Record<string, number | null> | und
 }
 
 function W_SparkHash({ hash }: { hash: number | null | undefined }) {
-  if (hash == null) return <Empty />
+  if (hash == null) return <Dash />
   return (
     <>
       <div className="wg-stat-row">
@@ -684,7 +685,7 @@ function W_SparkHash({ hash }: { hash: number | null | undefined }) {
 }
 
 function W_MempoolBars({ mempool, vsize }: { mempool: number | null | undefined; vsize: number | null | undefined }) {
-  if (mempool == null) return <Empty />
+  if (mempool == null) return <Dash />
   const count = mempool
   // mempool 拥堵 tier 分布（粗略估算）
   const tiers = [
@@ -709,7 +710,7 @@ function W_MempoolBars({ mempool, vsize }: { mempool: number | null | undefined;
 }
 
 function W_SignalPi({ pi }: { pi: MacroData['pi_cycle'] | undefined }) {
-  if (!pi) return <Empty />
+  if (!pi) return <Dash />
   const isTriggered = pi.triggered
   const lightCls = isTriggered ? 'danger' : Math.abs(pi.distance_pct) < 5 ? 'warn' : 'safe'
   return (
@@ -731,7 +732,7 @@ function W_SignalPi({ pi }: { pi: MacroData['pi_cycle'] | undefined }) {
 }
 
 function W_Distance({ wma }: { wma: MacroData['wma200'] | undefined }) {
-  if (!wma) return <Empty />
+  if (!wma) return <Dash />
   const pct = wma.distance_pct
   // 距离条：把 -50%~+200% 映射为 0~100%
   const fill = Math.min(100, Math.max(0, ((pct + 50) / 250) * 100))
@@ -756,7 +757,7 @@ function W_Distance({ wma }: { wma: MacroData['wma200'] | undefined }) {
 }
 
 function W_SparkDxy({ dxy }: { dxy: number | null | undefined }) {
-  if (dxy == null) return <Empty />
+  if (dxy == null) return <Dash />
   return (
     <>
       <div className="wg-stat-row">
@@ -770,7 +771,7 @@ function W_SparkDxy({ dxy }: { dxy: number | null | undefined }) {
 }
 
 function W_Correlation({ corr }: { corr: number | null | undefined }) {
-  if (corr == null) return <Empty />
+  if (corr == null) return <Dash />
   // -1 → 0%；0 → 50%；+1 → 100%
   const markerAt = ((corr + 1) / 2) * 100
   const color = Math.abs(corr) > 0.5 ? (corr > 0 ? 'var(--up)' : 'var(--dn)') : 'var(--mu)'
@@ -789,7 +790,7 @@ function W_Correlation({ corr }: { corr: number | null | undefined }) {
 }
 
 function W_Countdown({ interval, diff }: { interval: number | null | undefined; diff: OnchainData['difficulty_adjustment'] }) {
-  if (interval == null) return <Empty />
+  if (interval == null) return <Dash />
   const minutes = Math.max(0, 10 - interval / 60)
   const progress = Math.min(100, Math.max(0, (interval / 600) * 100))
   return (
@@ -834,29 +835,34 @@ export default function HomePage() {
     const t1 = setInterval(fetchSummary, 30_000)
     const t2 = setInterval(fetchMarket, 30_000)
     const t3 = setInterval(fetchOnchain, 300_000)
-    const t4 = setInterval(fetchMacro, 3600_000)
+    const t4 = setInterval(fetchMacro, 300_000)  // 5 分钟（原 1 小时太长）
     const t5 = setInterval(fetchNews, 300_000)
     return () => { [t1, t2, t3, t4, t5].forEach(clearInterval) }
   }, [fetchSummary, fetchMarket, fetchOnchain, fetchMacro, fetchNews])
 
   const isUp = (summary?.change24h ?? 0) >= 0
 
+  // 跟踪后端响应：API 拿到了但内部字段为 null 时，widget 应显示 "—" 而不是 "加载中"
+  const macroLoaded = macro !== null
+  const marketLoaded = market !== null
+  const onchainLoaded = onchain !== null
+
   const renderWidget = (w: WidgetDef) => {
     let body: React.ReactNode = null
     switch (w.type) {
       case 'news_feed':    body = <W_NewsFeed news={news} />; break
-      case 'gauge_fng':    body = <W_GaugeFng fg={macro?.fear_greed ?? undefined} large={w.row === 2} />; break
-      case 'split_liq':    body = <W_SplitLiq liq={market?.liquidations_24h} />; break
-      case 'spark_oi':     body = <W_SparkOi oi={market?.open_interest?.binance_usd ?? null} />; break
-      case 'fund_matrix':  body = <W_FundMatrix rates={market?.funding_rates} />; break
-      case 'spread_table': body = <W_SpreadTable prices={market?.prices} />; break
-      case 'spark_hash':   body = <W_SparkHash hash={onchain?.hashrate_eh} />; break
-      case 'mempool_bars': body = <W_MempoolBars mempool={onchain?.mempool_count} vsize={onchain?.mempool_vsize_mb} />; break
-      case 'signal_pi':    body = <W_SignalPi pi={macro?.pi_cycle ?? undefined} />; break
-      case 'distance':     body = <W_Distance wma={macro?.wma200 ?? undefined} />; break
-      case 'spark_dxy':    body = <W_SparkDxy dxy={macro?.dxy} />; break
-      case 'correlation':  body = <W_Correlation corr={macro?.btc_spx_corr_30d} />; break
-      case 'countdown':    body = <W_Countdown interval={onchain?.avg_block_interval_sec} diff={onchain?.difficulty_adjustment ?? null} />; break
+      case 'gauge_fng':    body = macroLoaded ? <W_GaugeFng fg={macro?.fear_greed ?? undefined} /> : <Empty />; break
+      case 'split_liq':    body = marketLoaded ? <W_SplitLiq liq={market?.liquidations_24h} /> : <Empty />; break
+      case 'spark_oi':     body = marketLoaded ? <W_SparkOi oi={market?.open_interest?.binance_usd ?? null} /> : <Empty />; break
+      case 'fund_matrix':  body = marketLoaded ? <W_FundMatrix rates={market?.funding_rates} /> : <Empty />; break
+      case 'spread_table': body = marketLoaded ? <W_SpreadTable prices={market?.prices} /> : <Empty />; break
+      case 'spark_hash':   body = onchainLoaded ? <W_SparkHash hash={onchain?.hashrate_eh} /> : <Empty />; break
+      case 'mempool_bars': body = onchainLoaded ? <W_MempoolBars mempool={onchain?.mempool_count} vsize={onchain?.mempool_vsize_mb} /> : <Empty />; break
+      case 'signal_pi':    body = macroLoaded ? <W_SignalPi pi={macro?.pi_cycle ?? undefined} /> : <Empty />; break
+      case 'distance':     body = macroLoaded ? <W_Distance wma={macro?.wma200 ?? undefined} /> : <Empty />; break
+      case 'spark_dxy':    body = macroLoaded ? <W_SparkDxy dxy={macro?.dxy} /> : <Empty />; break
+      case 'correlation':  body = macroLoaded ? <W_Correlation corr={macro?.btc_spx_corr_30d} /> : <Empty />; break
+      case 'countdown':    body = onchainLoaded ? <W_Countdown interval={onchain?.avg_block_interval_sec} diff={onchain?.difficulty_adjustment ?? null} /> : <Empty />; break
     }
     return <W key={w.id} widget={w}>{body}</W>
   }
