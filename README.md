@@ -1,8 +1,16 @@
-# BTC Station — 项目规矩
+# BTC Station
+
+> **Live:** [https://quant-lab.org](https://quant-lab.org)
+
+A free, open-source Bitcoin quantitative backtesting & analysis workbench. Built with Next.js + FastAPI + VectorBT by an independent developer.
+
+**BTC Station does NOT provide investment advice, does NOT sell trading signals, and is NOT affiliated with any entity named "Quantlab".** It is a pure developer tool for strategy research.
+
+---
 
 ## 项目定位
 
-**BTC Station 是一个面向大众开放的、完全基于 Web 的 BTC 专用在线量化平台。**
+**BTC Station 是一个面向大众开放的、完全基于 Web 的 BTC 专用在线量化回测工具。**
 
 核心愿景是**让量化分析平民化**——无需配置复杂的本地环境，任何人都可以随时随地打开网页，在线编写策略、一键极速回测、使用云计算寻找最佳参数组合，并进行专业的稳健性评估。
 
