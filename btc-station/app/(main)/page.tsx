@@ -459,6 +459,22 @@ function MainCompass({ summary, market, macro, isUp }: { summary: BtcSummary | n
                 : '—'}
             </div>
           </div>
+          <div className="snap-cell">
+            <div className="snap-l">当前价格</div>
+            <div className="snap-v">
+              {summary?.price ? `$${summary.price.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}` : '—'}
+            </div>
+          </div>
+          <div className="snap-cell">
+            <div className="snap-l">24H 涨跌</div>
+            <div className="snap-v">
+              {summary?.change24h != null ? (
+                <span style={{ color: summary.change24h >= 0 ? 'var(--up)' : 'var(--dn)' }}>
+                  {summary.change24h >= 0 ? '+' : ''}{summary.change24h.toFixed(2)}%
+                </span>
+              ) : '—'}
+            </div>
+          </div>
         </div>
 
       </div>
