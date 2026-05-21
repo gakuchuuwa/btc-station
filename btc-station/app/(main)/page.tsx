@@ -438,7 +438,7 @@ function MainCompass({ summary, market, macro, isUp }: { summary: BtcSummary | n
             <div className="snap-l">市值</div>
             <div className="snap-v">{summary?.marketCap ? `$${(summary.marketCap / 1e12).toFixed(2)}T` : '—'}</div>
           </div>
-          <div className="snap-cell snap-cell-wide">
+          <div className="snap-cell">
             <div className="snap-l">距 ATH</div>
             <div className="snap-v">
               {summary?.price ? (() => {
@@ -451,7 +451,7 @@ function MainCompass({ summary, market, macro, isUp }: { summary: BtcSummary | n
               })() : '—'}
             </div>
           </div>
-          <div className="snap-cell snap-cell-wide">
+          <div className="snap-cell">
             <div className="snap-l">振幅</div>
             <div className="snap-v">
               {summary && summary.high24h && summary.low24h && summary.price
