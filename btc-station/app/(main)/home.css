@@ -584,6 +584,10 @@
 }
 .home-page .seasonality-chart{
   flex:1;min-width:0;
+  display:flex;flex-direction:column;
+}
+.home-page .seasonality-chart > svg{
+  width:100%;height:100% !important;flex:1;min-height:0;
 }
 .home-page .seasonality-legend{
   width:200px;flex-shrink:0;
