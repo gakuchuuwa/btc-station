@@ -742,6 +742,11 @@ function W_GaugeFng({ fg, large }: { fg: MacroData['fear_greed'] | undefined; la
   const dash = (v / 100) * circ
   const color = v <= 25 ? 'var(--dn)' : v <= 45 ? 'var(--gld)' : v <= 55 ? 'var(--mu)' : v <= 75 ? 'var(--up)' : 'var(--up)'
   const lbl = fg.label || (v <= 25 ? '极度恐惧' : v <= 45 ? '恐惧' : v <= 55 ? '中性' : v <= 75 ? '贪婪' : '极度贪婪')
+  const desc = v <= 25 ? '市场存在极度恐慌情绪，通常意味着投资者反应过度，往往是历史级别的买入机会。' 
+             : v <= 45 ? '市场情绪悲观，投资者趋于保守。这可能预示短期调整，也可能在酝酿反弹动能。' 
+             : v <= 55 ? '多空情绪基本平衡，无明显单边倾向。建议保持观望，等待明确的趋势信号确立。' 
+             : v <= 75 ? '市场情绪高涨，买盘活跃。需逐渐警惕追高风险，可能正在接近阶段性的顶部。' 
+             : '市场处于极度贪婪状态，极易发生剧烈的下杀回调。建议获利了结或严格设置止损。'
 
   return (
     <div className="wg-gauge-wrap">
@@ -773,6 +778,9 @@ function W_GaugeFng({ fg, large }: { fg: MacroData['fear_greed'] | undefined; la
             </b></>
           ) : <>Alternative.me</>}
         </div>
+      </div>
+      <div className="wg-fng-desc" style={{ fontSize: '12.5px', color: 'var(--mu)', lineHeight: 1.5, marginTop: 12, padding: '0 12px', textAlign: 'center', opacity: 0.85 }}>
+        {desc}
       </div>
     </div>
   )
