@@ -531,21 +531,31 @@ const Dash = () => <div style={{ color: 'var(--mu)', fontSize: 22, padding: 6, f
 // 季节性叠加图（5 年 BTC 同期累积涨跌对比）
 // ════════════════════════════════════════════════════════════════════════════
 
+// 5 年颜色全局共用（图 + 数据单）
+const SEASONALITY_COLORS: Record<string, string> = {
+  '2022': '#a78bfa',   // 紫
+  '2023': '#22d3a0',   // 绿（大牛）
+  '2024': '#f0b90b',   // 金（大牛）
+  '2025': '#00d4ff',   // 青
+  '2026': '#f7931a',   // BTC 橙（当前年）
+}
+
+// 年份背景标签（"大牛"/"熊市"/"横盘"）
+const YEAR_TAGS: Record<string, string> = {
+  '2022': '熊市',
+  '2023': '大牛',
+  '2024': '大牛',
+  '2025': '横盘',
+  '2026': '当前',
+}
+
 function SeasonalityChart({ data }: { data: SeasonalityData | null }) {
-  const W = 1200
-  const H = 280
-  const PAD = { t: 16, r: 100, b: 28, l: 0 }
+  const W = 1100
+  const H = 320
+  const PAD = { t: 18, r: 56, b: 30, l: 0 }
   const INNER_W = W - PAD.l - PAD.r
   const INNER_H = H - PAD.t - PAD.b
-
-  // 颜色按年份：当前年最亮粗线，往年依次淡化
-  const YEAR_COLORS: Record<string, string> = {
-    '2022': '#a78bfa',   // 紫
-    '2023': '#22d3a0',   // 绿（大牛）
-    '2024': '#f0b90b',   // 金（大牛）
-    '2025': '#00d4ff',   // 青
-    '2026': '#f7931a',   // BTC 橙（当前年）
-  }
+  const YEAR_COLORS = SEASONALITY_COLORS
 
   const calc = useMemo(() => {
     if (!data || !data.years || Object.keys(data.years).length === 0) return null
@@ -645,31 +655,54 @@ function SeasonalityChart({ data }: { data: SeasonalityData | null }) {
         />
       ))}
 
-      {/* 每条线末端的年份标签 */}
-      {calc.lines.map(({ year, color, endX, endY, endPct, isCurrent }) => (
-        <g key={`label-${year}`}>
-          <rect
-            x={endX + 4}
-            y={endY - 9}
-            width={62}
-            height={18}
-            rx={3}
-            fill={color}
-            fillOpacity={isCurrent ? 0.92 : 0.7}
-          />
-          <text
-            x={endX + 4 + 6}
-            y={endY + 4}
-            fontSize={11}
-            fontWeight={700}
-            fontFamily="var(--mono)"
-            fill="#0a0a10"
-          >
-            {year} {endPct >= 0 ? '+' : ''}{endPct.toFixed(1)}%
-          </text>
-        </g>
+      {/* 每条线末端只画一个小色点（去掉之前的标签，干净。年份数字移到右侧 SeasonalityLegend） */}
+      {calc.lines.map(({ year, color, endX, endY, isCurrent }) => (
+        <circle key={`dot-${year}`}
+          cx={endX} cy={endY} r={isCurrent ? 4 : 2.5}
+          fill={color} stroke="var(--bg)" strokeWidth={1}
+        />
       ))}
     </svg>
+  )
+}
+
+// 右侧数据单：每年颜色 dot + 当前 % + 区间（最低 ~ 最高）
+function SeasonalityLegend({ data }: { data: SeasonalityData | null }) {
+  if (!data || !data.years) {
+    return <div className="seasonality-legend"><div className="sl-empty">加载中…</div></div>
+  }
+  const years = Object.keys(data.years).sort().reverse()  // 当前年在最上
+  return (
+    <div className="seasonality-legend">
+      <div className="sl-head">5 年 YTD 表现</div>
+      {years.map((year) => {
+        const pts = data.years[year]
+        if (!pts || pts.length === 0) return null
+        const pcts = pts.map((p) => p[1])
+        const current = pcts[pcts.length - 1]
+        const max = Math.max(...pcts)
+        const min = Math.min(...pcts)
+        const color = SEASONALITY_COLORS[year] || 'var(--mu)'
+        const tag = YEAR_TAGS[year] || ''
+        const tagColor = current >= 50 ? 'var(--up)' : current <= -30 ? 'var(--dn)' : 'var(--mu)'
+        const valueColor = current >= 0 ? 'var(--up)' : 'var(--dn)'
+        return (
+          <div key={year} className="sl-row">
+            <div className="sl-row-h">
+              <span className="sl-dot" style={{ background: color }} />
+              <span className="sl-year">{year}</span>
+              <span className="sl-tag" style={{ color: tagColor }}>{tag}</span>
+            </div>
+            <div className="sl-val" style={{ color: valueColor }}>
+              {current >= 0 ? '+' : ''}{current.toFixed(2)}%
+            </div>
+            <div className="sl-range">
+              年内 {min.toFixed(0)}% ~ {max >= 0 ? '+' : ''}{max.toFixed(0)}%
+            </div>
+          </div>
+        )
+      })}
+    </div>
   )
 }
 
@@ -1064,7 +1097,10 @@ export default function HomePage() {
               </div>
               <span className="w-src">Binance 日线 · 每年 1/1 归零</span>
             </div>
-            <SeasonalityChart data={seasonality} />
+            <div className="seasonality-body">
+              <div className="seasonality-chart"><SeasonalityChart data={seasonality} /></div>
+              <SeasonalityLegend data={seasonality} />
+            </div>
           </div>
 
           {/* 第四层：新闻区（独立 section）*/}
