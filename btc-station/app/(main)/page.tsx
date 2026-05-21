@@ -779,7 +779,7 @@ function W_GaugeFng({ fg, large }: { fg: MacroData['fear_greed'] | undefined; la
           ) : <>Alternative.me</>}
         </div>
       </div>
-      <div className="wg-fng-desc" style={{ fontSize: '12.5px', color: 'var(--mu)', lineHeight: 1.5, marginTop: 12, padding: '0 12px', textAlign: 'center', opacity: 0.85 }}>
+      <div className="wg-fng-desc" style={{ fontSize: '12.5px', color: 'var(--mu)', lineHeight: 1.5, marginTop: 12, padding: '0 12px', textAlign: 'center', opacity: 0.85, textWrap: 'balance' }}>
         {desc}
       </div>
     </div>
