@@ -566,3 +566,14 @@
 .home-page .ts-pill { font-size: 10px; }
 
 /* 图层 / sidebar 已删，跳过 lp- 相关 */
+
+/* ─── 季节性叠加图 section ─── */
+.home-page .seasonality-section{
+  flex-shrink:0;border-top:1px solid var(--bd);background:var(--bg1);
+  padding:14px 16px 18px;
+}
+.home-page .seasonality-h{
+  display:flex;align-items:center;justify-content:space-between;
+  margin-bottom:10px;
+}
+.home-page .seasonality-t{display:flex;align-items:center;gap:7px}

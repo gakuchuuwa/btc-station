@@ -354,3 +354,61 @@ def get_macro():
     data = _fetch_macro_data()
     _set_cached("macro", data)
     return data
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 端点 4: GET /api/dashboard/seasonality
+# 多年同期价格叠加，看「今年这个时点 BTC 历史上涨/跌」
+# ══════════════════════════════════════════════════════════════════════════
+def _fetch_seasonality_data() -> dict:
+    """BTC 5 年季节性数据：每年从 1 月 1 日开始的累积涨跌 %（按 day-of-year 索引）"""
+    from datetime import datetime, timezone
+
+    current_year = datetime.now(timezone.utc).year
+    years = [current_year - 4, current_year - 3, current_year - 2, current_year - 1, current_year]
+
+    result: dict[str, list] = {}
+    for year in years:
+        start_dt = datetime(year, 1, 1, tzinfo=timezone.utc)
+        start_ms = int(start_dt.timestamp() * 1000)
+        end_dt = datetime(year + 1, 1, 1, tzinfo=timezone.utc)
+        end_ms = int(end_dt.timestamp() * 1000)
+
+        try:
+            j = _get_json(
+                f"https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1d"
+                f"&startTime={start_ms}&endTime={end_ms}&limit=370"
+            )
+            if not j or len(j) < 2:
+                continue
+            base_price = float(j[0][1])  # 1 月 1 日开盘价（基准）
+            if base_price <= 0:
+                continue
+
+            points = []
+            for kline in j:
+                t_ms = kline[0]
+                close = float(kline[4])
+                pct = (close - base_price) / base_price * 100
+                dt = datetime.fromtimestamp(t_ms / 1000, tz=timezone.utc)
+                day_of_year = dt.timetuple().tm_yday
+                points.append([day_of_year, round(pct, 2)])
+            result[str(year)] = points
+        except Exception:
+            continue
+
+    return {
+        "years": result,
+        "updated_at": int(time.time()),
+    }
+
+
+@router.get("/seasonality")
+def get_seasonality():
+    """季节性叠加：5 年 BTC 同期累积涨跌 %"""
+    cached = _get_cached("seasonality", ttl=3600)  # 1 小时缓存（数据每天才动）
+    if cached:
+        return cached
+    data = _fetch_seasonality_data()
+    _set_cached("seasonality", data)
+    return data

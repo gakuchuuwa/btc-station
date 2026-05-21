@@ -34,6 +34,10 @@ interface MacroData {
   pi_cycle: { sma111: number; sma350x2: number; distance_pct: number; triggered: boolean } | null
 }
 
+interface SeasonalityData {
+  years: Record<string, [number, number][]>  // { "2026": [[day_of_year, pct_change], ...], ... }
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // 图层定义（与 mockup LAYERS 对齐）
 // ════════════════════════════════════════════════════════════════════════════
@@ -523,6 +527,152 @@ const Dash = () => <div style={{ color: 'var(--mu)', fontSize: 22, padding: 6, f
 // Widget 内容
 // ════════════════════════════════════════════════════════════════════════════
 
+// ════════════════════════════════════════════════════════════════════════════
+// 季节性叠加图（5 年 BTC 同期累积涨跌对比）
+// ════════════════════════════════════════════════════════════════════════════
+
+function SeasonalityChart({ data }: { data: SeasonalityData | null }) {
+  const W = 1200
+  const H = 280
+  const PAD = { t: 16, r: 100, b: 28, l: 0 }
+  const INNER_W = W - PAD.l - PAD.r
+  const INNER_H = H - PAD.t - PAD.b
+
+  // 颜色按年份：当前年最亮粗线，往年依次淡化
+  const YEAR_COLORS: Record<string, string> = {
+    '2022': '#a78bfa',   // 紫
+    '2023': '#22d3a0',   // 绿（大牛）
+    '2024': '#f0b90b',   // 金（大牛）
+    '2025': '#00d4ff',   // 青
+    '2026': '#f7931a',   // BTC 橙（当前年）
+  }
+
+  const calc = useMemo(() => {
+    if (!data || !data.years || Object.keys(data.years).length === 0) return null
+    const years = Object.keys(data.years).sort()  // 升序
+    const currentYear = years[years.length - 1]
+
+    // 计算 Y 轴范围
+    let yMin = 0, yMax = 0
+    for (const y of years) {
+      for (const [, pct] of data.years[y]) {
+        if (pct < yMin) yMin = pct
+        if (pct > yMax) yMax = pct
+      }
+    }
+    // 留 10% 缓冲
+    const padY = (yMax - yMin) * 0.08
+    yMin -= padY
+    yMax += padY
+    const yRange = yMax - yMin || 1
+
+    // 把 day 映射到 x
+    const dayToX = (d: number) => PAD.l + ((d - 1) / 365) * INNER_W
+    const pctToY = (p: number) => PAD.t + (1 - (p - yMin) / yRange) * INNER_H
+
+    const lines = years.map((year) => {
+      const pts = data.years[year]
+      const isCurrent = year === currentYear
+      const color = YEAR_COLORS[year] || 'var(--mu)'
+      const path = 'M ' + pts.map(([d, p]) => `${dayToX(d).toFixed(1)},${pctToY(p).toFixed(1)}`).join(' L ')
+      const lastPt = pts[pts.length - 1]
+      const endX = dayToX(lastPt[0])
+      const endY = pctToY(lastPt[1])
+      const endPct = lastPt[1]
+      return { year, color, path, isCurrent, endX, endY, endPct }
+    })
+
+    // 月份刻度（1-12 月）
+    const monthTicks = Array.from({ length: 12 }, (_, i) => {
+      const monthStart = new Date(Date.UTC(2024, i, 1))  // 2024 闰年保证完整
+      const day = Math.floor((monthStart.getTime() - new Date(Date.UTC(2024, 0, 1)).getTime()) / (86400 * 1000)) + 1
+      return { month: i + 1, x: dayToX(day) }
+    })
+
+    // Y 网格线（0%, 25%, 50%, 100% 等）
+    const yTicks: { pct: number; y: number }[] = []
+    const gridSteps = [-50, -25, 0, 25, 50, 100, 150]
+    for (const p of gridSteps) {
+      if (p >= yMin && p <= yMax) yTicks.push({ pct: p, y: pctToY(p) })
+    }
+    // 确保 0% 一定有
+    if (!yTicks.find(t => t.pct === 0) && 0 >= yMin && 0 <= yMax) {
+      yTicks.push({ pct: 0, y: pctToY(0) })
+    }
+
+    return { lines, monthTicks, yTicks, yMin, yMax }
+  }, [data])
+
+  if (!calc) {
+    return <div style={{ height: H, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--mu)', fontSize: 13 }}>季节性数据加载中…</div>
+  }
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" style={{ width: '100%', height: H, display: 'block' }}>
+      {/* Y 网格线 + 标签 */}
+      {calc.yTicks.map(({ pct, y }) => (
+        <g key={pct}>
+          <line x1={0} x2={W - PAD.r} y1={y} y2={y}
+            stroke={pct === 0 ? 'rgba(255,255,255,0.18)' : 'rgba(255,255,255,0.04)'}
+            strokeWidth={pct === 0 ? 1 : 1}
+            strokeDasharray={pct === 0 ? '0' : '2 4'}
+          />
+          <text x={W - PAD.r + 6} y={y + 4} fontSize="10" fontFamily="var(--mono)" fill="var(--mu)">
+            {pct >= 0 ? '+' : ''}{pct}%
+          </text>
+        </g>
+      ))}
+
+      {/* 月份刻度 */}
+      {calc.monthTicks.map(({ month, x }) => (
+        <g key={month}>
+          <line x1={x} x2={x} y1={PAD.t} y2={H - PAD.b} stroke="rgba(255,255,255,0.025)" strokeWidth="1" />
+          <text x={x} y={H - PAD.b + 14} fontSize="10" fontFamily="var(--mono)" fill="var(--mu)" textAnchor="start">
+            {month}月
+          </text>
+        </g>
+      ))}
+
+      {/* 折线 */}
+      {calc.lines.map(({ year, color, path, isCurrent }) => (
+        <path
+          key={year}
+          d={path}
+          fill="none"
+          stroke={color}
+          strokeWidth={isCurrent ? 2.2 : 1.2}
+          strokeOpacity={isCurrent ? 1 : 0.7}
+        />
+      ))}
+
+      {/* 每条线末端的年份标签 */}
+      {calc.lines.map(({ year, color, endX, endY, endPct, isCurrent }) => (
+        <g key={`label-${year}`}>
+          <rect
+            x={endX + 4}
+            y={endY - 9}
+            width={62}
+            height={18}
+            rx={3}
+            fill={color}
+            fillOpacity={isCurrent ? 0.92 : 0.7}
+          />
+          <text
+            x={endX + 4 + 6}
+            y={endY + 4}
+            fontSize={11}
+            fontWeight={700}
+            fontFamily="var(--mono)"
+            fill="#0a0a10"
+          >
+            {year} {endPct >= 0 ? '+' : ''}{endPct.toFixed(1)}%
+          </text>
+        </g>
+      ))}
+    </svg>
+  )
+}
+
 function W_NewsFeed({ news }: { news: NewsItem[] }) {
   if (!news.length) return <Dash />
   return (
@@ -827,6 +977,7 @@ export default function HomePage() {
   const [market, setMarket] = useState<MarketData | null>(null)
   const [onchain, setOnchain] = useState<OnchainData | null>(null)
   const [macro, setMacro] = useState<MacroData | null>(null)
+  const [seasonality, setSeasonality] = useState<SeasonalityData | null>(null)
 
   // 数据拉取
   const fetchSummary = useCallback(async () => { try { const r = await fetch('/api/btc/summary'); if (r.ok) setSummary(await r.json()) } catch {} }, [])
@@ -834,16 +985,18 @@ export default function HomePage() {
   const fetchMarket = useCallback(async () => { try { const r = await fetch('/py-api/api/dashboard/market'); if (r.ok) setMarket(await r.json()) } catch {} }, [])
   const fetchOnchain = useCallback(async () => { try { const r = await fetch('/py-api/api/dashboard/onchain'); if (r.ok) setOnchain(await r.json()) } catch {} }, [])
   const fetchMacro = useCallback(async () => { try { const r = await fetch('/py-api/api/dashboard/macro'); if (r.ok) setMacro(await r.json()) } catch {} }, [])
+  const fetchSeasonality = useCallback(async () => { try { const r = await fetch('/py-api/api/dashboard/seasonality'); if (r.ok) setSeasonality(await r.json()) } catch {} }, [])
 
   useEffect(() => {
-    fetchSummary(); fetchNews(); fetchMarket(); fetchOnchain(); fetchMacro()
+    fetchSummary(); fetchNews(); fetchMarket(); fetchOnchain(); fetchMacro(); fetchSeasonality()
     const t1 = setInterval(fetchSummary, 30_000)
     const t2 = setInterval(fetchMarket, 30_000)
     const t3 = setInterval(fetchOnchain, 300_000)
     const t4 = setInterval(fetchMacro, 300_000)  // 5 分钟（原 1 小时太长）
     const t5 = setInterval(fetchNews, 300_000)
-    return () => { [t1, t2, t3, t4, t5].forEach(clearInterval) }
-  }, [fetchSummary, fetchMarket, fetchOnchain, fetchMacro, fetchNews])
+    const t6 = setInterval(fetchSeasonality, 3600_000)  // 季节性数据每天才动，1 小时一次足够
+    return () => { [t1, t2, t3, t4, t5, t6].forEach(clearInterval) }
+  }, [fetchSummary, fetchMarket, fetchOnchain, fetchMacro, fetchNews, fetchSeasonality])
 
   const isUp = (summary?.change24h ?? 0) >= 0
 
@@ -902,7 +1055,19 @@ export default function HomePage() {
             <div className="grid">{WIDGETS.map(renderWidget)}</div>
           </div>
 
-          {/* 第三层：新闻区（独立 section，放在数据之后）*/}
+          {/* 第三层：季节性叠加图（5 年同期对比）*/}
+          <div className="seasonality-section">
+            <div className="seasonality-h">
+              <div className="seasonality-t">
+                <span className="w-d c" />
+                <span className="w-name">BTC 季节性 · 5 年同期叠加</span>
+              </div>
+              <span className="w-src">Binance 日线 · 每年 1/1 归零</span>
+            </div>
+            <SeasonalityChart data={seasonality} />
+          </div>
+
+          {/* 第四层：新闻区（独立 section）*/}
           <div className="grid-wrap">
             <div className="grid">
               {renderWidget(NEWS_WIDGET)}
