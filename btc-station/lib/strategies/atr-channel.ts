@@ -8,6 +8,14 @@ export const atrChannelStrategy: Strategy = {
   description: '基于 ATR 动态构建价格通道，突破上轨买入，触及止损线卖出。带专业级风险控制。',
   category: 'breakout',
   difficulty: 3,
+  backtestStats: {
+    returnPct: 1874,
+    ddPct: 37,
+    calmar: 50.1,
+    trades: 209,
+    rating: 'good',
+    honestNote: '5 年 BTC 4h 实测最强:收益接近 Buy & Hold,回撤却只有 -37%(BH 是 -77%)。Calmar 比所有内置策略都高。',
+  },
   paramSchema: {
     atr_period: { type: 'int', default: 14, min: 7, max: 30, label: 'ATR 周期' },
     channel_mult: { type: 'float', default: 2.0, min: 1.0, max: 5.0, step: 0.1, label: '通道倍数' },

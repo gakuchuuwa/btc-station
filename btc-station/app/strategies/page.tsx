@@ -44,6 +44,15 @@ export default function StrategiesPage() {
         ))}
       </div>
 
+      {/* 基准说明 - 让用户知道实测数据怎么读 */}
+      <div className="mb-4 px-4 py-2.5 rounded-md bg-[var(--bg-card)] border border-[var(--border)] text-xs text-[var(--text-mute)] leading-relaxed">
+        <span className="font-semibold text-[var(--text)]">📊 实测基准</span>
+        <span className="mx-2">·</span>
+        Buy &amp; Hold 同期: <span className="font-mono text-[var(--up)]">+2100%</span> 收益 / <span className="font-mono text-red-400">-77%</span> 回撤 / Calmar <span className="font-mono">27.3</span>
+        <span className="mx-2">·</span>
+        策略要值得用,Calmar 必须明显高于这个数字
+      </div>
+
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {strategies.map((s) => (
           <Link href={`/strategies/${s.id}`} key={s.id} className="block group">
@@ -61,9 +70,45 @@ export default function StrategiesPage() {
                   {categories[s.category]}
                 </span>
               </div>
-              <p className="text-[var(--text-mute)] text-sm leading-relaxed mb-6 flex-grow line-clamp-3">
+              <p className="text-[var(--text-mute)] text-sm leading-relaxed mb-4 line-clamp-3">
                 {s.description}
               </p>
+
+              {/* 实测数据 + 评级标签 - 不骗人,数据来自统一脚本 5 年 BTC 4h 实测 */}
+              {s.backtestStats && (() => {
+                const stats = s.backtestStats;
+                const ratingBadge =
+                  stats.rating === 'good'  ? { txt: '✅ 实战可用', cls: 'bg-[var(--up-soft)] text-[var(--up)] border-[var(--up)]' } :
+                  stats.rating === 'demo'  ? { txt: '⚠️ 仅作演示', cls: 'bg-yellow-500/10 text-yellow-400 border-yellow-500/40' } :
+                                             { txt: '❌ 不推荐',   cls: 'bg-red-500/10 text-red-400 border-red-500/40' };
+                return (
+                  <div className="mb-4 flex-grow flex flex-col gap-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className={`text-[10px] font-semibold px-2 py-0.5 rounded border ${ratingBadge.cls}`}>{ratingBadge.txt}</span>
+                      <span className="text-[10px] text-[var(--text-mute)]">5 年 BTC 4h 实测</span>
+                    </div>
+                    <div className="grid grid-cols-3 gap-2 text-center bg-[var(--bg)] rounded-md p-2 border border-[var(--border)]">
+                      <div>
+                        <div className={`text-sm font-bold font-mono ${stats.returnPct >= 0 ? 'text-[var(--up)]' : 'text-red-400'}`}>
+                          {stats.returnPct >= 0 ? '+' : ''}{stats.returnPct >= 1000 ? (stats.returnPct/100).toFixed(0)+'×' : stats.returnPct.toFixed(0)+'%'}
+                        </div>
+                        <div className="text-[9px] text-[var(--text-mute)] mt-0.5">总收益</div>
+                      </div>
+                      <div>
+                        <div className="text-sm font-bold font-mono text-red-400">-{stats.ddPct.toFixed(0)}%</div>
+                        <div className="text-[9px] text-[var(--text-mute)] mt-0.5">最大回撤</div>
+                      </div>
+                      <div>
+                        <div className="text-sm font-bold font-mono text-[var(--text)]">{stats.calmar.toFixed(1)}</div>
+                        <div className="text-[9px] text-[var(--text-mute)] mt-0.5">Calmar</div>
+                      </div>
+                    </div>
+                    <p className="text-[10px] text-[var(--text-mute)] leading-relaxed italic">{stats.honestNote}</p>
+                  </div>
+                );
+              })()}
+              {!s.backtestStats && <div className="flex-grow" />}
+
               <div className="text-[var(--primary)] text-sm font-medium flex items-center group-hover:translate-x-1 transition-transform">
                 查看详情 <span className="ml-1">→</span>
               </div>
