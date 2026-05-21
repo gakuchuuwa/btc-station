@@ -804,7 +804,13 @@ export default function StrategyPage() {
               <span style={{ color:'#787b86' }}>{summary.total_trades ?? 0} 笔</span>
               <button 
                 onClick={() => {
-                  const mcTrades = trades.map((t, i) => ({ id: i + 1, profitUSDT: t.pnl_abs }))
+                  // 必须同时传 profitUSDT 和 profitPct:蒙特卡洛默认是"复利比例模式",
+                  // 只看 profitPct;漏传会让所有交易 pct=0 → 权益曲线变水平直线 → 结果全 0
+                  const mcTrades = trades.map((t, i) => ({
+                    id: i + 1,
+                    profitUSDT: t.pnl_abs,
+                    profitPct: t.pnl_pct,
+                  }))
                   sessionStorage.setItem('mc_trades_cache', JSON.stringify(mcTrades))
                   window.open('/monte-carlo', '_blank')
                 }}

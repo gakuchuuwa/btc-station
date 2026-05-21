@@ -51,6 +51,8 @@ export default function MonteCarloPage() {
   const [simulationMode, setSimulationMode] = useState<'absolute' | 'compounding'>('compounding')
   const [simulations, setSimulations] = useState<MCSimulation[]>([])
   const [stats, setStats] = useState<MCStats | null>(null)
+  // 缺 profitPct 时是否做了"按初始本金等比折算"兜底,用于在 UI 上诚实告知用户
+  const [pctFallbackUsed, setPctFallbackUsed] = useState(false)
   
   const [isComputing, setIsComputing] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -77,8 +79,23 @@ export default function MonteCarloPage() {
   }, [fileData, initialCapital, simulationMode])
 
   const loadTrades = (trades: Trade[], name: string) => {
+    // 防御兜底:如果整批 trades 的 profitPct 全是 0/缺失但 profitUSDT 有数据,
+    // 自动按"初始本金等比折算"补出 profitPct,避免默认复利模式得到全 0 结果。
+    // 这是粗糙近似(不考虑权益变化),只是保命用,所以 UI 上要诚实告知。
+    const hasAnyPct = trades.some(t => Number.isFinite(t.profitPct) && t.profitPct !== 0)
+    const hasAnyUsdt = trades.some(t => Number.isFinite(t.profitUSDT) && t.profitUSDT !== 0)
+    let finalTrades = trades
+    let fallback = false
+    if (!hasAnyPct && hasAnyUsdt) {
+      finalTrades = trades.map(t => ({
+        ...t,
+        profitPct: ((t.profitUSDT || 0) / initialCapital) * 100,
+      }))
+      fallback = true
+    }
+    setPctFallbackUsed(fallback)
     setFileName(name)
-    setFileData(trades)
+    setFileData(finalTrades)
     setSimulations([])
     setStats(null)
   }
@@ -523,6 +540,11 @@ export default function MonteCarloPage() {
             {fileData.length > 0 && (
               <div style={{ fontSize: 12, color: 'var(--text-mute)', background: 'rgba(255,255,255,0.03)', padding: '8px 12px', borderRadius: 4 }}>
                 成功解析 <strong>{fileData.length}</strong> 笔历史交易
+              </div>
+            )}
+            {pctFallbackUsed && (
+              <div style={{ fontSize: 11, color: '#f0b90b', background: 'rgba(240,185,11,0.08)', border: '1px solid rgba(240,185,11,0.3)', padding: '8px 12px', borderRadius: 4, lineHeight: 1.6 }}>
+                ⚠ 数据源缺少"收益率%"列,已按初始本金({initialCapital} USDT)等比折算为复利输入。结果仅供参考,精确分析请改用"绝对累加模式"(下方下拉)。
               </div>
             )}
           </div>
