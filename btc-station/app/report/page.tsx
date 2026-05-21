@@ -7,6 +7,7 @@ import {
   type RawRow, type Filters, type ScoreWeights,
 } from '@/lib/robustness'
 import Surface3DPlot from '@/components/Surface3DPlot'
+import ErrorBoundary from '@/components/ErrorBoundary'
 
 function fmt(n: number | null | undefined, d = 2) { return n == null || isNaN(n) ? '—' : n.toFixed(d) }
 
@@ -393,11 +394,18 @@ export default function ReportPage() {
   }, [])
 
   // Save session state
+  // 包 try/catch 是因为：① 大文件 stringify 可能 > 5MB 触发 QuotaExceededError；
+  // ② 隐私模式 / Safari ITP 下 sessionStorage 可能完全禁用。
+  // 失败时静默降级（不存）即可，绝不能让异常冒到 React 渲染层导致整页白屏。
   useEffect(() => {
-    if (rawData.length > 0) {
+    if (rawData.length === 0) return
+    try {
       sessionStorage.setItem('report_page_state', JSON.stringify({
         rawData, source, stratName, filters, weights, robustnessWeight, robustness, showFilters, activeTab, top10Sort
       }))
+    } catch (e) {
+      // 只在控制台留痕迹，不打扰用户
+      console.warn('[report] sessionStorage 持久化失败（可能因数据过大或浏览器限制）:', e instanceof Error ? e.message : e)
     }
   }, [rawData, source, stratName, filters, weights, robustnessWeight, robustness, showFilters, activeTab, top10Sort])
 
@@ -493,10 +501,33 @@ export default function ReportPage() {
   const handleCSV = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
+    // 重置 input,允许用户重新选择同一文件
+    e.target.value = ''
     const reader = new FileReader()
     reader.onload = (ev) => {
-      const parsed = parseCSV(ev.target?.result as string)
-      if (parsed.length > 0) { setRawData(parsed); setSource('csv'); setStratName(file.name.replace('.csv', '')) }
+      try {
+        const text = (ev.target?.result as string) || ''
+        const parsed = parseCSV(text)
+        if (parsed.length === 0) {
+          alert('CSV 解析失败:文件为空或格式无法识别。\n请确认文件是 TradingView 导出的 CSV(头一行是列名,例如 "Total P&L,Total P&L %,...")。')
+          return
+        }
+        // 切换数据集时,清掉与上一份数据耦合的状态,避免旧的 plotX/plotY 等指向无效字段
+        setRobustness({})
+        setRobProg(0)
+        setPlotX('')
+        setPlotY('')
+        setTop10Sort({ key: null, dir: 'desc' })
+        setRawData(parsed)
+        setSource('csv')
+        setStratName(file.name.replace(/\.csv$/i, ''))
+      } catch (err) {
+        console.error('[report] CSV 处理失败:', err)
+        alert('CSV 处理失败:' + (err instanceof Error ? err.message : String(err)) + '\n\n请将文件发给开发者排查(或查看浏览器控制台 F12)。')
+      }
+    }
+    reader.onerror = () => {
+      alert('文件读取失败,请检查文件是否损坏或权限被拒绝。')
     }
     reader.readAsText(file)
   }
@@ -543,23 +574,33 @@ export default function ReportPage() {
   // 智能寻找在回测中真正被变动的参数（即拥有超过1个唯一值的参数）
   const varyingParams = useMemo(() => {
     if (deduplicated.length < 2) return paramKeys
-    const uniqueCount: Record<string, Set<any>> = {}
+    const uniqueCount: Record<string, Set<unknown>> = {}
     paramKeys.forEach(k => uniqueCount[k] = new Set())
-    
+
     for (const row of deduplicated) {
       const p = userParams(row.strategyParams || {})
       for (const k of paramKeys) {
         uniqueCount[k].add(p[k])
       }
     }
-    
-    // 按唯一值的数量降序排序
-    return paramKeys.sort((a, b) => uniqueCount[b].size - uniqueCount[a].size)
+
+    // 按唯一值数量降序。先 slice() 拷贝再 sort,避免 mutate 上游 useMemo 缓存的 paramKeys。
+    return paramKeys.slice().sort((a, b) => uniqueCount[b].size - uniqueCount[a].size)
   }, [deduplicated, paramKeys])
 
-  const px = plotX || varyingParams[0] || paramKeys[0] || ''
-  const py = plotY || (varyingParams.length > 1 ? varyingParams[1] : varyingParams[0]) || paramKeys[1] || ''
+  // px/py 取值优先使用用户的选择,但要校验是否仍存在于当前 paramKeys 中
+  // (用户切换数据集后,旧的 plotX/plotY 可能指向不存在的字段,会让 <select> 渲染异常)
+  const pxValid = plotX && paramKeys.includes(plotX) ? plotX : ''
+  const pyValid = plotY && paramKeys.includes(plotY) ? plotY : ''
+  const px = pxValid || varyingParams[0] || paramKeys[0] || ''
+  const py = pyValid || (varyingParams.length > 1 ? varyingParams[1] : varyingParams[0]) || paramKeys[1] || ''
   const pz = plotZ || 'combinedScore'
+
+  // 数据集换了之后,如果旧的 plotX/plotY 不再有效,清掉它们(回到自动推荐)
+  useEffect(() => {
+    if (plotX && !paramKeys.includes(plotX)) setPlotX('')
+    if (plotY && !paramKeys.includes(plotY)) setPlotY('')
+  }, [paramKeys, plotX, plotY])
   
   const surfaceData = useMemo(() => {
     if (!px || !py || scored.length === 0) return []
@@ -932,13 +973,15 @@ export default function ReportPage() {
                         <span style={{ fontSize: 10, color: '#787b86', fontFamily: "'JetBrains Mono',monospace" }}>横轴: 回撤% · 纵轴: 收益% · 左上角为理想区域</span>
                       </div>
                       <div style={{ flex: 1, minHeight: 560 }}>
-                        <ScatterPlot
-                          data={scored.map(r => {
-                            const rk = ranked.find(rr => rr.originalIndex === r.originalIndex)
-                            return { returnPct: r.returnPct, ddPct: r.ddPct, passed: r.passed, originalIndex: r.originalIndex, combinedScore: rk?.combinedScore }
-                          })}
-                          ranked={ranked}
-                        />
+                        <ErrorBoundary name="ScatterPlot">
+                          <ScatterPlot
+                            data={scored.map(r => {
+                              const rk = ranked.find(rr => rr.originalIndex === r.originalIndex)
+                              return { returnPct: r.returnPct, ddPct: r.ddPct, passed: r.passed, originalIndex: r.originalIndex, combinedScore: rk?.combinedScore }
+                            })}
+                            ranked={ranked}
+                          />
+                        </ErrorBoundary>
                       </div>
                     </div>
 
@@ -982,13 +1025,30 @@ export default function ReportPage() {
                       </div>
                       
                       <div style={{ height: 480, border: '1px solid #363a45', borderRadius: 6, background: '#1e222d', overflow: 'hidden' }}>
-                        {surfaceData.length > 2 ? (
-                          <Surface3DPlot data={surfaceData} labels={{ x: px, y: py, z: pz === 'combinedScore' ? '综合分' : pz === 'returnPct' ? '收益%' : pz === 'ddPct' ? '回撤%' : pz }} />
-                        ) : (
-                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#787b86', fontSize: 12 }}>
-                            当前 X-Y 平面只有 {surfaceData.length} 个数据点，无法生成 3D 地形（至少需要 3 个）。请换一组 X/Y 轴参数试试。
-                          </div>
-                        )}
+                        {(() => {
+                          // Plotly mesh3d 的 Delaunay 三角剖分要求 ≥4 个点,且 X 和 Y 都不能全相同(否则共线坍缩)
+                          if (surfaceData.length < 4) {
+                            return (
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#787b86', fontSize: 12, padding: '0 20px', textAlign: 'center' }}>
+                                当前 X-Y 平面只有 {surfaceData.length} 个数据点，无法生成 3D 地形（至少需要 4 个）。请换一组 X/Y 轴参数试试。
+                              </div>
+                            )
+                          }
+                          const uniqueX = new Set(surfaceData.map(d => d.x)).size
+                          const uniqueY = new Set(surfaceData.map(d => d.y)).size
+                          if (uniqueX < 2 || uniqueY < 2) {
+                            return (
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#787b86', fontSize: 12, padding: '0 20px', textAlign: 'center' }}>
+                                当前 X 轴或 Y 轴所有数据点取值相同（X: {uniqueX} 个不同值 · Y: {uniqueY} 个不同值），无法构成 3D 平面。请换一组 X/Y 轴参数。
+                              </div>
+                            )
+                          }
+                          return (
+                            <ErrorBoundary name="Surface3DPlot">
+                              <Surface3DPlot data={surfaceData} labels={{ x: px, y: py, z: pz === 'combinedScore' ? '综合分' : pz === 'returnPct' ? '收益%' : pz === 'ddPct' ? '回撤%' : pz }} />
+                            </ErrorBoundary>
+                          )
+                        })()}
                       </div>
                     </div>
                   </div>
