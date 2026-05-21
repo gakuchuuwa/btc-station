@@ -544,3 +544,6 @@ footer{
 .tmpl-item{padding:5px 9px;border-radius:4px;font-size:11px;color:var(--text-mute);cursor:pointer;transition:.12s;font-family:var(--mono)}
 .tmpl-item:hover{background:var(--card-hi);color:var(--text)}
 .tmpl-item.on{background:rgba(0,212,255,.08);color:var(--accent);border-left:2px solid var(--accent);padding-left:7px}
+
+
+

@@ -5,8 +5,8 @@ ATR 通道动态止损策略 — VectorBT 格式
 调参建议：atr_period 7~28，ema_period 20~100，channel_mult 1.0~3.0
 """
 import vectorbt as vbt
-import pandas_ta as ta
 import pandas as pd
+import numpy as np
 
 
 def execute(df, parameters):
@@ -14,16 +14,25 @@ def execute(df, parameters):
     ema_period   = int(parameters.get("ema_period", 50))
     channel_mult = float(parameters.get("channel_mult", 1.5))
 
-    atr     = ta.atr(df["high"], df["low"], df["close"], length=atr_period)
-    ema     = df["close"].ewm(span=ema_period, adjust=False).mean()
+    # Manual ATR calculation (replaces pandas_ta.atr)
+    high, low, close = df["high"], df["low"], df["close"]
+    tr = pd.concat([
+        high - low,
+        (high - close.shift(1)).abs(),
+        (low - close.shift(1)).abs(),
+    ], axis=1).max(axis=1)
+    atr = tr.rolling(window=atr_period).mean()
+
+    ema     = close.ewm(span=ema_period, adjust=False).mean()
     upper   = ema + channel_mult * atr
 
-    entries = df["close"] > upper.shift(1)
-    exits   = df["close"] < ema.shift(1)
+    entries = close > upper.shift(1)
+    exits   = close < ema.shift(1)
 
     pf = vbt.Portfolio.from_signals(
-        df["close"], entries, exits,
+        close, entries, exits,
         init_cash=10000, fees=0.0005,
     )
 
     return pf, {"EMA中线": ema, "ATR上轨": upper}
+
