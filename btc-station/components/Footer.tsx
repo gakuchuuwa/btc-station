@@ -33,8 +33,24 @@ export default function Footer() {
           <div className="foot-col">
             <div className="section-label">法律</div>
             <ul>
+              <li><Link href="/about">关于</Link></li>
               <li><Link href="/terms">服务条款</Link></li>
               <li><Link href="/privacy">隐私政策</Link></li>
+            </ul>
+          </div>
+          <div className="foot-col">
+            <div className="section-label" style={{ color: 'var(--accent)' }}>专属福利</div>
+            <ul>
+              <li>
+                <a href="https://www.okx.com/join/1887308" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--up)', fontWeight: 600 }}>
+                  OKX 减免 20% 手续费
+                </a>
+              </li>
+              <li>
+                <a href="https://www.binance.com/en/join?ref=YOUR_BINANCE_CODE_HERE" target="_blank" rel="noopener noreferrer">
+                  Binance 专属通道
+                </a>
+              </li>
             </ul>
           </div>
         </div>

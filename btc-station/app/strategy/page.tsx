@@ -771,6 +771,11 @@ export default function StrategyPage() {
               <svg width="9" height="9" viewBox="0 0 10 10" fill="currentColor"><polygon points="2,1 9,5 2,9"/></svg>
               {running ? '运行中…' : '运行回测'}
             </button>
+            
+            {/* 专属福利提示 */}
+            <div style={{ marginTop: 8, fontSize: 11, color: '#787b86', textAlign: 'center', lineHeight: 1.4 }}>
+              💡 算力免费，推荐使用 <a href="https://www.okx.com/join/1887308" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--up)', textDecoration: 'underline' }}>OKX专属通道</a> 交易以支持开发者，享 20% 手续费减免。
+            </div>
           </div>
         </div>
       </div>

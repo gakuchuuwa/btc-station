@@ -460,9 +460,7 @@ function MainCompass({ summary, market, macro, isUp }: { summary: BtcSummary | n
             </div>
           </div>
         </div>
-        <div className="compass-side-sub" style={{ marginTop: 'auto', paddingTop: 12 }}>
-          数据源 · OKX 公共 API · 每 30s 刷新
-        </div>
+
       </div>
     </div>
   )

@@ -114,6 +114,18 @@ export default function Header() {
         </div>
 
         <div className="header-right">
+          {/* 专属福利按钮 */}
+          <a 
+            href="https://www.okx.com/join/1887308" 
+            target="_blank" 
+            rel="noopener noreferrer"
+            className="btn btn-ghost" 
+            style={{ color: 'var(--up)', fontSize: '13px', marginRight: '4px', padding: '0 8px', fontWeight: 600, border: '1px solid rgba(38, 166, 154, 0.2)' }}
+            title="注册 OKX 享 20% 手续费返现"
+          >
+            🎁 免20%手续费
+          </a>
+
           {/* 实时价格 */}
           <div className="nav-price">
             <span className="np-sym">BTC/USDT</span>
