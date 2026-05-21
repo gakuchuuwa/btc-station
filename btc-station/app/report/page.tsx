@@ -6,6 +6,7 @@ import {
   DEFAULT_FILTERS, DEFAULT_WEIGHTS,
   type RawRow, type Filters, type ScoreWeights,
 } from '@/lib/robustness'
+import Surface3DPlot from '@/components/Surface3DPlot'
 
 function fmt(n: number | null | undefined, d = 2) { return n == null || isNaN(n) ? '—' : n.toFixed(d) }
 
@@ -275,13 +276,13 @@ function ScatterPlot({ data, ranked }: { data: ScatterPoint[]; ranked: { origina
     })
     ro.observe(container)
     const w = container.offsetWidth || 600
-    const h = container.offsetHeight || 360
+    const h = container.offsetHeight || 560
     draw(canvas, w, h)
     return () => ro.disconnect()
   }, [draw])
 
   return (
-    <div ref={containerRef} style={{ width: '100%', height: '100%', minHeight: 360, position: 'relative' }}>
+    <div ref={containerRef} style={{ width: '100%', height: '100%', minHeight: 560, position: 'relative' }}>
       <canvas
         ref={canvasRef}
         style={{ display: 'block', borderRadius: 6, cursor: hover ? 'pointer' : 'default' }}
@@ -342,7 +343,10 @@ export default function ReportPage() {
   const [source, setSource] = useState<'none' | 'localStorage' | 'csv'>('none')
   const [stratName, setStratName] = useState('')
   const [showFilters, setShowFilters] = useState(true)  // 默认展开,用户能直接看到/调过滤+权重
-  const [activeTab, setActiveTab] = useState<'top10' | 'scatter' | 'all'>('top10')
+  const [activeTab, setActiveTab] = useState<'top10' | 'scatter' | 'all' | 'surface'>('top10')
+  const [plotX, setPlotX] = useState<string>('')
+  const [plotY, setPlotY] = useState<string>('')
+  const [plotZ, setPlotZ] = useState<string>('combinedScore')
   // Top10 排序状态:null = 按默认 combinedScore 降序,其他 = 用户点击切换
   const [top10Sort, setTop10Sort] = useState<{ key: string | null; dir: 'asc' | 'desc' }>({ key: null, dir: 'desc' })
   const abortRef = useRef<(() => void) | null>(null)
@@ -455,12 +459,36 @@ export default function ReportPage() {
       return { key, dir: key === 'originalIndex' ? 'asc' : 'desc' }
     })
   }
-  const stats = {
-    total: rawData.length,
-    passed: passedRows.length,
-    pareto: paretoSet.size,
-    maxReturn: passedRows.length > 0 ? Math.max(...passedRows.map(r => r.returnPct)) : 0,
-  }
+  const stats = useMemo(() => {
+    const passed = passedRows.length
+    let maxReturn = 0, avgReturn = 0, medianReturn = 0, avgDrawdown = 0, avgTrades = 0
+    let top20AvgReturn = 0
+    
+    if (passed > 0) {
+      const returns = passedRows.map(r => r.returnPct).sort((a, b) => a - b)
+      maxReturn = returns[returns.length - 1]
+      avgReturn = returns.reduce((a, b) => a + b, 0) / passed
+      medianReturn = returns[Math.floor(passed / 2)]
+      avgDrawdown = passedRows.reduce((a, r) => a + r.ddPct, 0) / passed
+      avgTrades = passedRows.reduce((a, r) => a + r.trades, 0) / passed
+    }
+    
+    if (top10 && top10.length > 0) {
+      top20AvgReturn = top10.reduce((a, r) => a + r.returnPct, 0) / top10.length
+    }
+
+    return {
+      total: rawData.length,
+      passed,
+      pareto: paretoSet.size,
+      maxReturn,
+      avgReturn,
+      medianReturn,
+      avgDrawdown,
+      avgTrades,
+      top20AvgReturn
+    }
+  }, [rawData.length, passedRows, paretoSet.size, top10])
 
   const handleCSV = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -494,22 +522,94 @@ export default function ReportPage() {
   }, [ranked])
 
   const tabBtnStyle = (active: boolean): React.CSSProperties => ({
-    padding: '4px 12px', fontSize: 11, color: active ? '#00d4ff' : '#787b86',
-    cursor: 'pointer', fontFamily: "'JetBrains Mono',monospace", background: 'none',
-    border: 'none', borderBottom: active ? '2px solid #00d4ff' : '2px solid transparent',
-    transition: '.15s', whiteSpace: 'nowrap' as const,
+    padding: '10px 24px', 
+    fontSize: 15, 
+    fontWeight: active ? 700 : 500, 
+    color: '#d1d4dc', // 统一使用明亮的文字颜色，不再变灰
+    cursor: 'pointer', 
+    fontFamily: "'JetBrains Mono',monospace", 
+    background: active ? 'rgba(38,166,154,0.1)' : 'transparent',
+    border: 'none', 
+    borderBottom: active ? '3px solid #26a69a' : '3px solid transparent',
+    borderTopLeftRadius: 6,
+    borderTopRightRadius: 6,
+    transition: 'all 0.2s', 
+    whiteSpace: 'nowrap' as const,
   })
 
+  // --- 3D Surface Data Preparation ---
+  const paramKeys = useMemo(() => Object.keys(userParams(deduplicated[0]?.strategyParams || {})), [deduplicated])
+  
+  // 智能寻找在回测中真正被变动的参数（即拥有超过1个唯一值的参数）
+  const varyingParams = useMemo(() => {
+    if (deduplicated.length < 2) return paramKeys
+    const uniqueCount: Record<string, Set<any>> = {}
+    paramKeys.forEach(k => uniqueCount[k] = new Set())
+    
+    for (const row of deduplicated) {
+      const p = userParams(row.strategyParams || {})
+      for (const k of paramKeys) {
+        uniqueCount[k].add(p[k])
+      }
+    }
+    
+    // 按唯一值的数量降序排序
+    return paramKeys.sort((a, b) => uniqueCount[b].size - uniqueCount[a].size)
+  }, [deduplicated, paramKeys])
+
+  const px = plotX || varyingParams[0] || paramKeys[0] || ''
+  const py = plotY || (varyingParams.length > 1 ? varyingParams[1] : varyingParams[0]) || paramKeys[1] || ''
+  const pz = plotZ || 'combinedScore'
+  
+  const surfaceData = useMemo(() => {
+    if (!px || !py || ranked.length === 0) return []
+    // 找到全局最优的参数(作为切片锚点)
+    const bestParams = userParams(ranked[0].strategyParams || {})
+    
+    // 从所有结果中(用 scored 以包含未通过过滤的点，或者只用 ranked，但地形图最好能看到全貌，所以用 scored)
+    return scored
+      .filter(row => {
+        const p = userParams(row.strategyParams || {})
+        // 除了 px 和 py 外，其他参数必须等于 bestParams 的值
+        for (const k of paramKeys) {
+          if (k !== px && k !== py && p[k] !== bestParams[k]) return false
+        }
+        return true
+      })
+      .map(row => {
+        const p = userParams(row.strategyParams || {})
+        const x = Number(p[px] || 0)
+        const y = Number(p[py] || 0)
+        
+        // Z 轴取值
+        let z = 0
+        if (pz === 'combinedScore') {
+          // 由于 combinedScore 只有 ranked 里算好了，未通过的我们就给 0 或者重新算一下
+          const rk = ranked.find(r => r.originalIndex === row.originalIndex)
+          z = rk ? rk.combinedScore : (row.utilityScore > 0 ? row.utilityScore * (1 - robustnessWeight) : row.utilityScore)
+        } else {
+          z = Number((row as any)[pz]) || 0
+        }
+        
+        return { 
+          x, 
+          y, 
+          z,
+          text: `行号: ${row.originalIndex}<br>${px}: ${x}<br>${py}: ${y}<br>${pz}: ${z.toFixed(2)}`
+        }
+      })
+  }, [scored, ranked, px, py, pz, paramKeys, robustnessWeight])
+
   return (
-    <div style={{ background: '#131722', color: '#d1d4dc', fontFamily: "'Space Grotesk',system-ui,sans-serif", fontSize: 13 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden', background: '#131722', color: '#d1d4dc', fontFamily: "'Space Grotesk',system-ui,sans-serif", fontSize: 13 }}>
 
       {/* ── TV 风格 Topbar ── */}
-      <div style={{ height: 40, display: 'flex', alignItems: 'center', padding: '0 16px', background: '#1e222d', borderBottom: '1px solid #363a45', gap: 12 }}>
-        <span style={{ fontWeight: 700, fontSize: 13, color: '#d1d4dc' }}>优化报告</span>
+      <div style={{ flexShrink: 0, height: 50, display: 'flex', alignItems: 'center', padding: '0 20px', background: '#1e222d', borderBottom: '1px solid #363a45', gap: 16 }}>
+        <span style={{ fontWeight: 700, fontSize: 15, color: '#d1d4dc' }}>优化报告</span>
         <span
           title="评分逻辑:Calmar 35% + Sortino 30% + Profit Factor 25% + NetReturn 10% + Sharpe 0%。过滤:盈亏比 ≥1.5、Sortino ≥1.0、PF ≥1.5、回撤 ≤40%。点击「过滤设置」可调整。"
           style={{
-            padding: '2px 8px', borderRadius: 3, fontSize: 10, fontFamily: "'JetBrains Mono',monospace",
+            padding: '4px 10px', borderRadius: 4, fontSize: 11, fontFamily: "'JetBrains Mono',monospace",
             background: 'rgba(247,147,26,.12)', color: '#f7931a',
             border: '1px solid rgba(247,147,26,.3)', cursor: 'help',
           }}
@@ -518,17 +618,17 @@ export default function ReportPage() {
           <>
             {/* 显眼数据源徽章 */}
             <span style={{
-              padding: '2px 8px', borderRadius: 3, fontSize: 10, fontFamily: "'JetBrains Mono',monospace",
+              padding: '4px 10px', borderRadius: 4, fontSize: 11, fontFamily: "'JetBrains Mono',monospace",
               background: source === 'localStorage' ? 'rgba(0,212,255,.12)' : 'rgba(240,185,11,.12)',
               color: source === 'localStorage' ? '#00d4ff' : '#f0b90b',
               border: `1px solid ${source === 'localStorage' ? 'rgba(0,212,255,.3)' : 'rgba(240,185,11,.3)'}`,
-              display: 'inline-flex', alignItems: 'center', gap: 5,
+              display: 'inline-flex', alignItems: 'center', gap: 6,
             }}>
-              <span style={{ width: 5, height: 5, borderRadius: '50%', background: 'currentColor' }} />
+              <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'currentColor' }} />
               {source === 'localStorage' ? '数据源:站内上次优化结果' : '数据源:上传的 CSV 文件'}
             </span>
-            <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: '#787b86' }}>
-              {stratName} · {rawData.length} 个组合
+            <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 12, color: '#787b86', display: 'flex', alignItems: 'center' }}>
+              {stratName} <span style={{ margin: '0 6px' }}>·</span> {rawData.length} 个组合
             </span>
             {/* 清除按钮:既清屏也清 localStorage,防止下次刷新又自动加载 */}
             <button
@@ -538,23 +638,23 @@ export default function ReportPage() {
                 setRawData([]); setSource('none'); setStratName(''); setRobustness({}); setRobProg(0);
               }}
               title="清空当前数据,可上传新 CSV"
-              style={{ padding: '2px 8px', borderRadius: 3, fontSize: 10, border: '1px solid #363a45', background: 'transparent', color: '#787b86', cursor: 'pointer', fontFamily: "'JetBrains Mono',monospace" }}
+              style={{ padding: '4px 10px', borderRadius: 4, fontSize: 11, border: '1px solid #363a45', background: 'transparent', color: '#787b86', cursor: 'pointer', fontFamily: "'JetBrains Mono',monospace" }}
             >
               ✕ 清除
             </button>
             {robProg > 0 && robProg < 100 && (
-              <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: '#00d4ff', display: 'flex', alignItems: 'center', gap: 4 }}>
+              <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: '#00d4ff', display: 'flex', alignItems: 'center', gap: 5 }}>
                 <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#00d4ff', display: 'inline-block' }} />
                 分析中 {robProg}%
               </span>
             )}
           </>
         )}
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
-          <button onClick={() => setShowFilters(!showFilters)} style={{ padding: '3px 10px', borderRadius: 3, fontSize: 11, border: `1px solid ${showFilters ? 'rgba(38,166,154,.4)' : '#363a45'}`, background: showFilters ? 'rgba(38,166,154,.08)' : 'transparent', color: showFilters ? '#26a69a' : '#787b86', cursor: 'pointer', fontFamily: "'JetBrains Mono',monospace" }}>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+          <button onClick={() => setShowFilters(!showFilters)} style={{ padding: '6px 14px', borderRadius: 4, fontSize: 12, border: `1px solid ${showFilters ? 'rgba(38,166,154,.4)' : '#363a45'}`, background: showFilters ? 'rgba(38,166,154,.08)' : 'transparent', color: showFilters ? '#26a69a' : '#787b86', cursor: 'pointer', fontFamily: "'JetBrains Mono',monospace" }}>
             过滤设置
           </button>
-          <button onClick={() => fileRef.current?.click()} style={{ padding: '3px 10px', borderRadius: 3, fontSize: 11, border: '1px solid rgba(38,166,154,.4)', background: 'rgba(38,166,154,.08)', color: '#26a69a', cursor: 'pointer', fontFamily: "'JetBrains Mono',monospace", fontWeight: 600 }}>
+          <button onClick={() => fileRef.current?.click()} style={{ padding: '6px 14px', borderRadius: 4, fontSize: 12, border: '1px solid rgba(38,166,154,.4)', background: 'rgba(38,166,154,.08)', color: '#26a69a', cursor: 'pointer', fontFamily: "'JetBrains Mono',monospace", fontWeight: 600 }}>
             ↑ 上传 CSV
           </button>
           <input ref={fileRef} type="file" accept=".csv" onChange={handleCSV} style={{ display: 'none' }} />
@@ -563,18 +663,18 @@ export default function ReportPage() {
 
       {/* ── 过滤面板（折叠）── */}
       {showFilters && source !== 'none' && (
-        <div style={{ padding: '14px 16px', background: '#1e222d', borderBottom: '1px solid #363a45' }}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 12 }}>
+        <div style={{ flexShrink: 0, padding: '20px 24px', background: '#1e222d', borderBottom: '1px solid #363a45' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 20, marginBottom: 20 }}>
             {filterInputs.map(f => (
               <div key={f.key}>
-                <label style={{ display: 'block', fontSize: 10, color: '#787b86', marginBottom: 3, fontFamily: "'JetBrains Mono',monospace", textTransform: 'uppercase', letterSpacing: '.04em' }}>{f.label}</label>
+                <label style={{ display: 'block', fontSize: 11, color: '#787b86', marginBottom: 6, fontFamily: "'JetBrains Mono',monospace", textTransform: 'uppercase', letterSpacing: '.04em' }}>{f.label}</label>
                 <input type="number" step={f.step} value={filters[f.key]} onChange={e => setFilters(p => ({ ...p, [f.key]: Number(e.target.value) }))}
-                  style={{ width: '100%', padding: '4px 8px', borderRadius: 3, fontSize: 11, border: '1px solid #363a45', background: '#131722', color: '#d1d4dc', outline: 'none', fontFamily: "'JetBrains Mono',monospace" }} />
+                  style={{ width: '100%', padding: '8px 12px', borderRadius: 4, fontSize: 13, border: '1px solid #363a45', background: '#131722', color: '#d1d4dc', outline: 'none', fontFamily: "'JetBrains Mono',monospace" }} />
               </div>
             ))}
           </div>
-          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'center' }}>
-            <span style={{ fontSize: 10, color: '#787b86', fontFamily: "'JetBrains Mono',monospace", textTransform: 'uppercase', letterSpacing: '.04em' }}>评分权重</span>
+          <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', alignItems: 'center', paddingTop: 10, borderTop: '1px dashed #363a45' }}>
+            <span style={{ fontSize: 11, color: '#787b86', fontFamily: "'JetBrains Mono',monospace", textTransform: 'uppercase', letterSpacing: '.04em' }}>评分权重</span>
             {Object.entries(weights).map(([k, v]) => {
               // 给每个权重一个工具提示,解释为什么是这个默认值
               const tip: Record<string, string> = {
@@ -585,17 +685,17 @@ export default function ReportPage() {
                 netReturn:    '总净收益%。权重高容易被"高收益+高回撤"的极端方案带歪,默认 10%',
               }
               return (
-                <div key={k} title={tip[k] || ''} style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'help' }}>
-                  <span style={{ fontSize: 10, color: '#787b86', minWidth: 50, fontFamily: "'JetBrains Mono',monospace" }}>{k}</span>
-                  <input type="range" min={0} max={1} step={0.05} value={v} onChange={e => setWeights(p => ({ ...p, [k]: Number(e.target.value) }))} style={{ width: 70 }} />
-                  <span style={{ fontSize: 10, fontFamily: 'monospace', color: v === 0 ? '#787b86' : '#d1d4dc', minWidth: 28 }}>{(v*100).toFixed(0)}%</span>
+                <div key={k} title={tip[k] || ''} style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'help' }}>
+                  <span style={{ fontSize: 11, color: '#787b86', minWidth: 50, fontFamily: "'JetBrains Mono',monospace" }}>{k}</span>
+                  <input type="range" min={0} max={1} step={0.05} value={v} onChange={e => setWeights(p => ({ ...p, [k]: Number(e.target.value) }))} style={{ width: 90 }} />
+                  <span style={{ fontSize: 11, fontFamily: 'monospace', color: v === 0 ? '#787b86' : '#d1d4dc', minWidth: 32 }}>{(v*100).toFixed(0)}%</span>
                 </div>
               )
             })}
-            <div title="稳健性=参数邻域稳定性,值越高代表此方案在参数微调下仍表现稳定" style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'help' }}>
-              <span style={{ fontSize: 10, color: '#787b86', fontFamily: "'JetBrains Mono',monospace" }}>稳健性权重</span>
-              <input type="range" min={0} max={1} step={0.05} value={robustnessWeight} onChange={e => setRobustnessWeight(Number(e.target.value))} style={{ width: 80 }} />
-              <span style={{ fontSize: 10, fontFamily: 'monospace', color: '#26a69a' }}>{(robustnessWeight*100).toFixed(0)}%</span>
+            <div title="稳健性=参数邻域稳定性,值越高代表此方案在参数微调下仍表现稳定" style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'help', marginLeft: 'auto' }}>
+              <span style={{ fontSize: 11, color: '#787b86', fontFamily: "'JetBrains Mono',monospace" }}>稳健性权重</span>
+              <input type="range" min={0} max={1} step={0.05} value={robustnessWeight} onChange={e => setRobustnessWeight(Number(e.target.value))} style={{ width: 100 }} />
+              <span style={{ fontSize: 11, fontFamily: 'monospace', color: '#26a69a' }}>{(robustnessWeight*100).toFixed(0)}%</span>
             </div>
           </div>
         </div>
@@ -627,10 +727,10 @@ export default function ReportPage() {
 
       {/* ── 有数据时：左右分栏布局 ── */}
       {source !== 'none' && rawData.length > 0 && (
-        <div style={{ display: 'flex', minHeight: 'calc(100vh - 88px)' }}>
+        <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>
 
-          {/* 左侧：ScoreCard 仪表盘 220px */}
-          <div style={{ width: 220, flexShrink: 0, borderRight: '1px solid #363a45', background: '#1e222d', padding: 14, display: 'flex', flexDirection: 'column', gap: 0 }}>
+          {/* 左侧：ScoreCard 仪表盘 320px */}
+          <div style={{ width: 320, flexShrink: 0, borderRight: '1px solid #363a45', background: '#1e222d', padding: 20, display: 'flex', flexDirection: 'column', gap: 0, overflowY: 'auto' }}>
 
             {/* 圆形仪表 */}
             <div style={{ textAlign: 'center', marginBottom: 12 }}>
@@ -696,11 +796,34 @@ export default function ReportPage() {
               </div>
             </div>
 
-            {/* 最高收益 */}
-            {stats.maxReturn > 0 && (
-              <div style={{ marginTop: 14, padding: '10px 12px', background: 'rgba(38,166,154,.06)', border: '1px solid rgba(38,166,154,.2)', borderRadius: 5 }}>
-                <div style={{ fontSize: 10, color: '#787b86', fontFamily: "'JetBrains Mono',monospace", marginBottom: 3 }}>最高收益</div>
-                <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 20, fontWeight: 700, color: '#26a69a' }}>+{fmt(stats.maxReturn, 1)}%</div>
+            {/* 核心指标统计卡片 */}
+            {stats.passed > 0 && (
+              <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+                  <div style={{ padding: '8px 10px', background: 'rgba(38,166,154,.06)', border: '1px solid rgba(38,166,154,.2)', borderRadius: 5 }}>
+                    <div style={{ fontSize: 10, color: '#787b86', fontFamily: "'JetBrains Mono',monospace", marginBottom: 3 }}>最高收益</div>
+                    <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 16, fontWeight: 700, color: '#26a69a' }}>+{fmt(stats.maxReturn, 1)}%</div>
+                  </div>
+                  <div style={{ padding: '8px 10px', background: 'rgba(255,255,255,.03)', border: '1px solid #363a45', borderRadius: 5 }}>
+                    <div style={{ fontSize: 10, color: '#787b86', fontFamily: "'JetBrains Mono',monospace", marginBottom: 3 }}>Top20均收益</div>
+                    <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 16, fontWeight: 700, color: '#d1d4dc' }}>+{fmt(stats.top20AvgReturn, 1)}%</div>
+                  </div>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 6 }}>
+                  <div style={{ padding: '8px', background: 'rgba(255,255,255,.03)', border: '1px solid #363a45', borderRadius: 5, textAlign: 'center' }}>
+                    <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 13, fontWeight: 600, color: '#d1d4dc' }}>{fmt(stats.medianReturn, 1)}%</div>
+                    <div style={{ fontSize: 9, color: '#787b86', marginTop: 2 }}>收益中位数</div>
+                  </div>
+                  <div style={{ padding: '8px', background: 'rgba(239,83,80,.06)', border: '1px solid rgba(239,83,80,.2)', borderRadius: 5, textAlign: 'center' }}>
+                    <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 13, fontWeight: 600, color: '#ef5350' }}>{fmt(stats.avgDrawdown, 1)}%</div>
+                    <div style={{ fontSize: 9, color: '#787b86', marginTop: 2 }}>平均回撤</div>
+                  </div>
+                  <div style={{ padding: '8px', background: 'rgba(255,255,255,.03)', border: '1px solid #363a45', borderRadius: 5, textAlign: 'center' }}>
+                    <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 13, fontWeight: 600, color: '#d1d4dc' }}>{fmt(stats.avgTrades, 0)}</div>
+                    <div style={{ fontSize: 9, color: '#787b86', marginTop: 2 }}>平均交易数</div>
+                  </div>
+                </div>
               </div>
             )}
           </div>
@@ -710,7 +833,6 @@ export default function ReportPage() {
             {/* Tab 栏 */}
             <div style={{ height: 32, display: 'flex', alignItems: 'flex-end', padding: '0 12px', borderBottom: '1px solid #363a45', background: '#1e222d', gap: 2, flexShrink: 0 }}>
               <button style={tabBtnStyle(activeTab === 'top10')} onClick={() => setActiveTab('top10')}>Top 20 推荐</button>
-              <button style={tabBtnStyle(activeTab === 'scatter')} onClick={() => setActiveTab('scatter')}>收益分布</button>
               <button style={tabBtnStyle(activeTab === 'all')} onClick={() => setActiveTab('all')}>全量数据 ({processed.length})</button>
             </div>
 
@@ -720,8 +842,9 @@ export default function ReportPage() {
               {/* Tab: Top 10 */}
               {activeTab === 'top10' && (
                 top10.length > 0 ? (
-                  <div>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 32 }}>
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
                       <span style={{ fontSize: 12, fontWeight: 600, color: '#d1d4dc' }}>推荐参数组合 Top 20</span>
                       <span style={{ fontSize: 10, color: '#787b86', fontFamily: "'JetBrains Mono',monospace" }}>综合分 = 效用分 × 稳健性</span>
                     </div>
@@ -793,30 +916,79 @@ export default function ReportPage() {
                       </table>
                     </div>
                   </div>
+
+                  {/* 收益分布散点图 */}
+                    <div style={{ display: 'flex', flexDirection: 'column', minHeight: 600 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, flexShrink: 0 }}>
+                        <span style={{ fontSize: 12, fontWeight: 600, color: '#d1d4dc' }}>收益 vs 回撤 分布</span>
+                        <span style={{ fontSize: 10, color: '#787b86', fontFamily: "'JetBrains Mono',monospace" }}>横轴: 回撤% · 纵轴: 收益% · 左上角为理想区域</span>
+                      </div>
+                      <div style={{ flex: 1, minHeight: 560 }}>
+                        <ScatterPlot
+                          data={scored.map(r => {
+                            const rk = ranked.find(rr => rr.originalIndex === r.originalIndex)
+                            return { returnPct: r.returnPct, ddPct: r.ddPct, passed: r.passed, originalIndex: r.originalIndex, combinedScore: rk?.combinedScore }
+                          })}
+                          ranked={ranked}
+                        />
+                      </div>
+                    </div>
+
+                    {/* 3D 参数地形图 */}
+                    <div style={{ display: 'flex', flexDirection: 'column', width: '100%' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, flexShrink: 0, flexWrap: 'wrap', gap: 10, background: 'rgba(255,255,255,0.02)', padding: '10px 14px', borderRadius: 6, border: '1px solid #363a45' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+                          <span style={{ fontSize: 13, fontWeight: 700, color: '#d1d4dc' }}>3D 参数地形</span>
+                          
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <span style={{ fontSize: 11, color: '#787b86' }}>X轴:</span>
+                            <select value={px} onChange={e => setPlotX(e.target.value)} style={{ background: '#131722', color: '#d1d4dc', border: '1px solid #363a45', borderRadius: 4, padding: '2px 8px', fontSize: 11, outline: 'none' }}>
+                              {paramKeys.map(k => <option key={k} value={k}>{k}</option>)}
+                            </select>
+                          </div>
+
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <span style={{ fontSize: 11, color: '#787b86' }}>Y轴:</span>
+                            <select value={py} onChange={e => setPlotY(e.target.value)} style={{ background: '#131722', color: '#d1d4dc', border: '1px solid #363a45', borderRadius: 4, padding: '2px 8px', fontSize: 11, outline: 'none' }}>
+                              {paramKeys.map(k => <option key={k} value={k}>{k}</option>)}
+                            </select>
+                          </div>
+
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <span style={{ fontSize: 11, color: '#787b86' }}>Z轴(高度):</span>
+                            <select value={pz} onChange={e => setPlotZ(e.target.value)} style={{ background: '#131722', color: '#d1d4dc', border: '1px solid #363a45', borderRadius: 4, padding: '2px 8px', fontSize: 11, outline: 'none' }}>
+                              <option value="combinedScore">综合分</option>
+                              <option value="utilityScore">效用分</option>
+                              <option value="returnPct">收益率 %</option>
+                              <option value="ddPct">回撤 %</option>
+                              <option value="winRate">胜率 %</option>
+                            </select>
+                          </div>
+                        </div>
+                        
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <span style={{ fontSize: 11, color: '#f0b90b', background: 'rgba(240,185,11,0.1)', padding: '2px 8px', borderRadius: 4, border: '1px solid rgba(240,185,11,0.2)' }}>
+                            提示: 其它维度参数已锁定于当前推荐 Top 1 最优解
+                          </span>
+                        </div>
+                      </div>
+                      
+                      <div style={{ height: 480, border: '1px solid #363a45', borderRadius: 6, background: '#1e222d', overflow: 'hidden' }}>
+                        {surfaceData.length > 2 ? (
+                          <Surface3DPlot data={surfaceData} labels={{ x: px, y: py, z: pz === 'combinedScore' ? '综合分' : pz === 'returnPct' ? '收益%' : pz === 'ddPct' ? '回撤%' : pz }} />
+                        ) : (
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#787b86', fontSize: 12 }}>
+                            当前切片的数据点不足 ({surfaceData.length}个)，无法生成 3D 地形。请确保策略至少有2个可变参数。
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
                 ) : (
                   <div style={{ padding: '40px 0', textAlign: 'center', color: '#787b86', fontFamily: "'JetBrains Mono',monospace", fontSize: 12 }}>
                     无通过过滤的参数组合，请调整过滤条件
                   </div>
                 )
-              )}
-
-              {/* Tab: 收益分布散点图 */}
-              {activeTab === 'scatter' && (
-                <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 400 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, flexShrink: 0 }}>
-                    <span style={{ fontSize: 12, fontWeight: 600, color: '#d1d4dc' }}>收益 vs 回撤 分布</span>
-                    <span style={{ fontSize: 10, color: '#787b86', fontFamily: "'JetBrains Mono',monospace" }}>横轴: 回撤% · 纵轴: 收益% · 左上角为理想区域</span>
-                  </div>
-                  <div style={{ flex: 1, minHeight: 360 }}>
-                    <ScatterPlot
-                      data={scored.map(r => {
-                        const rk = ranked.find(rr => rr.originalIndex === r.originalIndex)
-                        return { returnPct: r.returnPct, ddPct: r.ddPct, passed: r.passed, originalIndex: r.originalIndex, combinedScore: rk?.combinedScore }
-                      })}
-                      ranked={ranked}
-                    />
-                  </div>
-                </div>
               )}
 
               {/* Tab: 全量数据 */}
