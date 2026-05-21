@@ -342,11 +342,12 @@ async def get_cached_candles(timeframe: str):
 
 TEMPLATE_DIR = os.path.join(os.path.dirname(__file__), "strategies")
 TEMPLATES = [
-    {"id": "MaCrossStrategy",        "name": "MA 双均线交叉",     "category": "trend"},
-    {"id": "MacdStrategy",            "name": "MACD 金叉死叉",     "category": "trend"},
-    {"id": "DcaStrategy",             "name": "DCA 定投补仓",      "category": "dca"},
+    # 清理说明:MaCross 和 Macd 已删除
+    # 实测 BTC 4h × 7.3 年 — MaCross 默认 +600%/-69%(无止损),Macd 默认 +51%/-76%(被手续费吃光)
+    # 默认参数下亏到不能见人,作为"内置策略"提供等于骗用户
     {"id": "AtrChannelStrategy",      "name": "ATR 通道动态止损",  "category": "trend"},
     {"id": "TurtleSslDualStrategy",   "name": "海龟SSL双系统6形态","category": "trend"},
+    {"id": "DcaStrategy",             "name": "DCA 定投补仓",      "category": "dca"},
 ]
 
 

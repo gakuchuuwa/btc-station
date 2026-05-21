@@ -73,7 +73,7 @@ class MyCrossStrategy(IStrategy):
         return dataframe
 `;
 
-// ── Demo strategy code (matches backend/strategies/MaCrossStrategy.py) ───────
+// ── Demo strategy code (Freqtrade IStrategy 格式示例,仅作语法演示) ───────
 const DEMO_CODE = `"""
 MA 双均线交叉策略 — BTC Station 内置演示
 
