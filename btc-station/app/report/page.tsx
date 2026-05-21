@@ -562,43 +562,51 @@ export default function ReportPage() {
   const pz = plotZ || 'combinedScore'
   
   const surfaceData = useMemo(() => {
-    if (!px || !py || ranked.length === 0) return []
-    // 找到全局最优的参数(作为切片锚点)
-    const bestParams = userParams(ranked[0].strategyParams || {})
-    
-    // 从所有结果中(用 scored 以包含未通过过滤的点，或者只用 ranked，但地形图最好能看到全貌，所以用 scored)
-    return scored
-      .filter(row => {
-        const p = userParams(row.strategyParams || {})
-        // 除了 px 和 py 外，其他参数必须等于 bestParams 的值
-        for (const k of paramKeys) {
-          if (k !== px && k !== py && p[k] !== bestParams[k]) return false
-        }
-        return true
-      })
-      .map(row => {
-        const p = userParams(row.strategyParams || {})
-        const x = Number(p[px] || 0)
-        const y = Number(p[py] || 0)
-        
-        // Z 轴取值
-        let z = 0
-        if (pz === 'combinedScore') {
-          // 由于 combinedScore 只有 ranked 里算好了，未通过的我们就给 0 或者重新算一下
-          const rk = ranked.find(r => r.originalIndex === row.originalIndex)
-          z = rk ? rk.combinedScore : (row.utilityScore > 0 ? row.utilityScore * (1 - robustnessWeight) : row.utilityScore)
-        } else {
-          z = Number((row as any)[pz]) || 0
-        }
-        
-        return { 
-          x, 
-          y, 
-          z,
-          text: `行号: ${row.originalIndex}<br>${px}: ${x}<br>${py}: ${y}<br>${pz}: ${z.toFixed(2)}`
-        }
-      })
-  }, [scored, ranked, px, py, pz, paramKeys, robustnessWeight])
+    if (!px || !py || scored.length === 0) return []
+
+    // 计算每行 Z 值（combinedScore 要从 ranked 里查）
+    const rankedById = new Map(ranked.map(r => [r.originalIndex, r]))
+    const computeZ = (row: typeof scored[number]): number => {
+      if (pz === 'combinedScore') {
+        const rk = rankedById.get(row.originalIndex)
+        if (rk) return rk.combinedScore
+        return row.utilityScore > 0 ? row.utilityScore * (1 - robustnessWeight) : row.utilityScore
+      }
+      return Number((row as any)[pz]) || 0
+    }
+
+    // 在 X-Y 平面聚合（取每个 (x, y) 组合的最佳 Z）。
+    // 旧版本做严格切片（锁定其他参数 = 全局最优），3 个可变参数以上经常只剩 1 个点。
+    // 改为聚合：每个 (x, y) 上的最优解 = 该位置 Z 的最大值。
+    const groupMap = new Map<string, { x: number; y: number; zs: number[]; bestRow: typeof scored[number] }>()
+    for (const row of scored) {
+      const p = userParams(row.strategyParams || {})
+      const x = Number(p[px])
+      const y = Number(p[py])
+      if (!isFinite(x) || !isFinite(y)) continue
+      const z = computeZ(row)
+      if (!isFinite(z)) continue
+      const key = `${x},${y}`
+      const existing = groupMap.get(key)
+      if (!existing) {
+        groupMap.set(key, { x, y, zs: [z], bestRow: row })
+      } else {
+        existing.zs.push(z)
+        if (z > Math.max(...existing.zs.slice(0, -1))) existing.bestRow = row
+      }
+    }
+
+    return Array.from(groupMap.values()).map(g => {
+      const bestZ = Math.max(...g.zs)
+      const count = g.zs.length
+      return {
+        x: g.x,
+        y: g.y,
+        z: bestZ,
+        text: `${px}: ${g.x}<br>${py}: ${g.y}<br>${pz}: ${bestZ.toFixed(2)}${count > 1 ? `<br>(聚合 ${count} 组,取最优)` : ''}`,
+      }
+    })
+  }, [scored, ranked, px, py, pz, robustnessWeight])
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden', background: '#131722', color: '#d1d4dc', fontFamily: "'Space Grotesk',system-ui,sans-serif", fontSize: 13 }}>
@@ -968,7 +976,7 @@ export default function ReportPage() {
                         
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                           <span style={{ fontSize: 11, color: '#f0b90b', background: 'rgba(240,185,11,0.1)', padding: '2px 8px', borderRadius: 4, border: '1px solid rgba(240,185,11,0.2)' }}>
-                            提示: 其它维度参数已锁定于当前推荐 Top 1 最优解
+                            提示: 每个 (X, Y) 组合聚合其他维度的最优 Z 值
                           </span>
                         </div>
                       </div>
@@ -978,7 +986,7 @@ export default function ReportPage() {
                           <Surface3DPlot data={surfaceData} labels={{ x: px, y: py, z: pz === 'combinedScore' ? '综合分' : pz === 'returnPct' ? '收益%' : pz === 'ddPct' ? '回撤%' : pz }} />
                         ) : (
                           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#787b86', fontSize: 12 }}>
-                            当前切片的数据点不足 ({surfaceData.length}个)，无法生成 3D 地形。请确保策略至少有2个可变参数。
+                            当前 X-Y 平面只有 {surfaceData.length} 个数据点，无法生成 3D 地形（至少需要 3 个）。请换一组 X/Y 轴参数试试。
                           </div>
                         )}
                       </div>
