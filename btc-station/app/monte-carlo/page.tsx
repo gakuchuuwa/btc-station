@@ -79,23 +79,26 @@ export default function MonteCarloPage() {
   }, [fileData, initialCapital, simulationMode])
 
   const loadTrades = (trades: Trade[], name: string) => {
-    // 防御兜底:如果整批 trades 的 profitPct 全是 0/缺失但 profitUSDT 有数据,
-    // 自动按"初始本金等比折算"补出 profitPct,避免默认复利模式得到全 0 结果。
-    // 这是粗糙近似(不考虑权益变化),只是保命用,所以 UI 上要诚实告知。
+    // 防御兜底:如果整批 trades 的 profitPct 全缺失但 profitUSDT 有数据,
+    // 自动切到"绝对累加模式"而不是硬折算成假的 pct。
+    //
+    // 为什么不能硬折算 USDT/initialCapital → pct:
+    // 真实策略(尤其动态仓位)中,+3000 USDT 在 10K 权益时是 +30%,但在 100K
+    // 权益时只是 +3%。把它当成永远 +30% 跑复利,方差爆炸,会出现回测 +669%
+    // 但蒙特卡洛 -95% 的荒谬结果。
+    //
+    // 绝对累加模式直接打乱 USDT 序列,数学上等价于"如果交易出现顺序不同会怎样",
+    // 是数据缺失时唯一正确的兜底。
     const hasAnyPct = trades.some(t => Number.isFinite(t.profitPct) && t.profitPct !== 0)
     const hasAnyUsdt = trades.some(t => Number.isFinite(t.profitUSDT) && t.profitUSDT !== 0)
-    let finalTrades = trades
-    let fallback = false
     if (!hasAnyPct && hasAnyUsdt) {
-      finalTrades = trades.map(t => ({
-        ...t,
-        profitPct: ((t.profitUSDT || 0) / initialCapital) * 100,
-      }))
-      fallback = true
+      setSimulationMode('absolute')
+      setPctFallbackUsed(true)
+    } else {
+      setPctFallbackUsed(false)
     }
-    setPctFallbackUsed(fallback)
     setFileName(name)
-    setFileData(finalTrades)
+    setFileData(trades)
     setSimulations([])
     setStats(null)
   }
@@ -544,7 +547,9 @@ export default function MonteCarloPage() {
             )}
             {pctFallbackUsed && (
               <div style={{ fontSize: 11, color: '#f0b90b', background: 'rgba(240,185,11,0.08)', border: '1px solid rgba(240,185,11,0.3)', padding: '8px 12px', borderRadius: 4, lineHeight: 1.6 }}>
-                ⚠ 数据源缺少"收益率%"列,已按初始本金({initialCapital} USDT)等比折算为复利输入。结果仅供参考,精确分析请改用"绝对累加模式"(下方下拉)。
+                ⚠ 数据源缺少"收益率%"列,已自动切换为"绝对累加模式"。
+                <br />
+                复利模式需要每笔的真实%回报,无法从绝对 USDT 反推(动态仓位策略下早期 +3K 和后期 +3K 占比完全不同)。
               </div>
             )}
           </div>
