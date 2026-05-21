@@ -470,7 +470,7 @@ export default function ReportPage() {
       avgReturn = returns.reduce((a, b) => a + b, 0) / passed
       medianReturn = returns[Math.floor(passed / 2)]
       avgDrawdown = passedRows.reduce((a, r) => a + r.ddPct, 0) / passed
-      avgTrades = passedRows.reduce((a, r) => a + r.trades, 0) / passed
+      avgTrades = passedRows.reduce((a, r) => a + r.totalTrades, 0) / passed
     }
     
     if (top10 && top10.length > 0) {

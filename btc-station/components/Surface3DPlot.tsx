@@ -42,6 +42,7 @@ export default function Surface3DPlot({
 
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+      {/* @ts-expect-error react-plotly.js 的 TS 类型滞后于 Plotly 库实际支持的属性（mesh3d.intensity / axis.title 字符串等） */}
       <Plot
         data={[
           {
