@@ -4,8 +4,8 @@ import Header from '@/components/Header'
 import Footer from '@/components/Footer'
 
 export const metadata: Metadata = {
-  title: 'BTC Station — 专注比特币的量化交易平台',
-  description: '专注比特币的量化交易工具。实时行情、K线图表、策略回测、参数优化。',
+  title: 'BTC Station — 开源比特币量化回测工具',
+  description: '免费的比特币量化回测与策略分析开发者工具。基于 VectorBT 的云端策略回测、参数网格优化、蒙特卡洛压力测试。由独立开发者构建，不提供投资建议。',
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
