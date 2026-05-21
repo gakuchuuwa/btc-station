@@ -805,12 +805,23 @@ export default function StrategyPage() {
               <button 
                 onClick={() => {
                   // 必须同时传 profitUSDT 和 profitPct:蒙特卡洛默认是"复利比例模式",
-                  // 只看 profitPct;漏传会让所有交易 pct=0 → 权益曲线变水平直线 → 结果全 0
-                  const mcTrades = trades.map((t, i) => ({
-                    id: i + 1,
-                    profitUSDT: t.pnl_abs,
-                    profitPct: t.pnl_pct,
-                  }))
+                  // 只看 profitPct;漏传会让所有交易 pct=0 → 权益曲线变水平直线 → 结果全 0。
+                  //
+                  // 后端 VBT 的 Return 字段在某些情况会丢(NaN/字段名不一致),所以做兜底:
+                  // 如果 t.pnl_pct 是 0/NaN,用 (出场价/入场价 - 1) 自己算 —— 这对
+                  // size_type='percent'+size=1.0 的 100% 全仓策略数学上是真实回报率。
+                  const mcTrades = trades.map((t, i) => {
+                    let pct = Number(t.pnl_pct)
+                    if (!Number.isFinite(pct) || pct === 0) {
+                      const ep = Number(t.entry_price), xp = Number(t.exit_price)
+                      if (ep > 0 && xp > 0) {
+                        // 多头:Return = (xp-ep)/ep;空头反向
+                        const raw = t.direction === 'short' ? (ep - xp) / ep : (xp - ep) / ep
+                        if (Number.isFinite(raw)) pct = raw * 100
+                      }
+                    }
+                    return { id: i + 1, profitUSDT: t.pnl_abs, profitPct: pct }
+                  })
                   sessionStorage.setItem('mc_trades_cache', JSON.stringify(mcTrades))
                   window.open('/monte-carlo', '_blank')
                 }}

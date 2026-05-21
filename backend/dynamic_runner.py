@@ -239,6 +239,17 @@ def run_dynamic_code(code_string: str, df, parameters: dict, timeframe: str = '4
                 t['Entry Timestamp'] = _to_iso(t['Entry Timestamp'])
             if 'Exit Timestamp' in t:
                 t['Exit Timestamp'] = _to_iso(t['Exit Timestamp'])
+            # VBT records_readable 在极端情况(入场价=0/未平仓)的 PnL/Return 会是 NaN,
+            # Python NaN 进 JSON 后浏览器解析会变 NaN/null,前端 Number(NaN ?? 0) = NaN
+            # 触发蒙特卡洛兜底逻辑,导致复利模式失效。这里统一把数值字段的 NaN 写成 0。
+            for _k in ('PnL', 'Return', 'Size', 'Avg Entry Price', 'Avg Exit Price'):
+                if _k in t:
+                    _v = t[_k]
+                    try:
+                        if _v is None or (isinstance(_v, float) and (_v != _v)):  # NaN check
+                            t[_k] = 0
+                    except Exception:
+                        pass
 
         # ── 指标 overlay 序列 ────────────────────────────────────────
         indicators_out = {}
