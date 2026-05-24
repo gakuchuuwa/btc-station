@@ -119,7 +119,7 @@ export default function MonteCarloPage() {
     }
 
     // 2. 如果没有新传入的，检查是否有本地页面的停留缓存
-    const localSession = sessionStorage.getItem('mc_page_state')
+    const localSession = sessionStorage.getItem('mc_page_state_v2')
     if (localSession) {
       try {
         const state = JSON.parse(localSession)
@@ -139,12 +139,24 @@ export default function MonteCarloPage() {
   }, []) // 只在挂载时执行一次
 
   // 当关键数据变化时，保存到本地停留缓存
+  // 注意:必须用 try/catch 兜底,否则 sessionStorage 配额超限/隐私模式禁用会让 effect 抛未捕获错误,
+  // React 直接吐 "Application error: a client-side exception" 把整个页面炸掉。
+  // 同时 curve 数组占存储 90%+,不持久化(图表刷新后消失能接受,滑块实时重算 ruin rate 仍可用)。
   useEffect(() => {
-    if (fileData.length > 0) {
-      sessionStorage.setItem('mc_page_state', JSON.stringify({
-        fileData, fileName, initialCapital, numSimulations, ruinThreshold, simulationMode,
-        simulations, stats
+    if (fileData.length === 0) return
+    try {
+      const lightSimulations = simulations.map(s => ({
+        finalEquity: s.finalEquity,
+        returnPct: s.returnPct,
+        maxDrawdownPct: s.maxDrawdownPct,
+        curve: [] as number[],
       }))
+      sessionStorage.setItem('mc_page_state_v2', JSON.stringify({
+        fileData, fileName, initialCapital, numSimulations, ruinThreshold, simulationMode,
+        simulations: lightSimulations, stats,
+      }))
+    } catch (e) {
+      console.warn('[mc] sessionStorage 写入失败,本次会话结果不持久化:', e)
     }
   }, [fileData, fileName, initialCapital, numSimulations, ruinThreshold, simulationMode, simulations, stats])
 
