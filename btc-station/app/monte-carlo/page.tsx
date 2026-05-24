@@ -119,7 +119,7 @@ export default function MonteCarloPage() {
     }
 
     // 2. 如果没有新传入的，检查是否有本地页面的停留缓存
-    const localSession = sessionStorage.getItem('mc_page_state_v2')
+    const localSession = sessionStorage.getItem('mc_page_state_v3')
     if (localSession) {
       try {
         const state = JSON.parse(localSession)
@@ -151,7 +151,7 @@ export default function MonteCarloPage() {
         maxDrawdownPct: s.maxDrawdownPct,
         curve: [] as number[],
       }))
-      sessionStorage.setItem('mc_page_state_v2', JSON.stringify({
+      sessionStorage.setItem('mc_page_state_v3', JSON.stringify({
         fileData, fileName, initialCapital, numSimulations, ruinThreshold, simulationMode,
         simulations: lightSimulations, stats,
       }))
