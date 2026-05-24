@@ -46,7 +46,7 @@ export default function MonteCarloPage() {
   
   const [initialCapital, setInitialCapital] = useState<number>(10000)
   const [numSimulations, setNumSimulations] = useState<number>(5000)
-  const [ruinThreshold, setRuinThreshold] = useState<number>(30)
+  const [ruinThreshold, setRuinThreshold] = useState<number>(50)
 
   const [simulationMode, setSimulationMode] = useState<'absolute' | 'compounding'>('compounding')
   const [simulations, setSimulations] = useState<MCSimulation[]>([])
