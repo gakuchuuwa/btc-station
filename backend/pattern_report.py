@@ -162,11 +162,18 @@ def _extract_direction(type_str: str) -> str:
     return "unknown"
 
 
-def _extract_pattern(sig: Any) -> str:
-    """正则提取 P 编号；未匹配则保留原信号名。"""
+_DIR_SUFFIX = {"long": "多", "short": "空"}
+
+
+def _extract_pattern(sig: Any, direction: str = "") -> Optional[str]:
+    """正则提取 P 编号并拼接方向后缀（如 'P5多' / 'P4空'）。
+    未匹配到 P 编号则返回 None，调用方自行决定回填策略（Scale-in 查上一笔底仓 / 其他保留原信号）。
+    """
     s = str(sig)
     m = PATTERN_RE.search(s)
-    return m.group(0) if m else s
+    if not m:
+        return None
+    return m.group(0) + _DIR_SUFFIX.get(direction, "")
 
 
 @router.post("/pattern-report/analyze")
@@ -198,10 +205,27 @@ async def analyze_pattern_report(file: UploadFile = File(...)) -> Dict[str, Any]
     if entries.empty or exits.empty:
         raise HTTPException(status_code=400, detail="未识别到进场/出场记录（类型列需含'进场/出场'或'Entry/Exit'）")
 
-    # 从进场行提取形态和方向
-    entries["形态"]    = entries[col_signal].apply(_extract_pattern)
+    # 从进场行提取方向 + 形态（形态带方向后缀，如 P5多/P5空，便于双向形态独立归因）
     entries["方向"]    = entries[col_type].apply(_extract_direction)
+    entries["形态"]    = entries.apply(
+        lambda r: _extract_pattern(r[col_signal], r["方向"]), axis=1
+    )
     entries["进场信号"] = entries[col_signal].astype(str)
+
+    # Scale-in 加仓单回填：加仓单的"交易 #"始终是底仓单的"交易 #" + 1，
+    # 信号列形如"Scale-in Long 1"无 P 编号，需查上一笔底仓的形态归并进去。
+    pattern_map = dict(zip(
+        entries.loc[entries["形态"].notna(), col_trade],
+        entries.loc[entries["形态"].notna(), "形态"],
+    ))
+    scale_in_mask = entries[col_signal].astype(str).str.contains("Scale-in", na=False)
+    entries.loc[scale_in_mask, "形态"] = entries.loc[scale_in_mask, col_trade].map(
+        lambda tn: pattern_map.get(tn - 1)
+    )
+
+    # 仍无形态的（如"开盘价"未平仓收尾单）保留原信号名作为分组标签
+    no_pattern_mask = entries["形态"].isna()
+    entries.loc[no_pattern_mask, "形态"] = entries.loc[no_pattern_mask, col_signal].astype(str)
 
     entry_cols = [col_trade, "形态", "方向", "进场信号"]
     if col_dt:
