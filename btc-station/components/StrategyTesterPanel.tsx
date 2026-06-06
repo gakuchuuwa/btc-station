@@ -453,6 +453,26 @@ function EquityTab({ equity, initialCapital }: { equity: EquityPoint[]; initialC
     showlegend: false,
   };
 
+  let maxDd = 0;
+  let maxDdPeakIdx = 0;
+  let maxDdTroughIdx = 0;
+  let currentPeakVal = -Infinity;
+  let currentPeakIdx = 0;
+
+  for (let i = 0; i < ys.length; i++) {
+    const y = ys[i];
+    if (y > currentPeakVal) {
+      currentPeakVal = y;
+      currentPeakIdx = i;
+    }
+    const dd = currentPeakVal > 0 ? (currentPeakVal - y) / currentPeakVal : 0;
+    if (dd > maxDd) {
+      maxDd = dd;
+      maxDdPeakIdx = currentPeakIdx;
+      maxDdTroughIdx = i;
+    }
+  }
+
   const layout: Partial<Plotly.Layout> = {
     paper_bgcolor: "transparent",
     plot_bgcolor: "transparent",
@@ -470,6 +490,24 @@ function EquityTab({ equity, initialCapital }: { equity: EquityPoint[]; initialC
     yaxis: { gridcolor: "#1a1a1a", tickfont: { size: 10 }, tickprefix: "$", showgrid: true },
     hovermode: "x unified",
     showlegend: false,
+    shapes: maxDd > 0 ? [{
+      type: "rect",
+      xref: "x", yref: "paper",
+      x0: xs[maxDdPeakIdx], x1: xs[maxDdTroughIdx],
+      y0: 0, y1: 1,
+      fillcolor: "rgba(239, 83, 80, 0.15)",
+      line: { width: 0 }
+    }] : [],
+    annotations: maxDd > 0 ? [{
+      x: xs[maxDdTroughIdx],
+      y: ys[maxDdTroughIdx],
+      xref: "x", yref: "y",
+      text: `最大回撤 -${(maxDd * 100).toFixed(2)}%`,
+      showarrow: true,
+      arrowcolor: "#ef5350",
+      font: { color: "#ef5350", size: 10 },
+      ax: 0, ay: 30
+    }] : [],
   };
 
   return (
