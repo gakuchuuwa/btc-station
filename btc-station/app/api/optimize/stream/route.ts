@@ -2,7 +2,7 @@
 // 直接在 Next.js 服务端用 Node fetch 连 FastAPI,然后用 ReadableStream pipe 给浏览器
 // 这条链路 Next.js 不会缓冲,SSE 真正实时
 
-const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:8000'
+const BACKEND_URL = process.env.BACKEND_URL || (process.env.NODE_ENV === 'production' ? 'https://btc-station-backend-production.up.railway.app' : 'http://localhost:8000')
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
