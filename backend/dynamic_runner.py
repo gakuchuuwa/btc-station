@@ -511,14 +511,19 @@ def run_dynamic_code(code_string: str, df, parameters: dict, timeframe: str = '4
 
                 dd_durations = []
                 dd_depths = []
+                dd_events = []
                 start_idx = None
+                current_dd_max_depth = 0
                 for i, (ts_i, val) in enumerate(closed_equity_series.items()):
                     pk = float(c_peak_s.iloc[i])
                     if val < pk:  # 进入回撤
                         if start_idx is None:
                             start_idx = i
+                            current_dd_max_depth = 0
                         depth = (pk - val) / pk * 100
                         dd_depths.append(depth)
+                        if depth > current_dd_max_depth:
+                            current_dd_max_depth = depth
                     else:  # 离开回撤
                         if start_idx is not None:
                             try:
@@ -528,6 +533,7 @@ def run_dynamic_code(code_string: str, df, parameters: dict, timeframe: str = '4
                             except Exception:
                                 dur_days = i - start_idx
                             dd_durations.append(dur_days)
+                            dd_events.append({"dur_days": dur_days, "max_depth": current_dd_max_depth})
                             start_idx = None
 
                 # 如果最后仍在回撤中（尚未恢复到新高）
@@ -539,9 +545,11 @@ def run_dynamic_code(code_string: str, df, parameters: dict, timeframe: str = '4
                     except Exception:
                         dur_days = len(closed_equity_series) - start_idx
                     dd_durations.append(dur_days)
+                    dd_events.append({"dur_days": dur_days, "max_depth": current_dd_max_depth})
 
-                if dd_durations:
-                    max_dd_duration_days = max(dd_durations)
+                if dd_events:
+                    deepest_dd_event = max(dd_events, key=lambda x: x["max_depth"])
+                    max_dd_duration_days = deepest_dd_event["dur_days"]
                     avg_dd_duration_days = round(sum(dd_durations) / len(dd_durations), 1)
                 if dd_depths:
                     avg_dd_pct = round(sum(dd_depths) / len(dd_depths), 4)
