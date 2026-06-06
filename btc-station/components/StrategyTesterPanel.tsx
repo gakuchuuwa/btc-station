@@ -458,7 +458,6 @@ function EquityTab({ equity, balance, summary }: { equity: EquityPoint[]; balanc
     hovertemplate: "%{x}<br>结算: $%{y:,.2f}<extra></extra>",
   } : null;
 
-  const data = balanceTrace ? [baseline, trace, balanceTrace] : [baseline, trace];
 
   const baseline: Plotly.Data = {
     type: "scatter",
@@ -469,6 +468,8 @@ function EquityTab({ equity, balance, summary }: { equity: EquityPoint[]; balanc
     hoverinfo: "none",
     showlegend: false,
   };
+
+  const data = balanceTrace ? [baseline, trace, balanceTrace] : [baseline, trace];
 
   let maxDd = summary?.max_drawdown_pct ? Math.abs(summary.max_drawdown_pct) / 100 : 0;
   
