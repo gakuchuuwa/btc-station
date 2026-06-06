@@ -99,6 +99,9 @@ export interface BacktestConfig {
 export interface BacktestMetrics {
   net_profit_pct: number;
   max_drawdown_pct: number;
+  closed_max_drawdown_pct?: number;
+  max_dd_peak_ts?: number;
+  max_dd_trough_ts?: number;
   win_rate_pct: number;
   total_trades: number;
   sharpe?: number;
