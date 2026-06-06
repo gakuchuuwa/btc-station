@@ -1527,6 +1527,7 @@ export default function ChartPage() {
           benchmark_return_abs:      m.benchmark_return_abs,
           cagr_pct:                  m.cagr_pct,
           max_drawdown_pct:          m.max_drawdown_pct ?? 0,
+          closed_max_drawdown_pct:   m.closed_max_drawdown_pct ?? null,
           ftmo_drawdown_pct:         m.ftmo_drawdown_pct ?? null,
           max_drawdown_duration_days: m.max_drawdown_duration_days,
           avg_drawdown_duration_days: m.avg_drawdown_duration_days ?? null,
