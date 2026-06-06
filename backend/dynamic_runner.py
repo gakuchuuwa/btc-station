@@ -345,6 +345,17 @@ def run_dynamic_code(code_string: str, df, parameters: dict, timeframe: str = '4
         _c_dd_pct = ((closed_equity_series - _c_peak) / _c_peak * 100).clip(upper=0)
         _closed_max_dd_pct = round(abs(float(_c_dd_pct.min())), 4) if len(_c_dd_pct) else 0.0
 
+        closed_max_dd_peak_ts = None
+        closed_max_dd_trough_ts = None
+        try:
+            if len(_c_dd_pct) > 0 and _c_dd_pct.min() < 0:
+                trough_idx = _c_dd_pct.idxmin()
+                closed_max_dd_trough_ts = int(trough_idx.timestamp())
+                peak_idx = closed_equity_series.loc[:trough_idx].idxmax()
+                closed_max_dd_peak_ts = int(peak_idx.timestamp())
+        except Exception:
+            pass
+
         # FTMO 式最大回撤（相对初始本金，基准固定不上移）
         _ftmo_dd_pct = round(abs(float(((pf_value - init_cash) / init_cash * 100).clip(upper=0).min())), 4) if len(pf_value) else 0.0
 
@@ -717,6 +728,8 @@ def run_dynamic_code(code_string: str, df, parameters: dict, timeframe: str = '4
             "closed_max_drawdown_pct": _closed_max_dd_pct,
             "max_dd_peak_ts":         max_dd_peak_ts,
             "max_dd_trough_ts":       max_dd_trough_ts,
+            "closed_max_dd_peak_ts":   closed_max_dd_peak_ts,
+            "closed_max_dd_trough_ts": closed_max_dd_trough_ts,
             "ftmo_drawdown_pct":      _ftmo_dd_pct,
             "max_drawdown_duration_days": max_dd_duration_days,
             "avg_drawdown_duration_days": avg_dd_duration_days,
