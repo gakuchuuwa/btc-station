@@ -432,7 +432,7 @@ export default function StrategyPage() {
       processResult(result, fullCandles)
       const m = result.metrics as Record<string, number>
       const npct = m.total_return_pct ?? 0
-      setLogs(p => [...p, `✓ ${strategyName} 回测完成`, `净收益 ${npct >= 0 ? '+' : ''}${npct.toFixed(2)}% | 回撤 ${(m.max_drawdown_pct ?? 0).toFixed(2)}% | 胜率 ${(m.win_rate_pct ?? 0).toFixed(1)}% | ${m.total_trades ?? 0} 笔`])
+      setLogs(p => [...p, `✓ ${strategyName} 回测完成`, `净收益 ${npct >= 0 ? '+' : ''}${npct.toFixed(2)}% | 回撤 ${(m.ftmo_drawdown_pct ?? m.max_drawdown_pct ?? 0).toFixed(2)}% | 胜率 ${(m.win_rate_pct ?? 0).toFixed(1)}% | ${m.total_trades ?? 0} 笔`])
     } catch (e: unknown) {
       setLogs(p => [...p, `✗ ${(e as Error).message}`])
     } finally { setRunning(false) }
@@ -484,7 +484,7 @@ export default function StrategyPage() {
                 epoch: payload.iter,
                 total_epochs: payload.total,
                 profit_pct: Number(r.net_profit_pct) ?? 0,
-                drawdown_pct: Number(r.max_drawdown_pct) ?? 0,
+                drawdown_pct: Number(r.ftmo_drawdown_pct ?? r.max_drawdown_pct) ?? 0,
                 trades: Number(r.total_trades) ?? 0,
                 win_rate_pct: Number(r.win_rate_pct) ?? 0,
                 params: r.parameters as Record<string, string>,
@@ -501,7 +501,7 @@ export default function StrategyPage() {
               .map((r: Record<string, unknown>, i: number) => ({
                 epoch: i + 1, total_epochs: payload.total_combinations,
                 profit_pct: Number(r.net_profit_pct) ?? 0,
-                drawdown_pct: Number(r.max_drawdown_pct) ?? 0,
+                drawdown_pct: Number(r.ftmo_drawdown_pct ?? r.max_drawdown_pct) ?? 0,
                 trades: Number(r.total_trades) ?? 0,
                 win_rate_pct: Number(r.win_rate_pct) ?? 0,
                 params: r.parameters as Record<string, string>,
@@ -543,7 +543,7 @@ export default function StrategyPage() {
         }
         processResult(result, fullCandles)
         const m = result.metrics as Record<string, number>
-        setLogs(p => [...p, `✓ 最优参数回测完成 | 收益 ${(m.total_return_pct ?? 0) >= 0 ? '+' : ''}${(m.total_return_pct ?? 0).toFixed(2)}% | 回撤 ${(m.max_drawdown_pct ?? 0).toFixed(2)}%`])
+        setLogs(p => [...p, `✓ 最优参数回测完成 | 收益 ${(m.total_return_pct ?? 0) >= 0 ? '+' : ''}${(m.total_return_pct ?? 0).toFixed(2)}% | 回撤 ${(m.ftmo_drawdown_pct ?? m.max_drawdown_pct ?? 0).toFixed(2)}%`])
       } catch (e: unknown) { setLogs(p => [...p, `✗ ${(e as Error).message}`]) }
       finally { setRunning(false) }
     })()
@@ -799,7 +799,7 @@ export default function StrategyPage() {
               <span style={{ color: (summary.net_profit_pct ?? 0) >= 0 ? '#26a69a' : '#ef5350', fontWeight:600 }}>
                 {(summary.net_profit_pct ?? 0) >= 0 ? '+' : ''}{(summary.net_profit_pct ?? 0).toFixed(2)}%
               </span>
-              <span style={{ color:'#787b86' }}>回撤 <b style={{ color:'#ef5350' }}>{(summary.max_drawdown_pct ?? 0).toFixed(2)}%</b></span>
+              <span style={{ color:'#787b86' }}>回撤 <b style={{ color:'#ef5350' }}>{(summary.ftmo_drawdown_pct ?? summary.max_drawdown_pct ?? 0).toFixed(2)}%</b></span>
               <span style={{ color:'#787b86' }}>胜率 <b style={{ color:'#00d4ff' }}>{(summary.win_rate_pct ?? 0).toFixed(1)}%</b></span>
               <span style={{ color:'#787b86' }}>{summary.total_trades ?? 0} 笔</span>
               <button 
