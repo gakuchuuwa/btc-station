@@ -371,7 +371,7 @@ function SummaryGrid({ summary }: { summary: BacktestSummary }) {
   ];
 
   const cellStyle: React.CSSProperties = {
-    display: "flex", justifyContent: "space-between", alignItems: "center",
+    display: "flex", alignItems: "center", gap: 8,
     padding: "3px 0", borderBottom: "1px solid rgba(255,255,255,0.04)",
   };
 
@@ -382,8 +382,8 @@ function SummaryGrid({ summary }: { summary: BacktestSummary }) {
           <div style={{ fontSize: 9, fontWeight: 700, color: muteColor, textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 6 }}>{g.title}</div>
           {g.rows.map(r => (
             <div key={r.label} style={cellStyle}>
-              <span style={{ fontSize: 10, color: muteColor }}>{r.label}</span>
-              <span style={{ fontSize: 11, fontWeight: 600, fontFamily: "monospace", color: r.color ?? textColor }}>{r.value}</span>
+              <span style={{ fontSize: 10, color: muteColor, whiteSpace: "nowrap" }}>{r.label}</span>
+              <span style={{ fontSize: 11, fontWeight: 600, fontFamily: "monospace", color: r.color ?? textColor, whiteSpace: "nowrap" }}>{r.value}</span>
             </div>
           ))}
         </div>

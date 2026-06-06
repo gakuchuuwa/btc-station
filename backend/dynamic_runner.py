@@ -499,58 +499,58 @@ def run_dynamic_code(code_string: str, df, parameters: dict, timeframe: str = '4
         except Exception:
             pass
 
-        # ── 最大回撤持续时间（天）────────────────────────────────────
+        # ── 最大回撤持续时间（天）—— 基于结算资金 ──────────────────
         max_dd_duration_days = None
-        try:
-            mdd_dur = stats.get("Max Drawdown Duration")
-            if mdd_dur is not None:
-                max_dd_duration_days = int(pd.Timedelta(mdd_dur).days)
-        except Exception:
-            pass
-
-        # ── 回撤事件统计：平均回撤持续、平均回撤幅度、最大回撤时刻剩余收益 ──
         avg_dd_duration_days = None
         avg_dd_pct = None
         max_dd_profit_at_trough = None
         try:
-            if len(pf_value) > 1:
-                peak_series = pf_value.cummax()
-                in_dd = pf_value < peak_series  # 是否处于回撤中
+            if len(closed_equity_series) > 1:
+                c_peak_s = closed_equity_series.cummax()
+                in_dd = closed_equity_series < c_peak_s
 
                 dd_durations = []
                 dd_depths = []
                 start_idx = None
-                local_peak = None
-                for i, (ts_i, val) in enumerate(pf_value.items()):
-                    pk = float(peak_series.iloc[i])
+                for i, (ts_i, val) in enumerate(closed_equity_series.items()):
+                    pk = float(c_peak_s.iloc[i])
                     if val < pk:  # 进入回撤
                         if start_idx is None:
                             start_idx = i
-                            local_peak = pk
                         depth = (pk - val) / pk * 100
                         dd_depths.append(depth)
                     else:  # 离开回撤
                         if start_idx is not None:
-                            dur = i - start_idx
-                            # 转换为天数
                             try:
-                                t_start = pf_value.index[start_idx]
-                                t_end   = pf_value.index[i]
+                                t_start = closed_equity_series.index[start_idx]
+                                t_end   = closed_equity_series.index[i]
                                 dur_days = (t_end - t_start).days
                             except Exception:
-                                dur_days = dur
+                                dur_days = i - start_idx
                             dd_durations.append(dur_days)
                             start_idx = None
-                            local_peak = None
+
+                # 如果最后仍在回撤中（尚未恢复到新高）
+                if start_idx is not None:
+                    try:
+                        t_start = closed_equity_series.index[start_idx]
+                        t_end   = closed_equity_series.index[-1]
+                        dur_days = (t_end - t_start).days
+                    except Exception:
+                        dur_days = len(closed_equity_series) - start_idx
+                    dd_durations.append(dur_days)
 
                 if dd_durations:
+                    max_dd_duration_days = max(dd_durations)
                     avg_dd_duration_days = round(sum(dd_durations) / len(dd_durations), 1)
                 if dd_depths:
                     avg_dd_pct = round(sum(dd_depths) / len(dd_depths), 4)
 
-                # 最大回撤波谷时刻账户净值 - 初始本金 = 剩余利润
-                trough_val = float(pf_value.iloc[_dd_pct.argmin()]) if len(_dd_pct) > 0 else init_cash
-                max_dd_profit_at_trough = round(trough_val - init_cash, 2)
+                # 最大回撤波谷时刻的结算余额 - 初始本金 = 剩余利润
+                if len(_c_dd_pct) > 0 and _c_dd_pct.min() < 0:
+                    trough_idx = _c_dd_pct.argmin()
+                    trough_val = float(closed_equity_series.iloc[trough_idx])
+                    max_dd_profit_at_trough = round(trough_val - init_cash, 2)
         except Exception:
             pass
 
