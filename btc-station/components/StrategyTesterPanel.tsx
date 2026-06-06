@@ -423,7 +423,7 @@ function ConsoleTab({ logs, running, summary }: { logs: string[]; running: boole
   );
 }
 
-function EquityTab({ equity, balance, summary }: { equity: EquityPoint[]; balance?: EquityPoint[]; summary?: BacktestSummary | null }) {
+function EquityTab({ equity, balance, trades = [], summary }: { equity: EquityPoint[]; balance?: EquityPoint[]; trades?: TradeRecord[]; summary?: BacktestSummary | null }) {
   if (equity.length === 0) {
     return (
       <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "var(--text-mute)", fontSize: 12 }}>
@@ -448,14 +448,36 @@ function EquityTab({ equity, balance, summary }: { equity: EquityPoint[]; balanc
     hovertemplate: "%{x}<br>浮动: $%{y:,.2f}<extra></extra>",
   };
 
-  const balanceTrace: Plotly.Data | null = balance && balance.length > 0 ? {
+  // Build balance curve directly from trades to include entry/exit details
+  let cumBal = initialCapital;
+  const balanceX: string[] = [xs[0] || new Date().toISOString().slice(0, 10)];
+  const balanceY: number[] = [cumBal];
+  const balanceHover: string[] = ["初始本金"];
+
+  const sortedTrades = [...trades].sort((a, b) => (a.exit_time || 0) - (b.exit_time || 0));
+  for (const t of sortedTrades) {
+    if (t.exit_time) {
+      cumBal += t.pnl_abs || 0;
+      balanceX.push(new Date(t.exit_time * 1000).toISOString().slice(0, 10));
+      balanceY.push(cumBal);
+      balanceHover.push(
+        `进场价: $${t.entry_price?.toFixed(2) || 0}<br>` +
+        `出场价: $${t.exit_price?.toFixed(2) || 0}<br>` +
+        `数量: ${t.size?.toFixed(4) || 0}<br>` +
+        `盈亏: ${t.pnl_abs >= 0 ? "+" : ""}$${t.pnl_abs?.toFixed(2) || 0}`
+      );
+    }
+  }
+
+  const balanceTrace: Plotly.Data | null = balanceY.length > 1 ? {
     type: "scatter",
     mode: "lines",
     line: { shape: "vh", color: "#26a69a", width: 2 }, // Step-line for closed trades
-    x: balance.map(p => new Date(p.time * 1000).toISOString().slice(0, 10)),
-    y: balance.map(p => p.equity),
+    x: balanceX,
+    y: balanceY,
+    text: balanceHover,
     name: "结算资金",
-    hovertemplate: "%{x}<br>结算: $%{y:,.2f}<extra></extra>",
+    hovertemplate: "%{x}<br>结算: $%{y:,.2f}<br><br>%{text}<extra></extra>",
   } : null;
 
 
@@ -1334,7 +1356,7 @@ export default function StrategyTesterPanel({
         {/* Content */}
         <div style={{ flex: 1, overflow: "hidden" }}>
           {activeTab === "回测控制台" && <ConsoleTab logs={logs} running={running} summary={summary} />}
-          {activeTab === "资金曲线"   && <EquityTab equity={equity} balance={balance} summary={summary} />}
+          {activeTab === "资金曲线"   && <EquityTab equity={equity} balance={balance} trades={trades} summary={summary} />}
           {activeTab === "交易明细"   && <TradesTab trades={trades} />}
           {activeTab === "参数优化"   && <OptimizeTab onOptimizeStart={onOptimizeStart} optimizeStatus={optimizeStatus} optimizeEpochs={optimizeEpochs} optimizeError={optimizeError} optimizeProgress={optimizeProgress} onOptimizeCsvDownload={onOptimizeCsvDownload} onApplyBestParams={onApplyBestParams} strategyCode={strategyCode} strategyName={strategyName} />}
           {activeTab === "FTMO 风控"  && <FtmoTab ftmoScan={ftmoScan} />}
@@ -1375,7 +1397,7 @@ export default function StrategyTesterPanel({
       {!collapsed && (
         <div style={{ flex: 1, overflow: "hidden" }}>
           {activeTab === "回测控制台" && <ConsoleTab logs={logs} running={running} summary={summary} />}
-          {activeTab === "资金曲线"   && <EquityTab equity={equity} balance={balance} summary={summary} />}
+          {activeTab === "资金曲线"   && <EquityTab equity={equity} balance={balance} trades={trades} summary={summary} />}
           {activeTab === "交易明细"   && <TradesTab trades={trades} />}
           {activeTab === "参数优化"   && <OptimizeTab onOptimizeStart={onOptimizeStart} optimizeStatus={optimizeStatus} optimizeEpochs={optimizeEpochs} optimizeError={optimizeError} optimizeProgress={optimizeProgress} onOptimizeCsvDownload={onOptimizeCsvDownload} onApplyBestParams={onApplyBestParams} strategyCode={strategyCode} strategyName={strategyName} />}
           {activeTab === "FTMO 风控"  && <FtmoTab ftmoScan={ftmoScan} />}
