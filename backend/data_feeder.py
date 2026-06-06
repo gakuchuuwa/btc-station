@@ -30,11 +30,11 @@ class DataFeeder:
         if os.path.exists(filepath):
             cached_df = pd.read_csv(filepath)
             
-        # 1. SMART UPDATE: If we already have a large enough cache, just fetch the latest 100 candles
-        if not cached_df.empty and len(cached_df) >= limit * 0.8:
+        # 1. SMART UPDATE: If we already have a large enough cache, just fetch the latest 300 candles
+        if not cached_df.empty and len(cached_df) > 1000:
             print(f"Cache found with {len(cached_df)} rows. Quick updating latest candles...")
             try:
-                recent_ohlcv = self.exchange.fetch_ohlcv(symbol, timeframe, limit=100)
+                recent_ohlcv = self.exchange.fetch_ohlcv(symbol, timeframe, limit=300)
                 recent_df = pd.DataFrame(recent_ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
                 recent_df['timestamp'] = pd.to_datetime(recent_df['timestamp'], unit='ms', utc=True).dt.tz_localize(None)
 
@@ -138,6 +138,7 @@ class DataFeeder:
         Should be run async on server startup.
         每个周期所需本数（从2018年起）：1h≈70000，4h≈18000，1d≈3000
         """
+        import time
         # 每个周期独立设定本数，覆盖 2018 年至今
         tf_limits = {
             '1m':  500000,
@@ -148,14 +149,19 @@ class DataFeeder:
             '1d':    3000,
             '1w':     500,
         }
-        for tf in timeframes:
-            tf_limit = tf_limits.get(tf, limit)
-            print(f"[Data Syncer] Preloading {symbol} {tf} (limit={tf_limit})...")
-            try:
-                self.fetch_ohlcv(symbol, tf, limit=tf_limit)
-                print(f"[Data Syncer] OK {tf} synchronized.")
-            except Exception as e:
-                print(f"[Data Syncer] ERR syncing {tf}: {e}")
+        
+        while True:
+            for tf in timeframes:
+                tf_limit = tf_limits.get(tf, limit)
+                print(f"[Data Syncer] Preloading {symbol} {tf} (limit={tf_limit})...")
+                try:
+                    self.fetch_ohlcv(symbol, tf, limit=tf_limit)
+                    print(f"[Data Syncer] OK {tf} synchronized.")
+                except Exception as e:
+                    print(f"[Data Syncer] ERR syncing {tf}: {e}")
+            
+            print("[Data Syncer] Next sync in 1 hour...")
+            time.sleep(3600)
 
 
 if __name__ == '__main__':
