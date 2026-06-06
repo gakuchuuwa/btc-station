@@ -582,7 +582,7 @@ function EquityTab({ equity, balance, trades = [], summary }: { equity: EquityPo
       xref: "x", yref: "paper",
       x0: c_x0, x1: c_x1,
       y0: 0, y1: 1,
-      fillcolor: "rgba(38, 166, 154, 0.15)", // green tint for closed dd
+      fillcolor: "rgba(239, 83, 80, 0.15)", // red tint for closed dd
       line: { width: 0 }
     });
   }
@@ -608,8 +608,8 @@ function EquityTab({ equity, balance, trades = [], summary }: { equity: EquityPo
       xref: "x", yref: "y",
       text: `最大回撤 -${(closedMaxDd * 100).toFixed(2)}%`,
       showarrow: true,
-      arrowcolor: "#26a69a",
-      font: { color: "#26a69a", size: 10, weight: "bold" } as any,
+      arrowcolor: "#ef5350",
+      font: { color: "#ef5350", size: 10, weight: "bold" } as any,
       ax: 0, ay: -40
     });
   }
