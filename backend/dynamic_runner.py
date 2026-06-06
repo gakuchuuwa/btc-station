@@ -530,10 +530,12 @@ def run_dynamic_code(code_string: str, df, parameters: dict, timeframe: str = '4
                                 t_start = closed_equity_series.index[start_idx]
                                 t_end   = closed_equity_series.index[i]
                                 dur_days = (t_end - t_start).days
+                                rec_ts = int(t_end.timestamp()) if hasattr(t_end, 'timestamp') else None
                             except Exception:
                                 dur_days = i - start_idx
+                                rec_ts = None
                             dd_durations.append(dur_days)
-                            dd_events.append({"dur_days": dur_days, "max_depth": current_dd_max_depth})
+                            dd_events.append({"dur_days": dur_days, "max_depth": current_dd_max_depth, "recovery_ts": rec_ts})
                             start_idx = None
 
                 # 如果最后仍在回撤中（尚未恢复到新高）
@@ -542,14 +544,18 @@ def run_dynamic_code(code_string: str, df, parameters: dict, timeframe: str = '4
                         t_start = closed_equity_series.index[start_idx]
                         t_end   = closed_equity_series.index[-1]
                         dur_days = (t_end - t_start).days
+                        rec_ts = int(t_end.timestamp()) if hasattr(t_end, 'timestamp') else None
                     except Exception:
                         dur_days = len(closed_equity_series) - start_idx
+                        rec_ts = None
                     dd_durations.append(dur_days)
-                    dd_events.append({"dur_days": dur_days, "max_depth": current_dd_max_depth})
+                    dd_events.append({"dur_days": dur_days, "max_depth": current_dd_max_depth, "recovery_ts": rec_ts})
 
+                closed_max_dd_recovery_ts = None
                 if dd_events:
                     deepest_dd_event = max(dd_events, key=lambda x: x["max_depth"])
                     max_dd_duration_days = deepest_dd_event["dur_days"]
+                    closed_max_dd_recovery_ts = deepest_dd_event["recovery_ts"]
                     avg_dd_duration_days = round(sum(dd_durations) / len(dd_durations), 1)
                 if dd_depths:
                     avg_dd_pct = round(sum(dd_depths) / len(dd_depths), 4)
@@ -738,6 +744,7 @@ def run_dynamic_code(code_string: str, df, parameters: dict, timeframe: str = '4
             "max_dd_trough_ts":       max_dd_trough_ts,
             "closed_max_dd_peak_ts":   closed_max_dd_peak_ts,
             "closed_max_dd_trough_ts": closed_max_dd_trough_ts,
+            "closed_max_dd_recovery_ts": closed_max_dd_recovery_ts,
             "ftmo_drawdown_pct":      _ftmo_dd_pct,
             "max_drawdown_duration_days": max_dd_duration_days,
             "avg_drawdown_duration_days": avg_dd_duration_days,

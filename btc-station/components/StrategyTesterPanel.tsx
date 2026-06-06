@@ -72,6 +72,7 @@ export interface BacktestSummary {
   max_dd_trough_ts?: number | null;
   closed_max_dd_peak_ts?: number | null;
   closed_max_dd_trough_ts?: number | null;
+  closed_max_dd_recovery_ts?: number | null;
   ftmo_drawdown_pct?: number | null;
   max_drawdown_duration_days?: number | null;
   avg_drawdown_duration_days?: number | null;
@@ -549,12 +550,17 @@ function EquityTab({ equity, balance, trades = [], summary }: { equity: EquityPo
   // Closed drawdown annotation
   let c_x0: string | undefined;
   let c_x1: string | undefined;
+  let c_x2: string | undefined;
   let c_annotationY: number | undefined;
   let closedMaxDd = summary?.closed_max_drawdown_pct ? Math.abs(summary.closed_max_drawdown_pct) / 100 : 0;
 
   if (summary?.closed_max_dd_peak_ts && summary?.closed_max_dd_trough_ts) {
     c_x0 = new Date(summary.closed_max_dd_peak_ts * 1000).toISOString().slice(0, 10);
     c_x1 = new Date(summary.closed_max_dd_trough_ts * 1000).toISOString().slice(0, 10);
+    c_x2 = summary?.closed_max_dd_recovery_ts 
+      ? new Date(summary.closed_max_dd_recovery_ts * 1000).toISOString().slice(0, 10) 
+      : c_x1;
+
     let minDiff = Infinity;
     for (let i = 0; i < balanceY.length; i++) {
       const bTs = new Date(balanceX[i]).getTime() / 1000;
@@ -577,11 +583,11 @@ function EquityTab({ equity, balance, trades = [], summary }: { equity: EquityPo
       line: { width: 0 }
     });
   }
-  if (closedMaxDd > 0 && c_x0 && c_x1) {
+  if (closedMaxDd > 0 && c_x0 && c_x2) {
     shapes.push({
       type: "rect",
       xref: "x", yref: "paper",
-      x0: c_x0, x1: c_x1,
+      x0: c_x0, x1: c_x2,
       y0: 0, y1: 1,
       fillcolor: "rgba(239, 83, 80, 0.15)", // red tint for closed dd
       line: { width: 0 }
