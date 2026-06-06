@@ -67,6 +67,8 @@ export interface BacktestSummary {
   benchmark_return_abs?: number | null;
   cagr_pct?: number | null;
   max_drawdown_pct: number;
+  max_dd_peak_ts?: number | null;
+  max_dd_trough_ts?: number | null;
   ftmo_drawdown_pct?: number | null;
   max_drawdown_duration_days?: number | null;
   avg_drawdown_duration_days?: number | null;
@@ -419,7 +421,7 @@ function ConsoleTab({ logs, running, summary }: { logs: string[]; running: boole
   );
 }
 
-function EquityTab({ equity, initialCapital }: { equity: EquityPoint[]; initialCapital: number }) {
+function EquityTab({ equity, summary }: { equity: EquityPoint[]; summary?: BacktestSummary | null }) {
   if (equity.length === 0) {
     return (
       <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "var(--text-mute)", fontSize: 12 }}>
@@ -428,6 +430,7 @@ function EquityTab({ equity, initialCapital }: { equity: EquityPoint[]; initialC
     );
   }
 
+  const initialCapital = summary?.initial_capital ?? 10000;
   const xs = equity.map(p => new Date(p.time * 1000).toISOString().slice(0, 10));
   const ys = equity.map(p => p.equity);
   const colors = ys.map(y => y >= initialCapital ? "#26a69a" : "#ef5350");
@@ -453,23 +456,52 @@ function EquityTab({ equity, initialCapital }: { equity: EquityPoint[]; initialC
     showlegend: false,
   };
 
-  let maxDd = 0;
-  let maxDdPeakIdx = 0;
-  let maxDdTroughIdx = 0;
-  let currentPeakVal = -Infinity;
-  let currentPeakIdx = 0;
+  let maxDd = summary?.max_drawdown_pct ? Math.abs(summary.max_drawdown_pct) / 100 : 0;
+  
+  // Use precise timestamps from backend if available
+  let x0: string | undefined;
+  let x1: string | undefined;
+  let annotationY: number | undefined;
 
-  for (let i = 0; i < ys.length; i++) {
-    const y = ys[i];
-    if (y > currentPeakVal) {
-      currentPeakVal = y;
-      currentPeakIdx = i;
+  if (summary?.max_dd_peak_ts && summary?.max_dd_trough_ts) {
+    x0 = new Date(summary.max_dd_peak_ts * 1000).toISOString().slice(0, 10);
+    x1 = new Date(summary.max_dd_trough_ts * 1000).toISOString().slice(0, 10);
+    // find the closest downsampled equity value for the trough to place the annotation
+    let minDiff = Infinity;
+    for (let i = 0; i < equity.length; i++) {
+      const diff = Math.abs(equity[i].time - summary.max_dd_trough_ts);
+      if (diff < minDiff) {
+        minDiff = diff;
+        annotationY = equity[i].equity;
+      }
     }
-    const dd = currentPeakVal > 0 ? (currentPeakVal - y) / currentPeakVal : 0;
-    if (dd > maxDd) {
-      maxDd = dd;
-      maxDdPeakIdx = currentPeakIdx;
-      maxDdTroughIdx = i;
+  } else {
+    // Fallback to manually scanning the downsampled curve
+    let localMaxDd = 0;
+    let maxDdPeakIdx = 0;
+    let maxDdTroughIdx = 0;
+    let currentPeakVal = -Infinity;
+    let currentPeakIdx = 0;
+
+    for (let i = 0; i < ys.length; i++) {
+      const y = ys[i];
+      if (y > currentPeakVal) {
+        currentPeakVal = y;
+        currentPeakIdx = i;
+      }
+      const dd = currentPeakVal > 0 ? (currentPeakVal - y) / currentPeakVal : 0;
+      if (dd > localMaxDd) {
+        localMaxDd = dd;
+        maxDdPeakIdx = currentPeakIdx;
+        maxDdTroughIdx = i;
+      }
+    }
+    
+    if (!summary?.max_drawdown_pct) maxDd = localMaxDd;
+    if (localMaxDd > 0) {
+      x0 = xs[maxDdPeakIdx];
+      x1 = xs[maxDdTroughIdx];
+      annotationY = ys[maxDdTroughIdx];
     }
   }
 
@@ -490,17 +522,17 @@ function EquityTab({ equity, initialCapital }: { equity: EquityPoint[]; initialC
     yaxis: { gridcolor: "#1a1a1a", tickfont: { size: 10 }, tickprefix: "$", showgrid: true },
     hovermode: "x unified",
     showlegend: false,
-    shapes: maxDd > 0 ? [{
+    shapes: (maxDd > 0 && x0 && x1) ? [{
       type: "rect",
       xref: "x", yref: "paper",
-      x0: xs[maxDdPeakIdx], x1: xs[maxDdTroughIdx],
+      x0: x0, x1: x1,
       y0: 0, y1: 1,
       fillcolor: "rgba(239, 83, 80, 0.15)",
       line: { width: 0 }
     }] : [],
-    annotations: maxDd > 0 ? [{
-      x: xs[maxDdTroughIdx],
-      y: ys[maxDdTroughIdx],
+    annotations: (maxDd > 0 && x1 && annotationY !== undefined) ? [{
+      x: x1,
+      y: annotationY,
       xref: "x", yref: "y",
       text: `最大回撤 -${(maxDd * 100).toFixed(2)}%`,
       showarrow: true,
@@ -1286,7 +1318,7 @@ export default function StrategyTesterPanel({
         {/* Content */}
         <div style={{ flex: 1, overflow: "hidden" }}>
           {activeTab === "回测控制台" && <ConsoleTab logs={logs} running={running} summary={summary} />}
-          {activeTab === "资金曲线"   && <EquityTab equity={equity} initialCapital={summary?.initial_capital ?? 10000} />}
+          {activeTab === "资金曲线"   && <EquityTab equity={equity} summary={summary} />}
           {activeTab === "交易明细"   && <TradesTab trades={trades} />}
           {activeTab === "参数优化"   && <OptimizeTab onOptimizeStart={onOptimizeStart} optimizeStatus={optimizeStatus} optimizeEpochs={optimizeEpochs} optimizeError={optimizeError} optimizeProgress={optimizeProgress} onOptimizeCsvDownload={onOptimizeCsvDownload} onApplyBestParams={onApplyBestParams} strategyCode={strategyCode} strategyName={strategyName} />}
           {activeTab === "FTMO 风控"  && <FtmoTab ftmoScan={ftmoScan} />}
@@ -1327,7 +1359,7 @@ export default function StrategyTesterPanel({
       {!collapsed && (
         <div style={{ flex: 1, overflow: "hidden" }}>
           {activeTab === "回测控制台" && <ConsoleTab logs={logs} running={running} summary={summary} />}
-          {activeTab === "资金曲线"   && <EquityTab equity={equity} initialCapital={summary?.initial_capital ?? 10000} />}
+          {activeTab === "资金曲线"   && <EquityTab equity={equity} summary={summary} />}
           {activeTab === "交易明细"   && <TradesTab trades={trades} />}
           {activeTab === "参数优化"   && <OptimizeTab onOptimizeStart={onOptimizeStart} optimizeStatus={optimizeStatus} optimizeEpochs={optimizeEpochs} optimizeError={optimizeError} optimizeProgress={optimizeProgress} onOptimizeCsvDownload={onOptimizeCsvDownload} onApplyBestParams={onApplyBestParams} strategyCode={strategyCode} strategyName={strategyName} />}
           {activeTab === "FTMO 风控"  && <FtmoTab ftmoScan={ftmoScan} />}
