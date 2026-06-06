@@ -589,13 +589,14 @@ function EquityTab({ equity, balance, trades = [], summary }: { equity: EquityPo
   }
 
   const annotations: Partial<Plotly.Annotations>[] = [];
+  const durText = summary?.max_drawdown_duration_days ? `<br>时长: ${summary.max_drawdown_duration_days}天` : "";
+
   if (maxDd > 0 && f_x1 && f_annotationY !== undefined) {
-    const durText = summary?.max_drawdown_duration_days ? `<br>时长: ${summary.max_drawdown_duration_days}天` : "";
     annotations.push({
       x: f_x1,
       y: f_annotationY,
       xref: "x", yref: "y",
-      text: `最大浮亏 -${(maxDd * 100).toFixed(2)}%${durText}`,
+      text: `最大浮亏 -${(maxDd * 100).toFixed(2)}%`,
       showarrow: true,
       arrowcolor: "#ef5350",
       font: { color: "#ef5350", size: 10 },
@@ -607,7 +608,7 @@ function EquityTab({ equity, balance, trades = [], summary }: { equity: EquityPo
       x: c_x1,
       y: c_annotationY,
       xref: "x", yref: "y",
-      text: `最大回撤 -${(closedMaxDd * 100).toFixed(2)}%`,
+      text: `最大回撤 -${(closedMaxDd * 100).toFixed(2)}%${durText}`,
       showarrow: true,
       arrowcolor: "#ef5350",
       font: { color: "#ef5350", size: 10, weight: "bold" } as any,
