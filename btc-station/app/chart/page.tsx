@@ -1442,6 +1442,7 @@ export default function ChartPage() {
   const [testerSummary, setTesterSummary] = useState<import('@/components/StrategyTesterPanel').BacktestSummary | null>(null)
   const [testerTrades, setTesterTrades] = useState<import('@/components/StrategyTesterPanel').TradeRecord[]>([])
   const [testerLogs, setTesterLogs] = useState<string[]>([])
+  const [testerBalance, setTesterBalance] = useState<{time:number;equity:number}[]>([])
   const [testerBtId, setTesterBtId] = useState<string | null>(null)
   const [testerEquity, setTesterEquity] = useState<{time:number;equity:number}[]>([])
   const [testerRunning, setTesterRunning] = useState(false)
@@ -1473,12 +1474,7 @@ export default function ChartPage() {
     setStrategyDropdownOpen(false)
     setSettingsOpen(false)
     setStrategyLoading(true)
-    setTesterRunning(true)
-    setTesterLogs([])
-    setTesterSummary(null)
-    setTesterTrades([])
-    setTesterEquity([])
-    setChartMarkers([])
+    setTesterRunning(true); setTesterLogs([]); setTesterSummary(null); setTesterTrades([]); setTesterEquity([]); setTesterBalance([]); setTesterFtmoScan(null); setChartMarkers([])
     setActiveStrategy(strategyId)
     setSelectedStrategy(strategyId)
     setTesterVisible(true)
@@ -1600,6 +1596,7 @@ export default function ChartPage() {
         }))
         setTesterTrades(trades)
         setTesterEquity((result.equity ?? []) as {time:number;equity:number}[])
+        setTesterBalance((result.balance ?? []) as {time:number;equity:number}[])
         if (result.csv_token) setTesterBtId(result.csv_token)
 
         // FTMO 扫描：用已有的 equity + trades 数据，不需要再跑一次回测
@@ -1967,6 +1964,7 @@ export default function ChartPage() {
         summary={testerSummary}
         trades={testerTrades}
         equity={testerEquity}
+        balance={testerBalance}
         ftmoScan={testerFtmoScan}
         strategyName={activeStrategy ? builtinStrategies.find(s => s.id === activeStrategy)?.name : undefined}
         logs={testerLogs}

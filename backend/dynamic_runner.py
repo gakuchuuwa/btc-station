@@ -789,7 +789,29 @@ def run_dynamic_code(code_string: str, df, parameters: dict, timeframe: str = '4
             "raw_parameters":         {**_extract_param_defaults(code_string), **(parameters or {})},
         }
 
-        return {"metrics": m, "trades": trades_list, "indicators": indicators_out, "equity": equity_points}, None
+        # ── 计算完结资金曲线 (Balance Curve) ─────────────────────────
+        balance_points = []
+        try:
+            cum_bal = init_cash
+            if trades_list:
+                # Add initial point
+                first_ts = equity_points[0]["time"] if equity_points else 0
+                balance_points.append({"time": first_ts, "equity": cum_bal})
+                for t in trades_list:
+                    # Parse exit timestamp
+                    ex_ts = t.get("Exit Timestamp")
+                    if ex_ts:
+                        # Convert to unix timestamp if it's an ISO string
+                        if isinstance(ex_ts, str):
+                            t_val = int(pd.Timestamp(ex_ts).timestamp())
+                        else:
+                            t_val = int(ex_ts)
+                        cum_bal += float(t.get("PnL", 0))
+                        balance_points.append({"time": t_val, "equity": round(cum_bal, 2)})
+        except Exception:
+            pass
+
+        return {"metrics": m, "trades": trades_list, "indicators": indicators_out, "equity": equity_points, "balance": balance_points}, None
 
     except Exception as e:
         return None, traceback.format_exc()

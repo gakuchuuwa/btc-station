@@ -111,6 +111,7 @@ export default function StrategyPage() {
   const [summary, setSummary] = useState<BacktestSummary | null>(null)
   const [trades, setTrades] = useState<TradeRecord[]>([])
   const [equity, setEquity] = useState<{time:number;equity:number}[]>([])
+  const [balance, setBalance] = useState<{time:number;equity:number}[]>([])
   const [markers, setMarkers] = useState<ChartMarker[]>([])
   const [strategyLines, setStrategyLines] = useState<StrategyLine[]>([])
   const [xlsxToken, setXlsxToken] = useState<string | null>(null)
@@ -145,6 +146,7 @@ export default function StrategyPage() {
         if (s.xlsxToken) setXlsxToken(s.xlsxToken as string)
         if (Array.isArray(s.trades)) setTrades(s.trades as TradeRecord[])
         if (Array.isArray(s.equity)) setEquity(s.equity as {time:number;equity:number}[])
+        if (Array.isArray(s.balance)) setBalance(s.balance as {time:number;equity:number}[])
         if (Array.isArray(s.markers)) setMarkers(s.markers as ChartMarker[])
         if (Array.isArray(s.strategyLines)) setStrategyLines(s.strategyLines as StrategyLine[])
       }
@@ -349,6 +351,7 @@ export default function StrategyPage() {
     }))
     setTrades(parsedTrades)
     setEquity((result.equity ?? []) as {time:number;equity:number}[])
+    setBalance((result.balance ?? []) as {time:number;equity:number}[])
 
     // Markers（TV 风格：做多绿色、做空红色、平仓紫色）
     const sortedTimes = [...fullCandles].sort((a, b) => a.time - b.time).map(c => c.time)
@@ -400,7 +403,7 @@ export default function StrategyPage() {
   // Run backtest
   const handleRun = useCallback(async () => {
     if (!code.trim() || running) return
-    setRunning(true); setLogs([]); setSummary(null); setTrades([]); setEquity([]); setMarkers([]); setStrategyLines([]); setXlsxToken(null)
+    setRunning(true); setLogs([]); setSummary(null); setTrades([]); setEquity([]); setBalance([]); setMarkers([]); setStrategyLines([]); setXlsxToken(null)
     const rangeLabel = btStartDate || btEndDate ? `${btStartDate || '最早'} → ${btEndDate || '至今'}` : '全量历史数据'
     setLogs([`▶ ${strategyName} · ${tf} · ${rangeLabel}`])
     try {
@@ -520,7 +523,7 @@ export default function StrategyPage() {
 
   const handleApplyBestParams = useCallback((params: Record<string, string>) => {
     setLogs([`▶ 应用最优参数: ${Object.entries(params).map(([k,v]) => `${k}=${v}`).join(', ')}`])
-    setRunning(true); setSummary(null); setTrades([]); setEquity([]); setMarkers([]); setStrategyLines([]); setXlsxToken(null)
+    setRunning(true); setSummary(null); setTrades([]); setEquity([]); setBalance([]); setMarkers([]); setStrategyLines([]); setXlsxToken(null)
     ;(async () => {
       try {
         const parsedParams: Record<string, number|string> = {}
@@ -865,7 +868,7 @@ export default function StrategyPage() {
           visible fixedPanel
           defaultTab="回测控制台"
           allowedTabs={['回测控制台','资金曲线','交易明细','下载报告']}
-          summary={summary} trades={trades} equity={equity}
+          summary={summary} trades={trades} equity={equity} balance={balance}
           xlsxDownloadUrl={xlsxToken ?? null}
           strategyName={strategyName} logs={logs} running={running}
           onOptimizeStart={handleOptimizeStart}
@@ -905,7 +908,7 @@ export default function StrategyPage() {
           visible fixedPanel
           defaultTab="参数优化"
           allowedTabs={['参数优化']}
-          summary={null} trades={[]} equity={[]}
+          summary={null} trades={[]} equity={[]} balance={[]}
           xlsxDownloadUrl={null} strategyName={strategyName}
           logs={[]} running={false} strategyCode={code}
           onOptimizeStart={handleOptimizeStart}

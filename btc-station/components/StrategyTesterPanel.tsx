@@ -421,7 +421,7 @@ function ConsoleTab({ logs, running, summary }: { logs: string[]; running: boole
   );
 }
 
-function EquityTab({ equity, summary }: { equity: EquityPoint[]; summary?: BacktestSummary | null }) {
+function EquityTab({ equity, balance, summary }: { equity: EquityPoint[]; balance?: EquityPoint[]; summary?: BacktestSummary | null }) {
   if (equity.length === 0) {
     return (
       <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "var(--text-mute)", fontSize: 12 }}>
@@ -433,18 +433,30 @@ function EquityTab({ equity, summary }: { equity: EquityPoint[]; summary?: Backt
   const initialCapital = summary?.initial_capital ?? 10000;
   const xs = equity.map(p => new Date(p.time * 1000).toISOString().slice(0, 10));
   const ys = equity.map(p => p.equity);
-  const colors = ys.map(y => y >= initialCapital ? "#26a69a" : "#ef5350");
 
   const trace: Plotly.Data = {
     type: "scatter",
     mode: "lines",
     x: xs,
     y: ys,
-    line: { color: "#26a69a", width: 1.5 },
+    line: { color: "rgba(38,166,154,0.35)", width: 1.5 }, // Make real-time equity semi-transparent
     fill: "tozeroy",
     fillcolor: "rgba(38,166,154,0.08)",
-    hovertemplate: "%{x}<br>资金: $%{y:,.2f}<extra></extra>",
+    name: "浮动资金",
+    hovertemplate: "%{x}<br>浮动: $%{y:,.2f}<extra></extra>",
   };
+
+  const balanceTrace: Plotly.Data | null = balance && balance.length > 0 ? {
+    type: "scatter",
+    mode: "lines",
+    line: { shape: "vh", color: "#26a69a", width: 2 }, // Step-line for closed trades
+    x: balance.map(p => new Date(p.time * 1000).toISOString().slice(0, 10)),
+    y: balance.map(p => p.equity),
+    name: "结算资金",
+    hovertemplate: "%{x}<br>结算: $%{y:,.2f}<extra></extra>",
+  } : null;
+
+  const data = balanceTrace ? [baseline, trace, balanceTrace] : [baseline, trace];
 
   const baseline: Plotly.Data = {
     type: "scatter",
@@ -544,7 +556,7 @@ function EquityTab({ equity, summary }: { equity: EquityPoint[]; summary?: Backt
 
   return (
     <Plot
-      data={[baseline, trace]}
+      data={data}
       layout={layout}
       config={{ responsive: true, displayModeBar: false }}
       style={{ width: "100%", height: "100%" }}
