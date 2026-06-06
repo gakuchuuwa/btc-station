@@ -534,7 +534,7 @@ function W({ widget, children }: { widget: WidgetDef; children: React.ReactNode 
   )
 }
 
-const Empty = () => <div style={{ color: 'var(--mu)', fontSize: 11, padding: 6 }}>加载中…</div>
+const Empty = ({ error }: { error?: string | null }) => <div style={{ color: error ? '#ff4d4f' : 'var(--mu)', fontSize: 11, padding: 6 }}>{error || '加载中…'}</div>
 const Dash = () => <div style={{ color: 'var(--mu)', fontSize: 22, padding: 6, fontFamily: 'var(--mono)' }}>—</div>
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1034,22 +1034,49 @@ export default function HomePage() {
   const [macro, setMacro] = useState<MacroData | null>(null)
   const [seasonality, setSeasonality] = useState<SeasonalityData | null>(null)
 
-  // 数据拉取
-  const fetchSummary = useCallback(async () => { try { const r = await fetch('/api/btc/summary'); if (r.ok) setSummary(await r.json()) } catch {} }, [])
-  const fetchNews = useCallback(async () => { try { const r = await fetch('/api/news'); if (r.ok) setNews(await r.json()) } catch {} }, [])
-  const fetchMarket = useCallback(async () => { try { const r = await fetch('/py-api/api/dashboard/market'); if (r.ok) setMarket(await r.json()) } catch {} }, [])
-  const fetchOnchain = useCallback(async () => { try { const r = await fetch('/py-api/api/dashboard/onchain'); if (r.ok) setOnchain(await r.json()) } catch {} }, [])
-  const fetchMacro = useCallback(async () => { try { const r = await fetch('/py-api/api/dashboard/macro'); if (r.ok) setMacro(await r.json()) } catch {} }, [])
-  const fetchSeasonality = useCallback(async () => { try { const r = await fetch('/py-api/api/dashboard/seasonality'); if (r.ok) setSeasonality(await r.json()) } catch {} }, [])
+  const [fetchError, setFetchError] = useState<string | null>(null)
+
+  // 安全请求包装
+  const safeFetch = async <T,>(url: string): Promise<T | null> => {
+    try { const r = await fetch(url); return r.ok ? await r.json() : null } catch { return null }
+  }
+
+  // 数据拉取 (保持独立供 setInterval 调用)
+  const fetchSummary = useCallback(async () => { const r = await safeFetch<BtcSummary>('/api/btc/summary'); if (r) setSummary(r) }, [])
+  const fetchNews = useCallback(async () => { const r = await safeFetch<NewsItem[]>('/api/news'); if (r) setNews(r) }, [])
+  const fetchMarket = useCallback(async () => { const r = await safeFetch<MarketData>('/py-api/api/dashboard/market'); if (r) setMarket(r) }, [])
+  const fetchOnchain = useCallback(async () => { const r = await safeFetch<OnchainData>('/py-api/api/dashboard/onchain'); if (r) setOnchain(r) }, [])
+  const fetchMacro = useCallback(async () => { const r = await safeFetch<MacroData>('/py-api/api/dashboard/macro'); if (r) setMacro(r) }, [])
+  const fetchSeasonality = useCallback(async () => { const r = await safeFetch<SeasonalityData>('/py-api/api/dashboard/seasonality'); if (r) setSeasonality(r) }, [])
 
   useEffect(() => {
-    fetchSummary(); fetchNews(); fetchMarket(); fetchOnchain(); fetchMacro(); fetchSeasonality()
+    // 首次并发获取并捕获整体故障
+    Promise.all([
+      safeFetch<BtcSummary>('/api/btc/summary'),
+      safeFetch<NewsItem[]>('/api/news'),
+      safeFetch<MarketData>('/py-api/api/dashboard/market'),
+      safeFetch<OnchainData>('/py-api/api/dashboard/onchain'),
+      safeFetch<MacroData>('/py-api/api/dashboard/macro'),
+      safeFetch<SeasonalityData>('/py-api/api/dashboard/seasonality')
+    ]).then(([rSum, rNews, rMkt, rOnc, rMac, rSea]) => {
+      // 若核心后端接口全部无数据，则提示后端未启动
+      if (!rMkt && !rOnc && !rMac && !rSea) {
+        setFetchError('后端服务无响应。请稍后再试。')
+      }
+      if (rSum) setSummary(rSum)
+      if (rNews) setNews(rNews)
+      if (rMkt) setMarket(rMkt)
+      if (rOnc) setOnchain(rOnc)
+      if (rMac) setMacro(rMac)
+      if (rSea) setSeasonality(rSea)
+    })
+
     const t1 = setInterval(fetchSummary, 30_000)
     const t2 = setInterval(fetchMarket, 30_000)
     const t3 = setInterval(fetchOnchain, 300_000)
-    const t4 = setInterval(fetchMacro, 300_000)  // 5 分钟（原 1 小时太长）
+    const t4 = setInterval(fetchMacro, 300_000)  // 5 分钟
     const t5 = setInterval(fetchNews, 300_000)
-    const t6 = setInterval(fetchSeasonality, 3600_000)  // 季节性数据每天才动，1 小时一次足够
+    const t6 = setInterval(fetchSeasonality, 3600_000)
     return () => { [t1, t2, t3, t4, t5, t6].forEach(clearInterval) }
   }, [fetchSummary, fetchMarket, fetchOnchain, fetchMacro, fetchNews, fetchSeasonality])
 
@@ -1064,18 +1091,18 @@ export default function HomePage() {
     let body: React.ReactNode = null
     switch (w.type) {
       case 'news_feed':    body = <W_NewsFeed news={news} />; break
-      case 'gauge_fng':    body = macroLoaded ? <W_GaugeFng fg={macro?.fear_greed ?? undefined} /> : <Empty />; break
-      case 'split_liq':    body = marketLoaded ? <W_SplitLiq ratio={market?.long_short_ratio ?? null} /> : <Empty />; break
-      case 'spark_oi':     body = marketLoaded ? <W_SparkOi oi={market?.open_interest?.binance_usd ?? null} /> : <Empty />; break
-      case 'fund_matrix':  body = marketLoaded ? <W_FundMatrix rates={market?.funding_rates} /> : <Empty />; break
-      case 'spread_table': body = marketLoaded ? <W_SpreadTable prices={market?.prices} /> : <Empty />; break
-      case 'spark_hash':   body = onchainLoaded ? <W_SparkHash hash={onchain?.hashrate_eh} /> : <Empty />; break
-      case 'mempool_bars': body = onchainLoaded ? <W_MempoolBars mempool={onchain?.mempool_count} vsize={onchain?.mempool_vsize_mb} /> : <Empty />; break
-      case 'signal_pi':    body = macroLoaded ? <W_SignalPi pi={macro?.pi_cycle ?? undefined} /> : <Empty />; break
-      case 'distance':     body = macroLoaded ? <W_Distance wma={macro?.wma200 ?? undefined} /> : <Empty />; break
-      case 'spark_dxy':    body = macroLoaded ? <W_SparkDxy dxy={macro?.dxy} /> : <Empty />; break
-      case 'correlation':  body = macroLoaded ? <W_Correlation corr={macro?.btc_spx_corr_30d} /> : <Empty />; break
-      case 'countdown':    body = onchainLoaded ? <W_Countdown interval={onchain?.avg_block_interval_sec} diff={onchain?.difficulty_adjustment ?? null} /> : <Empty />; break
+      case 'gauge_fng':    body = macroLoaded ? <W_GaugeFng fg={macro?.fear_greed ?? undefined} /> : <Empty error={fetchError} />; break
+      case 'split_liq':    body = marketLoaded ? <W_SplitLiq ratio={market?.long_short_ratio ?? null} /> : <Empty error={fetchError} />; break
+      case 'spark_oi':     body = marketLoaded ? <W_SparkOi oi={market?.open_interest?.binance_usd ?? null} /> : <Empty error={fetchError} />; break
+      case 'fund_matrix':  body = marketLoaded ? <W_FundMatrix rates={market?.funding_rates} /> : <Empty error={fetchError} />; break
+      case 'spread_table': body = marketLoaded ? <W_SpreadTable prices={market?.prices} /> : <Empty error={fetchError} />; break
+      case 'spark_hash':   body = onchainLoaded ? <W_SparkHash hash={onchain?.hashrate_eh} /> : <Empty error={fetchError} />; break
+      case 'mempool_bars': body = onchainLoaded ? <W_MempoolBars mempool={onchain?.mempool_count} vsize={onchain?.mempool_vsize_mb} /> : <Empty error={fetchError} />; break
+      case 'signal_pi':    body = macroLoaded ? <W_SignalPi pi={macro?.pi_cycle ?? undefined} /> : <Empty error={fetchError} />; break
+      case 'distance':     body = macroLoaded ? <W_Distance wma={macro?.wma200 ?? undefined} /> : <Empty error={fetchError} />; break
+      case 'spark_dxy':    body = macroLoaded ? <W_SparkDxy dxy={macro?.dxy} /> : <Empty error={fetchError} />; break
+      case 'correlation':  body = macroLoaded ? <W_Correlation corr={macro?.btc_spx_corr_30d} /> : <Empty error={fetchError} />; break
+      case 'countdown':    body = onchainLoaded ? <W_Countdown interval={onchain?.avg_block_interval_sec} diff={onchain?.difficulty_adjustment ?? null} /> : <Empty error={fetchError} />; break
     }
     return <W key={w.id} widget={w}>{body}</W>
   }

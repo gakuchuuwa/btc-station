@@ -35,8 +35,8 @@
   --gold-soft:   rgba(240,185,11,0.10);
   --purple:      #9c6cfe;
 
-  --mono:        'JetBrains Mono', monospace;
-  --sans:        'Space Grotesk', system-ui, sans-serif;
+  --mono:        var(--font-mono), 'JetBrains Mono', monospace;
+  --sans:        var(--font-space), 'Space Grotesk', system-ui, sans-serif;
 
   --max-w: 1200px;
 }

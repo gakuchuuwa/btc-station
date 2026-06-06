@@ -1,7 +1,11 @@
 import type { Metadata } from 'next'
+import { Space_Grotesk, JetBrains_Mono } from 'next/font/google'
 import './globals.css'
 import Header from '@/components/Header'
 import Footer from '@/components/Footer'
+
+const spaceGrotesk = Space_Grotesk({ subsets: ['latin'], variable: '--font-space' })
+const jetbrainsMono = JetBrains_Mono({ subsets: ['latin'], variable: '--font-mono' })
 
 export const metadata: Metadata = {
   title: 'BTC Station — 开源比特币量化回测工具',
@@ -10,11 +14,9 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="zh-CN">
+    <html lang="zh-CN" className={`${spaceGrotesk.variable} ${jetbrainsMono.variable}`}>
       <head>
         <meta name="google-site-verification" content="7VNb-yIXvf8AtJpt_oaVVocyxd_fusq61tSzuNzT2cw" />
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
       </head>
       <body>
         {children}

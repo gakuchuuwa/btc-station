@@ -1,8 +1,9 @@
 'use client'
 
 import React, { useState, useRef, useMemo, useEffect } from 'react'
-import * as XLSX from 'xlsx'
-import ReactECharts from 'echarts-for-react'
+import dynamic from 'next/dynamic'
+
+const ReactECharts = dynamic(() => import('echarts-for-react'), { ssr: false, loading: () => <div style={{ height: 400, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#888' }}>图表组件加载中...</div> })
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -167,7 +168,8 @@ export default function MonteCarloPage() {
     setFileName(file.name)
 
     const reader = new FileReader()
-    reader.onload = (evt) => {
+    reader.onload = async (evt) => {
+      const XLSX = await import('xlsx')
       const data = new Uint8Array(evt.target?.result as ArrayBuffer)
       const workbook = XLSX.read(data, { type: 'array' })
 
