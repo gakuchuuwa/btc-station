@@ -315,7 +315,23 @@ def run_dynamic_code(code_string: str, df, parameters: dict, timeframe: str = '4
         end_value  = float(pf_value.iloc[-1]) if len(pf_value) > 0 else init_cash
         net_profit = round(end_value - init_cash, 2)
 
-        # 根据用户的需求，基础的“最大回撤”仅按照平仓后的结算资金（Closed Trade Balance）计算
+        # 1. 浮动资金最大回撤（相对历史峰值，VectorBT 默认行为）
+        _peak = pf_value.cummax()
+        _dd_pct = ((pf_value - _peak) / _peak * 100).clip(upper=0)
+        _max_dd_pct = round(abs(float(_dd_pct.min())), 4) if len(_dd_pct) else 0.0
+
+        max_dd_peak_ts = None
+        max_dd_trough_ts = None
+        try:
+            if len(_dd_pct) > 0 and _dd_pct.min() < 0:
+                trough_idx = _dd_pct.idxmin()
+                max_dd_trough_ts = int(trough_idx.timestamp())
+                peak_idx = pf_value.loc[:trough_idx].idxmax()
+                max_dd_peak_ts = int(peak_idx.timestamp())
+        except Exception:
+            pass
+
+        # 2. 结算资金最大回撤（根据平仓记录）
         closed_equity_list = [init_cash]
         closed_equity_idx = [pf_value.index[0] if len(pf_value) else pd.Timestamp.now()]
         for t in trades_list:
@@ -325,20 +341,9 @@ def run_dynamic_code(code_string: str, df, parameters: dict, timeframe: str = '4
                 closed_equity_idx.append(pd.Timestamp(ex_ts))
         
         closed_equity_series = pd.Series(closed_equity_list, index=closed_equity_idx)
-        _peak = closed_equity_series.cummax()
-        _dd_pct = ((closed_equity_series - _peak) / _peak * 100).clip(upper=0)
-        _max_dd_pct = round(abs(float(_dd_pct.min())), 4) if len(_dd_pct) else 0.0
-
-        max_dd_peak_ts = None
-        max_dd_trough_ts = None
-        try:
-            if len(_dd_pct) > 0 and _dd_pct.min() < 0:
-                trough_idx = _dd_pct.idxmin()
-                max_dd_trough_ts = int(trough_idx.timestamp())
-                peak_idx = closed_equity_series.loc[:trough_idx].idxmax()
-                max_dd_peak_ts = int(peak_idx.timestamp())
-        except Exception:
-            pass
+        _c_peak = closed_equity_series.cummax()
+        _c_dd_pct = ((closed_equity_series - _c_peak) / _c_peak * 100).clip(upper=0)
+        _closed_max_dd_pct = round(abs(float(_c_dd_pct.min())), 4) if len(_c_dd_pct) else 0.0
 
         # FTMO 式最大回撤（相对初始本金，基准固定不上移）
         _ftmo_dd_pct = round(abs(float(((pf_value - init_cash) / init_cash * 100).clip(upper=0).min())), 4) if len(pf_value) else 0.0
@@ -709,6 +714,7 @@ def run_dynamic_code(code_string: str, df, parameters: dict, timeframe: str = '4
             "benchmark_return_abs":   benchmark_return_abs,
             "cagr_pct":               cagr_pct,
             "max_drawdown_pct":       _max_dd_pct,
+            "closed_max_drawdown_pct": _closed_max_dd_pct,
             "max_dd_peak_ts":         max_dd_peak_ts,
             "max_dd_trough_ts":       max_dd_trough_ts,
             "ftmo_drawdown_pct":      _ftmo_dd_pct,
