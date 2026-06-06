@@ -102,6 +102,8 @@ export interface BacktestMetrics {
   closed_max_drawdown_pct?: number;
   max_dd_peak_ts?: number;
   max_dd_trough_ts?: number;
+  closed_max_dd_peak_ts?: number;
+  closed_max_dd_trough_ts?: number;
   win_rate_pct: number;
   total_trades: number;
   sharpe?: number;

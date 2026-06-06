@@ -70,6 +70,8 @@ export interface BacktestSummary {
   closed_max_drawdown_pct?: number;
   max_dd_peak_ts?: number | null;
   max_dd_trough_ts?: number | null;
+  closed_max_dd_peak_ts?: number | null;
+  closed_max_dd_trough_ts?: number | null;
   ftmo_drawdown_pct?: number | null;
   max_drawdown_duration_days?: number | null;
   avg_drawdown_duration_days?: number | null;
@@ -498,24 +500,23 @@ function EquityTab({ equity, balance, trades = [], summary }: { equity: EquityPo
   let maxDd = summary?.max_drawdown_pct ? Math.abs(summary.max_drawdown_pct) / 100 : 0;
   
   // Use precise timestamps from backend if available
-  let x0: string | undefined;
-  let x1: string | undefined;
-  let annotationY: number | undefined;
+  let f_x0: string | undefined;
+  let f_x1: string | undefined;
+  let f_annotationY: number | undefined;
 
   if (summary?.max_dd_peak_ts && summary?.max_dd_trough_ts) {
-    x0 = new Date(summary.max_dd_peak_ts * 1000).toISOString().slice(0, 10);
-    x1 = new Date(summary.max_dd_trough_ts * 1000).toISOString().slice(0, 10);
-    // find the closest downsampled equity value for the trough to place the annotation
+    f_x0 = new Date(summary.max_dd_peak_ts * 1000).toISOString().slice(0, 10);
+    f_x1 = new Date(summary.max_dd_trough_ts * 1000).toISOString().slice(0, 10);
     let minDiff = Infinity;
     for (let i = 0; i < equity.length; i++) {
       const diff = Math.abs(equity[i].time - summary.max_dd_trough_ts);
       if (diff < minDiff) {
         minDiff = diff;
-        annotationY = equity[i].equity;
+        f_annotationY = equity[i].equity;
       }
     }
   } else {
-    // Fallback to manually scanning the downsampled curve
+    // Fallback logic for floating
     let localMaxDd = 0;
     let maxDdPeakIdx = 0;
     let maxDdTroughIdx = 0;
@@ -538,10 +539,79 @@ function EquityTab({ equity, balance, trades = [], summary }: { equity: EquityPo
     
     if (!summary?.max_drawdown_pct) maxDd = localMaxDd;
     if (localMaxDd > 0) {
-      x0 = xs[maxDdPeakIdx];
-      x1 = xs[maxDdTroughIdx];
-      annotationY = ys[maxDdTroughIdx];
+      f_x0 = xs[maxDdPeakIdx];
+      f_x1 = xs[maxDdTroughIdx];
+      f_annotationY = ys[maxDdTroughIdx];
     }
+  }
+
+  // Closed drawdown annotation
+  let c_x0: string | undefined;
+  let c_x1: string | undefined;
+  let c_annotationY: number | undefined;
+  let closedMaxDd = summary?.closed_max_drawdown_pct ? Math.abs(summary.closed_max_drawdown_pct) / 100 : 0;
+
+  if (summary?.closed_max_dd_peak_ts && summary?.closed_max_dd_trough_ts) {
+    c_x0 = new Date(summary.closed_max_dd_peak_ts * 1000).toISOString().slice(0, 10);
+    c_x1 = new Date(summary.closed_max_dd_trough_ts * 1000).toISOString().slice(0, 10);
+    let minDiff = Infinity;
+    for (let i = 0; i < balanceY.length; i++) {
+      const bTs = new Date(balanceX[i]).getTime() / 1000;
+      const diff = Math.abs(bTs - summary.closed_max_dd_trough_ts);
+      if (diff < minDiff) {
+        minDiff = diff;
+        c_annotationY = balanceY[i];
+      }
+    }
+  }
+
+  const shapes: Partial<Plotly.Shape>[] = [];
+  if (maxDd > 0 && f_x0 && f_x1) {
+    shapes.push({
+      type: "rect",
+      xref: "x", yref: "paper",
+      x0: f_x0, x1: f_x1,
+      y0: 0, y1: 1,
+      fillcolor: "rgba(239, 83, 80, 0.1)", // slightly lighter red
+      line: { width: 0 }
+    });
+  }
+  if (closedMaxDd > 0 && c_x0 && c_x1) {
+    shapes.push({
+      type: "rect",
+      xref: "x", yref: "paper",
+      x0: c_x0, x1: c_x1,
+      y0: 0, y1: 1,
+      fillcolor: "rgba(38, 166, 154, 0.15)", // green tint for closed dd
+      line: { width: 0 }
+    });
+  }
+
+  const annotations: Partial<Plotly.Annotation>[] = [];
+  if (maxDd > 0 && f_x1 && f_annotationY !== undefined) {
+    const durText = summary?.max_drawdown_duration_days ? `<br>时长: ${summary.max_drawdown_duration_days}天` : "";
+    annotations.push({
+      x: f_x1,
+      y: f_annotationY,
+      xref: "x", yref: "y",
+      text: `最大浮亏 -${(maxDd * 100).toFixed(2)}%${durText}`,
+      showarrow: true,
+      arrowcolor: "#ef5350",
+      font: { color: "#ef5350", size: 10 },
+      ax: 0, ay: 40
+    });
+  }
+  if (closedMaxDd > 0 && c_x1 && c_annotationY !== undefined) {
+    annotations.push({
+      x: c_x1,
+      y: c_annotationY,
+      xref: "x", yref: "y",
+      text: `最大回撤 -${(closedMaxDd * 100).toFixed(2)}%`,
+      showarrow: true,
+      arrowcolor: "#26a69a",
+      font: { color: "#26a69a", size: 10, weight: "bold" } as any,
+      ax: 0, ay: -40
+    });
   }
 
   const layout: Partial<Plotly.Layout> = {
@@ -554,31 +624,15 @@ function EquityTab({ equity, balance, trades = [], summary }: { equity: EquityPo
       tickfont: { size: 10 },
       showgrid: true,
       type: "date",
-      tickformat: "%Y-%m",   // 强制显示年-月
-      hoverformat: "%Y-%m-%d", // 鼠标悬停时给完整日期
-      dtick: "M3",           // 主刻度间隔 3 个月,避免太挤
+      tickformat: "%Y-%m",
+      hoverformat: "%Y-%m-%d",
+      dtick: "M3",
     },
     yaxis: { gridcolor: "#1a1a1a", tickfont: { size: 10 }, tickprefix: "$", showgrid: true },
     hovermode: "x unified",
     showlegend: false,
-    shapes: (maxDd > 0 && x0 && x1) ? [{
-      type: "rect",
-      xref: "x", yref: "paper",
-      x0: x0, x1: x1,
-      y0: 0, y1: 1,
-      fillcolor: "rgba(239, 83, 80, 0.15)",
-      line: { width: 0 }
-    }] : [],
-    annotations: (maxDd > 0 && x1 && annotationY !== undefined) ? [{
-      x: x1,
-      y: annotationY,
-      xref: "x", yref: "y",
-      text: `最大回撤 -${(maxDd * 100).toFixed(2)}%`,
-      showarrow: true,
-      arrowcolor: "#ef5350",
-      font: { color: "#ef5350", size: 10 },
-      ax: 0, ay: 30
-    }] : [],
+    shapes,
+    annotations,
   };
 
   return (
