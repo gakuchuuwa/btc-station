@@ -148,6 +148,8 @@ interface Props {
   trades?: TradeRecord[];
   /** Equity curve data points */
   equity?: EquityPoint[];
+  /** Closed-trade balance curve */
+  balance?: EquityPoint[];
   /** Download URL for the TV-compatible XLSX (S3) */
   xlsxDownloadUrl?: string | null;
   /** Strategy name shown in export filename */
@@ -1244,6 +1246,7 @@ export default function StrategyTesterPanel({
   summary,
   trades = [],
   equity = [],
+  balance = [],
   xlsxDownloadUrl,
   strategyName,
   logs = [],
@@ -1330,7 +1333,7 @@ export default function StrategyTesterPanel({
         {/* Content */}
         <div style={{ flex: 1, overflow: "hidden" }}>
           {activeTab === "回测控制台" && <ConsoleTab logs={logs} running={running} summary={summary} />}
-          {activeTab === "资金曲线"   && <EquityTab equity={equity} summary={summary} />}
+          {activeTab === "资金曲线"   && <EquityTab equity={equity} balance={balance} summary={summary} />}
           {activeTab === "交易明细"   && <TradesTab trades={trades} />}
           {activeTab === "参数优化"   && <OptimizeTab onOptimizeStart={onOptimizeStart} optimizeStatus={optimizeStatus} optimizeEpochs={optimizeEpochs} optimizeError={optimizeError} optimizeProgress={optimizeProgress} onOptimizeCsvDownload={onOptimizeCsvDownload} onApplyBestParams={onApplyBestParams} strategyCode={strategyCode} strategyName={strategyName} />}
           {activeTab === "FTMO 风控"  && <FtmoTab ftmoScan={ftmoScan} />}
@@ -1371,7 +1374,7 @@ export default function StrategyTesterPanel({
       {!collapsed && (
         <div style={{ flex: 1, overflow: "hidden" }}>
           {activeTab === "回测控制台" && <ConsoleTab logs={logs} running={running} summary={summary} />}
-          {activeTab === "资金曲线"   && <EquityTab equity={equity} summary={summary} />}
+          {activeTab === "资金曲线"   && <EquityTab equity={equity} balance={balance} summary={summary} />}
           {activeTab === "交易明细"   && <TradesTab trades={trades} />}
           {activeTab === "参数优化"   && <OptimizeTab onOptimizeStart={onOptimizeStart} optimizeStatus={optimizeStatus} optimizeEpochs={optimizeEpochs} optimizeError={optimizeError} optimizeProgress={optimizeProgress} onOptimizeCsvDownload={onOptimizeCsvDownload} onApplyBestParams={onApplyBestParams} strategyCode={strategyCode} strategyName={strategyName} />}
           {activeTab === "FTMO 风控"  && <FtmoTab ftmoScan={ftmoScan} />}
