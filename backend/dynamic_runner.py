@@ -527,7 +527,9 @@ def run_dynamic_code(code_string: str, df, parameters: dict, timeframe: str = '4
                     else:  # 离开回撤
                         if start_idx is not None:
                             try:
-                                t_start = closed_equity_series.index[start_idx]
+                                # start_idx is the first underwater point. The peak is exactly the point before it (start_idx - 1)
+                                peak_idx_for_dd = start_idx - 1 if start_idx > 0 else start_idx
+                                t_start = closed_equity_series.index[peak_idx_for_dd]
                                 t_end   = closed_equity_series.index[i]
                                 dur_days = (t_end - t_start).days
                                 rec_ts = int(t_end.timestamp()) if hasattr(t_end, 'timestamp') else None
@@ -541,7 +543,8 @@ def run_dynamic_code(code_string: str, df, parameters: dict, timeframe: str = '4
                 # 如果最后仍在回撤中（尚未恢复到新高）
                 if start_idx is not None:
                     try:
-                        t_start = closed_equity_series.index[start_idx]
+                        peak_idx_for_dd = start_idx - 1 if start_idx > 0 else start_idx
+                        t_start = closed_equity_series.index[peak_idx_for_dd]
                         t_end   = closed_equity_series.index[-1]
                         dur_days = (t_end - t_start).days
                         rec_ts = int(t_end.timestamp()) if hasattr(t_end, 'timestamp') else None
@@ -565,6 +568,13 @@ def run_dynamic_code(code_string: str, df, parameters: dict, timeframe: str = '4
                     trough_idx = _c_dd_pct.argmin()
                     trough_val = float(closed_equity_series.iloc[trough_idx])
                     max_dd_profit_at_trough = round(trough_val - init_cash, 2)
+                    
+                # 强制令 max_drawdown_duration_days = Recovery - Peak 以保证与图表红框完全一致
+                if closed_max_dd_peak_ts is not None and closed_max_dd_recovery_ts is not None:
+                    max_drawdown_duration_days = (pd.Timestamp(closed_max_dd_recovery_ts, unit='s') - pd.Timestamp(closed_max_dd_peak_ts, unit='s')).days
+                elif closed_max_dd_peak_ts is not None and len(closed_equity_series):
+                    # 尚未 recovery
+                    max_drawdown_duration_days = (closed_equity_series.index[-1] - pd.Timestamp(closed_max_dd_peak_ts, unit='s')).days
         except Exception:
             pass
 
