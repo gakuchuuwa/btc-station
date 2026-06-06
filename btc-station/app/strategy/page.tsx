@@ -802,7 +802,7 @@ export default function StrategyPage() {
               <span style={{ color: (summary.net_profit_pct ?? 0) >= 0 ? '#26a69a' : '#ef5350', fontWeight:600 }}>
                 {(summary.net_profit_pct ?? 0) >= 0 ? '+' : ''}{(summary.net_profit_pct ?? 0).toFixed(2)}%
               </span>
-              <span style={{ color:'#787b86' }}>回撤 <b style={{ color:'#ef5350' }}>{(summary.max_drawdown_pct ?? 0).toFixed(2)}%</b></span>
+              <span style={{ color:'#787b86', display:'flex', alignItems:'center', gap:4 }}>最大回撤 <b style={{ color:'#ef5350', fontSize:13 }}>{(summary.closed_max_drawdown_pct ?? 0).toFixed(2)}%</b></span>
               <span style={{ color:'#787b86' }}>胜率 <b style={{ color:'#00d4ff' }}>{(summary.win_rate_pct ?? 0).toFixed(1)}%</b></span>
               <span style={{ color:'#787b86' }}>{summary.total_trades ?? 0} 笔</span>
               <button 
