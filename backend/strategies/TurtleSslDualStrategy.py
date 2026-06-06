@@ -114,7 +114,7 @@ def execute(df, parameters):
     base_risk_percent    = float(p.get("base_risk_percent", 1.0))
     init_cash            = float(p.get("init_cash", 10000))
     fees                 = float(p.get("fees", 0.0006))
-    use_real_capital     = _bool_param(p.get("use_real_capital"), True)
+    use_real_capital     = _bool_param(p.get("use_real_capital"), False)
     real_capital         = float(p.get("real_capital", 10000))
     enable_max_qty       = _bool_param(p.get("enable_max_qty"), False)
     max_qty              = float(p.get("max_qty", 10.0))
@@ -131,7 +131,7 @@ def execute(df, parameters):
     enable_trailing      = _bool_param(p.get("enable_trailing_stop"), True)
     use_breakeven        = _bool_param(p.get("use_breakeven"), True)
     enable_regime        = _bool_param(p.get("enable_regime_filter"), True)
-    enable_obv           = _bool_param(p.get("enable_obv_filter"), False)
+    enable_obv           = _bool_param(p.get("enable_obv_filter"), True)
     use_dual_system      = _bool_param(p.get("use_dual_system"), False)
     use_s1_filter        = _bool_param(p.get("use_s1_filter"), True)
     pyramid_enable       = _bool_param(p.get("pyramid_enable"), True)
@@ -142,8 +142,8 @@ def execute(df, parameters):
     enable_rt_stop       = _bool_param(p.get("enable_realtime_stop"), True)
     enable_p1_switch_exit= _bool_param(p.get("enable_p1_switch_exit"), True)
     enable_p4_switch_exit= _bool_param(p.get("enable_p4_switch_exit"), True)
-    enable_p1_cooldown   = _bool_param(p.get("enable_p1_cooldown"), False)
-    p1_cooldown_bars     = int(p.get("p1_cooldown_bars", 55))
+    enable_p1_cooldown   = _bool_param(p.get("enable_p1_cooldown"), True)
+    p1_cooldown_bars     = int(p.get("p1_cooldown_bars", system2_period))
     p1_cooldown_mult     = float(p.get("p1_cooldown_mult", 1.0))
     # 固定数量模式（传入 fixed_qty=1 时跳过风险计算，每笔固定 1 单位，用于与 TV 对比）
     fixed_qty            = p.get("fixed_qty", None)
@@ -160,13 +160,13 @@ def execute(df, parameters):
 
     # 形态仓位倍数
     mult = {
-        (1, True) : float(p.get("mult_p1_l", 1.0)),
-        (2, True) : float(p.get("mult_p2_l", 1.0)),
-        (3, True) : float(p.get("mult_p3_l", 1.0)),
-        (4, False): float(p.get("mult_p4_s", 1.0)),
+        (1, True) : float(p.get("mult_p1_l", 2.0)),
+        (2, True) : float(p.get("mult_p2_l", 1.5)),
+        (3, True) : float(p.get("mult_p3_l", 1.3)),
+        (4, False): float(p.get("mult_p4_s", 1.8)),
         (5, True) : float(p.get("mult_p5_l", 1.0)),
-        (5, False): float(p.get("mult_p5_s", 1.0)),
-        (6, True) : float(p.get("mult_p6_l", 1.0)),
+        (5, False): float(p.get("mult_p5_s", 1.1)),
+        (6, True) : float(p.get("mult_p6_l", 1.1)),
         (6, False): float(p.get("mult_p6_s", 1.0)),
     }
 
