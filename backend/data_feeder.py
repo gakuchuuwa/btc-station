@@ -115,6 +115,10 @@ class DataFeeder:
         print(f"Saved {len(df)} rows to {filepath}")
         return df
 
+    # Global memory cache to prevent repetitive I/O and parsing
+    _df_cache: Dict[str, pd.DataFrame] = {}
+    _df_mtime: Dict[str, float] = {}
+
     def get_local_data(self, symbol: str = 'BTC/USDT', timeframe: str = '1h') -> pd.DataFrame:
         """
         Retrieves data from local cache if it exists.
@@ -125,11 +129,23 @@ class DataFeeder:
         clean_symbol = symbol.split(':')[0]
         safe_symbol = clean_symbol.replace('/', '_')
         filepath = os.path.join(self.data_dir, f"{safe_symbol}_{timeframe}.csv")
+        
         if os.path.exists(filepath):
+            # Check memory cache first
+            current_mtime = os.path.getmtime(filepath)
+            if filepath in DataFeeder._df_cache and DataFeeder._df_mtime.get(filepath) == current_mtime:
+                return DataFeeder._df_cache[filepath].copy()
+
+            # Cache miss or file updated -> Read from disk
             df = pd.read_csv(filepath)
             if 'timestamp' in df.columns:
                 df['timestamp'] = pd.to_datetime(df['timestamp']).dt.tz_localize(None)
-            return df
+            
+            # Save to memory cache
+            DataFeeder._df_cache[filepath] = df
+            DataFeeder._df_mtime[filepath] = current_mtime
+            
+            return df.copy()
         return pd.DataFrame()
 
     def preload_cache(self, symbol: str = 'BTC/USDT', timeframes: List[str] = ['1h', '4h', '1d'], limit: int = 16500):

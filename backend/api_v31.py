@@ -291,14 +291,7 @@ async def delete_strategy(sid: str, user_id: str = Depends(current_user)):
 
 @router.get("/candles/{timeframe}")
 async def get_cached_candles(timeframe: str):
-    """Return all locally-cached candles for BTC/USDT in the given timeframe.
-
-    API 只读 CSV 缓存，不主动触发 fetch_ohlcv：
-    后台 data_syncer 线程（main.py lifespan）负责写盘，API 仅读取。
-    这样避免 API 和 syncer 并发写同一个 CSV 导致互相覆盖（如 syncer 拉到 12600 根
-    后被 API 触发的 fetch_ohlcv 覆盖成 6600 根）。
-    若 CSV 还未建立（syncer 仍在拉取），返回 503 让前端重试。
-    """
+    """Return all locally-cached candles for BTC/USDT in the given timeframe."""
     import pandas as pd
     feeder = DataFeeder('okx')
     df = feeder.get_local_data("BTC/USDT", timeframe)
@@ -309,31 +302,25 @@ async def get_cached_candles(timeframe: str):
     if 'timestamp' in df.columns:
         df['timestamp'] = pd.to_datetime(df['timestamp']).dt.tz_localize(None)
 
-    # Convert to list of {time, open, high, low, close, volume}
-    records = []
-    for _, row in df.iterrows():
-        ts = row.get('timestamp') if 'timestamp' in df.columns else row.name
-        try:
-            unix_ts = int(pd.Timestamp(ts).value // 10**9)  # nanoseconds→seconds，避免本地时区偏移
-        except Exception:
-            continue
-        records.append({
-            "time": unix_ts,
-            "open": float(row["open"]),
-            "high": float(row["high"]),
-            "low": float(row["low"]),
-            "close": float(row["close"]),
-            "volume": float(row.get("volume", 0)),
-        })
+    # Fast vectorized conversion instead of slow iterrows()
+    df_json = df.copy()
+    if 'timestamp' in df_json.columns:
+        df_json['time'] = df_json['timestamp'].astype('int64') // 10**9
+    else:
+        df_json['time'] = df_json.index.astype('int64') // 10**9
+
+    # Handle optional volume
+    if 'volume' not in df_json.columns:
+        df_json['volume'] = 0
+
+    cols_to_keep = ['time', 'open', 'high', 'low', 'close', 'volume']
+    df_json = df_json[cols_to_keep]
     
-    # Sort and deduplicate
-    records.sort(key=lambda r: r["time"])
-    seen = set()
-    unique = []
-    for r in records:
-        if r["time"] not in seen:
-            seen.add(r["time"])
-            unique.append(r)
+    # Drop duplicates and sort natively in C
+    df_json = df_json.drop_duplicates(subset=['time']).sort_values('time')
+    
+    # pandas to_dict('records') is extremely fast
+    unique = df_json.to_dict(orient='records')
     
     return {"candles": unique}
 
