@@ -379,11 +379,12 @@ function SummaryGrid({ summary }: { summary: BacktestSummary }) {
     <div style={{ display: "flex", gap: 0, borderBottom: "1px solid var(--border)", flexShrink: 0 }}>
       {groups.map((g, gi) => (
         <div key={gi} style={{ flex: 1, borderRight: gi < groups.length - 1 ? "1px solid var(--border)" : "none", padding: "8px 12px" }}>
-          <div style={{ fontSize: 9, fontWeight: 700, color: muteColor, textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 6 }}>{g.title}</div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: muteColor, textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 6 }}>{g.title}</div>
           {g.rows.map(r => (
             <div key={r.label} style={cellStyle}>
-              <span style={{ fontSize: 10, color: muteColor, whiteSpace: "nowrap" }}>{r.label}</span>
-              <span style={{ fontSize: 11, fontWeight: 600, fontFamily: "monospace", color: r.color ?? textColor, whiteSpace: "nowrap" }}>{r.value}</span>
+              <span style={{ fontSize: 12, color: muteColor, whiteSpace: "nowrap" }}>{r.label}</span>
+              <span style={{ fontSize: 12, color: "rgba(255,255,255,0.15)" }}>|</span>
+              <span style={{ fontSize: 13, fontWeight: 600, fontFamily: "monospace", color: r.color ?? textColor, whiteSpace: "nowrap" }}>{r.value}</span>
             </div>
           ))}
         </div>
