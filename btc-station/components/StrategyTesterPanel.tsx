@@ -587,7 +587,7 @@ function EquityTab({ equity, balance, trades = [], summary }: { equity: EquityPo
     });
   }
 
-  const annotations: Partial<Plotly.Annotation>[] = [];
+  const annotations: Partial<Plotly.Annotations>[] = [];
   if (maxDd > 0 && f_x1 && f_annotationY !== undefined) {
     const durText = summary?.max_drawdown_duration_days ? `<br>时长: ${summary.max_drawdown_duration_days}天` : "";
     annotations.push({
