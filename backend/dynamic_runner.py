@@ -315,9 +315,18 @@ def run_dynamic_code(code_string: str, df, parameters: dict, timeframe: str = '4
         end_value  = float(pf_value.iloc[-1]) if len(pf_value) > 0 else init_cash
         net_profit = round(end_value - init_cash, 2)
 
-        # 高水位线最大回撤（相对历史峰值）
-        _peak = pf_value.cummax()
-        _dd_pct = ((pf_value - _peak) / _peak * 100).clip(upper=0)
+        # 根据用户的需求，基础的“最大回撤”仅按照平仓后的结算资金（Closed Trade Balance）计算
+        closed_equity_list = [init_cash]
+        closed_equity_idx = [pf_value.index[0] if len(pf_value) else pd.Timestamp.now()]
+        for t in trades_list:
+            ex_ts = t.get("Exit Timestamp")
+            if ex_ts:
+                closed_equity_list.append(closed_equity_list[-1] + float(t.get("PnL", 0)))
+                closed_equity_idx.append(pd.Timestamp(ex_ts))
+        
+        closed_equity_series = pd.Series(closed_equity_list, index=closed_equity_idx)
+        _peak = closed_equity_series.cummax()
+        _dd_pct = ((closed_equity_series - _peak) / _peak * 100).clip(upper=0)
         _max_dd_pct = round(abs(float(_dd_pct.min())), 4) if len(_dd_pct) else 0.0
 
         max_dd_peak_ts = None
@@ -326,7 +335,7 @@ def run_dynamic_code(code_string: str, df, parameters: dict, timeframe: str = '4
             if len(_dd_pct) > 0 and _dd_pct.min() < 0:
                 trough_idx = _dd_pct.idxmin()
                 max_dd_trough_ts = int(trough_idx.timestamp())
-                peak_idx = pf_value.loc[:trough_idx].idxmax()
+                peak_idx = closed_equity_series.loc[:trough_idx].idxmax()
                 max_dd_peak_ts = int(peak_idx.timestamp())
         except Exception:
             pass
