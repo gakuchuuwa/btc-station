@@ -701,7 +701,7 @@ export default function EditorPage() {
                   value={`${btResult.net_profit_pct >= 0 ? "+" : ""}${btResult.net_profit_pct.toFixed(2)}%`}
                   color={btResult.net_profit_pct >= 0 ? "text-[var(--up)]" : "text-[var(--down)]"}
                 />
-                <MetricCard label="最大回撤" value={`${(btResult.ftmo_drawdown_pct ?? btResult.max_drawdown_pct).toFixed(2)}%`} color="text-[var(--down)]" />
+                <MetricCard label="最大回撤" value={`${btResult.max_drawdown_pct.toFixed(2)}%`} color="text-[var(--down)]" />
                 <MetricCard label="胜率" value={`${btResult.win_rate_pct.toFixed(1)}%`} />
                 <MetricCard label="交易笔数" value={String(btResult.total_trades)} />
               </div>

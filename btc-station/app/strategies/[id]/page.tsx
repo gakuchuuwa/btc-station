@@ -210,7 +210,7 @@ export default function StrategyDetailPage() {
                 </div>
                 <div className="p-4 bg-[var(--bg)] rounded border border-[var(--border)]">
                   <div className="text-[var(--text-mute)] text-xs mb-1">最大回撤</div>
-                  <div className="text-xl font-bold text-red-500">{(result.metrics.ftmo_drawdown_pct ?? result.metrics.max_drawdown_pct).toFixed(2)}%</div>
+                  <div className="text-xl font-bold text-red-500">{result.metrics.max_drawdown_pct.toFixed(2)}%</div>
                 </div>
                 <div className="p-4 bg-[var(--bg)] rounded border border-[var(--border)]">
                   <div className="text-[var(--text-mute)] text-xs mb-1">总交易笔数</div>
