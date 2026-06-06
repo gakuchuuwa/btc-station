@@ -150,27 +150,36 @@ function getVal(row: RawRow, ...keys: string[]): number {
 export function processRawData(data: RawRow[]): Omit<ProcessedRow, 'finalScore'|'utilityScore'|'combinedScore'|'robustnessScore'|'neighborCount'|'stableNeighborCount'|'passedNeighborCount'|'isPareto'>[] {
   return data.map((row, idx) => {
     const initialCapital = getVal(row, 'Initial Capital: All', 'Initial Capital', 'Initial capital') || 10000
-    const percentProfit = getVal(row, 'Percent profitable: All', 'Percent Profitable', 'Win Rate')
+    const percentProfit = getVal(row, 'Percent profitable: All', 'Percent Profitable', 'Win Rate', 'Profitable trades')
     const grossProfit = getVal(row, 'Gross profit: All', 'Gross Profit')
     const grossLoss = Math.abs(getVal(row, 'Gross loss: All', 'Gross Loss'))
-    const maxDD = Math.abs(getVal(row, 'Max equity drawdown', 'Max Drawdown'))
-    const maxDDPct = Math.abs(getVal(row, 'Max equity drawdown %', 'Max Drawdown %'))
-    const totalTrades = getVal(row, 'Total trades: All', 'Total Trades')
-    const netProfit = getVal(row, 'Net profit: All', 'Net Profit', 'Net P&L: All', 'Total P&L')
-    const netProfitPct = getVal(row, 'Net profit %: All', 'Net Profit %', 'Net P&L %: All', 'Total P&L %')
-    const winningTrades = getVal(row, 'Winning trades: All', 'Winning Trades')
-    const losingTrades = getVal(row, 'Losing trades: All', 'Losing Trades')
+    const maxDD = Math.abs(getVal(row, 'Max equity drawdown', 'Max Drawdown', 'Max drawdown'))
+    const maxDDPct = Math.abs(getVal(row, 'Max equity drawdown %', 'Max Drawdown %', 'Max drawdown %'))
+    let totalTrades = getVal(row, 'Total trades: All', 'Total Trades')
+    const netProfit = getVal(row, 'Net profit: All', 'Net Profit', 'Net P&L: All', 'Total P&L', 'Net PnL: All', 'Total PnL')
+    const netProfitPct = getVal(row, 'Net profit %: All', 'Net Profit %', 'Net P&L %: All', 'Total P&L %', 'Net PnL %: All', 'Total PnL %')
+    let winningTrades = getVal(row, 'Winning trades: All', 'Winning Trades')
+    let losingTrades = getVal(row, 'Losing trades: All', 'Losing Trades')
+    
+    const ptr = row['Profitable trades ratio'] || row['Profitable Trades Ratio']
+    if (typeof ptr === 'string' && ptr.includes('/')) {
+      const parts = ptr.split('/')
+      winningTrades = parseInt(parts[0], 10) || 0
+      totalTrades = parseInt(parts[1], 10) || 0
+      losingTrades = totalTrades - winningTrades
+    }
+
     let avgWin = getVal(row, 'Avg winning trade: All', 'Avg Trade')
     let avgLoss = Math.abs(getVal(row, 'Avg losing trade: All', 'Avg Trade'))
     const largestLoss = Math.abs(getVal(row, 'Largest losing trade: All', 'Largest Losing Trade'))
     const largestLossPct = Math.abs(getVal(row, 'Largest losing trade percent: All', 'Largest Losing Trade %'))
     const sharpe = getVal(row, 'Sharpe ratio', 'Sharpe Ratio')
     const sortino = getVal(row, 'Sortino ratio', 'Sortino Ratio')
-    const profitFactor = getVal(row, 'Profit factor: All', 'Profit Factor')
+    const profitFactor = getVal(row, 'Profit factor: All', 'Profit Factor', 'Profit factor')
     const marginCalls = getVal(row, 'Margin calls: All', 'Margin Calls', 'Margin calls')
     // 多/空分组(用于多空失衡惩罚)
-    const netPnlLong  = getVal(row, 'Net P&L: Long',  'Net profit: Long')
-    const netPnlShort = getVal(row, 'Net P&L: Short', 'Net profit: Short')
+    const netPnlLong  = getVal(row, 'Net P&L: Long',  'Net profit: Long', 'Net PnL: Long')
+    const netPnlShort = getVal(row, 'Net P&L: Short', 'Net profit: Short', 'Net PnL: Short')
     const totalTradesLong  = getVal(row, 'Total trades: Long')
     const totalTradesShort = getVal(row, 'Total trades: Short')
 
@@ -320,8 +329,8 @@ export function scoreRows(filtered: ReturnType<typeof applyFilters>, weights: Sc
 
     // ③ 多空失衡惩罚:双向策略中一边亏损 / 完全靠一边
     let lsPenalty = 0
-    const hasLong  = (row.totalTradesLong  || 0) > 0
-    const hasShort = (row.totalTradesShort || 0) > 0
+    const hasLong  = (row.totalTradesLong  || 0) > 0 || row.netPnlLong !== 0
+    const hasShort = (row.totalTradesShort || 0) > 0 || row.netPnlShort !== 0
     if (hasLong && hasShort) {
       const l = row.netPnlLong || 0
       const s = row.netPnlShort || 0
