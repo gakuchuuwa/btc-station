@@ -656,6 +656,7 @@ export default function StrategyPage() {
                 <EquityChart
                   trades={trades}
                   equity={equity}
+                  balance={balance}
                   summary={summary}
                   height={EQUITY_PANE_HEIGHT}
                   rangeStart={btStartDate || summary?.backtest_start || undefined}
