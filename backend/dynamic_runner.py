@@ -362,9 +362,29 @@ def run_dynamic_code(code_string: str, df, parameters: dict, timeframe: str = '4
             key=_exit_ts_key,
         )
 
+        # 资金曲线必须与 portfolio.value() 同源：用 VBT 已平仓 trades，不用 strategy 多腿明细
+        # （strategy _strategy_trades 与 VBT 订单在部分出场时 PnL 不一致，会导致结算后两线无法重合）
+        balance_trades: list = []
+        if not trades_df.empty:
+            for _, row in trades_df.iterrows():
+                ex = row.get("Exit Timestamp")
+                if ex is None or (isinstance(ex, float) and pd.isna(ex)):
+                    continue
+                ex_s = str(ex).strip()
+                if not ex_s or ex_s.lower() in ("nat", "nan", "none"):
+                    continue
+                try:
+                    pnl = float(row.get("PnL", 0) or 0)
+                except (TypeError, ValueError):
+                    pnl = 0.0
+                balance_trades.append({"Exit Timestamp": ex_s, "PnL": pnl})
+            balance_trades = sorted(balance_trades, key=_exit_ts_key)
+        if not balance_trades:
+            balance_trades = closed_trades
+
         closed_equity_list = [init_cash]
         closed_equity_idx = [pf_value.index[0] if len(pf_value) else pd.Timestamp.now()]
-        for t in closed_trades:
+        for t in balance_trades:
             closed_equity_list.append(closed_equity_list[-1] + float(t.get("PnL", 0)))
             closed_equity_idx.append(pd.Timestamp(t["Exit Timestamp"]))
         
@@ -837,18 +857,36 @@ def run_dynamic_code(code_string: str, df, parameters: dict, timeframe: str = '4
             "raw_parameters":         {**_extract_param_defaults(code_string), **(parameters or {})},
         }
 
-        # ── 计算完结资金曲线 (Balance Curve，按出场时间结算) ─────────
+        # ── 计算完结资金曲线 (Balance Curve，按 VBT 出场结算，与 equity 对齐) ─────────
         balance_points = []
         try:
             cum_bal = init_cash
-            if closed_trades:
-                first_ts = equity_points[0]["time"] if equity_points else 0
-                balance_points.append({"time": first_ts, "equity": cum_bal})
-                for t in closed_trades:
-                    ex_ts = t["Exit Timestamp"]
-                    t_val = int(pd.Timestamp(ex_ts).timestamp())
+            if balance_trades:
+                first_ts = equity_points[0]["time"] if equity_points else int(
+                    pf_value.index[0].timestamp() if hasattr(pf_value.index[0], "timestamp") else pd.Timestamp(pf_value.index[0]).timestamp()
+                )
+                balance_points.append({"time": first_ts, "equity": round(cum_bal, 2)})
+                for t in balance_trades:
+                    t_val = int(pd.Timestamp(t["Exit Timestamp"]).timestamp())
                     cum_bal += float(t.get("PnL", 0))
                     balance_points.append({"time": t_val, "equity": round(cum_bal, 2)})
+
+            # 在 equity 降采样序列中补入每个结算时刻，确保与资金曲线在出场点对齐
+            if balance_points and len(pf_value) > 0:
+                existing = {p["time"] for p in equity_points}
+                for bp in balance_points[1:]:
+                    t_val = bp["time"]
+                    if t_val in existing:
+                        continue
+                    ts = pd.Timestamp(t_val, unit="s")
+                    if ts in pf_value.index:
+                        val = float(pf_value.loc[ts])
+                    else:
+                        loc = pf_value.index.get_indexer([ts], method="nearest")[0]
+                        val = float(pf_value.iloc[loc])
+                    equity_points.append({"time": t_val, "equity": round(val, 2)})
+                    existing.add(t_val)
+                equity_points.sort(key=lambda x: x["time"])
         except Exception:
             pass
 

@@ -276,9 +276,9 @@ export default function EquityChart({
 
   const balance = useMemo(() => {
     if (balanceProp.length > 0) return balanceProp
-    const startTime = equity.length > 0 ? normalizeUnixSec(equity[0].time) : undefined
-    return buildBalanceFromTrades(trades, initialCapital, startTime)
-  }, [balanceProp, trades, initialCapital, equity])
+    // 不从 trades 重建：strategy 多腿 PnL 与 VBT equity 口径不一致
+    return []
+  }, [balanceProp])
 
   const hasEquity = equity.length > 0
   const hasBalance = balance.length > 0
