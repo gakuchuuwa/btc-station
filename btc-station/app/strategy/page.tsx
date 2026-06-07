@@ -354,10 +354,11 @@ export default function StrategyPage() {
 
   // Process backtest result into UI state
   const processResult = useCallback((result: Record<string, unknown>, fullCandles: Candle[]) => {
-    const m = { ...(result.metrics as Record<string, number>), net_profit_pct: (result.metrics as Record<string, number>)?.total_return_pct ?? 0 }
-    const cap = Number(m.initial_capital) || initialCapital
+    const metrics = (result.metrics ?? {}) as Record<string, number>
+    const cap = Number(metrics.initial_capital) || initialCapital
+    const m = { ...metrics, initial_capital: cap, net_profit_pct: metrics.total_return_pct ?? 0 }
     setInitialCapital(cap)
-    setSummary({ ...m, initial_capital: cap } as BacktestSummary)
+    setSummary(m as BacktestSummary)
     setXlsxToken((result.xlsx_token as string | null) ?? null)
 
     const rawTrades = (result.trades ?? []) as Record<string, unknown>[]
