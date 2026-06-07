@@ -416,15 +416,15 @@ function ConsoleTab({ logs, running, summary }: { logs: string[]; running: boole
   );
 }
 
-function EquityTab({ equity, summary }: { equity: EquityPoint[]; balance?: EquityPoint[]; trades?: TradeRecord[]; summary?: BacktestSummary | null }) {
-  if (equity.length === 0) {
+function EquityTab({ equity, trades = [], summary }: { equity: EquityPoint[]; balance?: EquityPoint[]; trades?: TradeRecord[]; summary?: BacktestSummary | null }) {
+  if (trades.length === 0 && equity.length === 0) {
     return (
       <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "var(--text-mute)", fontSize: 12 }}>
-        运行回测后显示资金曲线（与上方 K 线区相同数据）
+        运行回测后显示资金曲线（按笔 / 按时间可切换）
       </div>
     );
   }
-  return <EquityChart equity={equity} summary={summary} fillHeight showHeader />;
+  return <EquityChart trades={trades} equity={equity} summary={summary} fillHeight showHeader />;
 }
 
 function TradesTab({ trades }: { trades: TradeRecord[] }) {

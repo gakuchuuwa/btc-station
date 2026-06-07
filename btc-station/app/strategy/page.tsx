@@ -599,7 +599,7 @@ export default function StrategyPage() {
 
   // 最新一根K线的OHLC
   const lastCandle = candles.length > 0 ? candles[candles.length - 1] : null
-  const showEquityPane = equity.length > 0 && !!summary
+  const showEquityPane = (trades.length > 0 || equity.length > 0) && !!summary
   const klineHeight = showEquityPane ? Math.max(s1Height - EQUITY_PANE_HEIGHT, 200) : s1Height
 
   const S = {
@@ -654,6 +654,7 @@ export default function StrategyPage() {
               </div>
               {showEquityPane && (
                 <EquityChart
+                  trades={trades}
                   equity={equity}
                   summary={summary}
                   height={EQUITY_PANE_HEIGHT}
