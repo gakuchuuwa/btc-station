@@ -5,6 +5,7 @@ import dynamic from 'next/dynamic'
 import MiniChart, { type Candle, type ChartMarker, type StrategyLine } from '@/components/MiniChart'
 import StrategyTesterPanel, { type BacktestSummary, type TradeRecord, type EpochRecord, type ParamRow } from '@/components/StrategyTesterPanel'
 import { saveStrategy, listMyStrategies, deleteStrategy, type StrategyMeta } from '@/lib/freqtrade-api'
+import { loadChartCandles } from '@/lib/chart-klines'
 
 const MonacoEditor = dynamic(() => import('@monaco-editor/react'), { ssr: false, loading: () => <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-mute)' }}>编辑器加载中…</div> })
 
@@ -56,6 +57,9 @@ export default function StrategyPage() {
   const [strategyName, setStrategyName] = useState('我的策略')
   const [tf, setTf] = useState('4h')
   const [candles, setCandles] = useState<Candle[]>([])
+  const [candlesLoading, setCandlesLoading] = useState(true)
+  const [candlesError, setCandlesError] = useState<string | null>(null)
+  const candlesLoadGen = useRef(0)
 
   // Save state
   const [saving, setSaving] = useState(false)
@@ -291,27 +295,39 @@ export default function StrategyPage() {
     }
   }, [savedId])
 
-  // 从后端全量历史数据缓存加载 K 线(唯一路径,符合 CLAUDE.md 铁律)
-  useEffect(() => {
-    let active = true
-    ;(async () => {
-      try {
-        const res = await fetch(`/py-api/api/candles/${tf}`)
-        if (!res.ok || !active) return
-        const d = await res.json()
-        if (d.candles?.length > 0 && active) {
-          setCandles(normalizeCandles(d.candles))
-        }
-      } catch { /* 后端未启动 */ }
-    })()
-    return () => { active = false }
-  }, [tf])
-
   // K 线归一化:时间戳 ms→s + 去重 + 升序排
-  const normalizeCandles = (raw: Candle[]): Candle[] =>
+  const normalizeCandles = useCallback((raw: Candle[]): Candle[] =>
     raw.map(c => ({ ...c, time: c.time > 1e12 ? Math.floor(c.time / 1000) : c.time }))
        .sort((a, b) => a.time - b.time)
        .filter((c, i, arr) => i === 0 || c.time !== arr[i-1].time)
+  , [])
+
+  // K 线：走 Vercel /api/chart/klines（直连 OKX），不依赖 Railway CSV 缓存
+  const fetchCandles = useCallback(async (interval: string) => {
+    const gen = ++candlesLoadGen.current
+    setCandlesLoading(true)
+    setCandlesError(null)
+    try {
+      const loaded = await loadChartCandles(interval, {
+        onProgress: (partial) => {
+          if (gen !== candlesLoadGen.current) return
+          setCandles(normalizeCandles(partial as Candle[]))
+        },
+      })
+      if (gen !== candlesLoadGen.current) return
+      setCandles(normalizeCandles(loaded as Candle[]))
+    } catch (e) {
+      if (gen !== candlesLoadGen.current) return
+      setCandles([])
+      setCandlesError(e instanceof Error ? e.message : 'K线加载失败')
+    } finally {
+      if (gen === candlesLoadGen.current) setCandlesLoading(false)
+    }
+  }, [normalizeCandles])
+
+  useEffect(() => {
+    fetchCandles(tf)
+  }, [tf, fetchCandles])
 
   // Parse timestamp helper
   const parseToSec = (v: unknown): number => {
@@ -417,19 +433,14 @@ export default function StrategyPage() {
       if (!btRes.ok) { const err = await btRes.json().catch(() => ({ detail: btRes.statusText })); throw new Error(`回测失败 (${btRes.status}): ${err.detail ?? '未知错误'}`) }
       const result = await btRes.json()
 
-      // K 线已在挂载/tf 变化时加载,这里只在缺失时补加
+      // K 线已在挂载/tf 变化时加载，这里只在缺失时补拉
       let fullCandles = candles
       if (fullCandles.length === 0) {
         try {
-          const histRes = await fetch(`/py-api/api/candles/${tf}`)
-          if (histRes.ok) {
-            const hd = await histRes.json()
-            if (hd.candles?.length > 0) {
-              fullCandles = normalizeCandles(hd.candles)
-              setCandles(fullCandles)
-            }
-          }
-        } catch {}
+          const loaded = await loadChartCandles(tf)
+          fullCandles = normalizeCandles(loaded as Candle[])
+          setCandles(fullCandles)
+        } catch { /* 回测结果仍可展示，只是图表无 K 线底图 */ }
       }
 
       processResult(result, fullCandles)
@@ -439,7 +450,7 @@ export default function StrategyPage() {
     } catch (e: unknown) {
       setLogs(p => [...p, `✗ ${(e as Error).message}`])
     } finally { setRunning(false) }
-  }, [code, tf, strategyName, candles, running, processResult, btStartDate, btEndDate])
+  }, [code, tf, strategyName, candles, running, processResult, btStartDate, btEndDate, normalizeCandles])
 
   // Optimize
   const handleOptimizeStart = useCallback(async (paramRows: ParamRow[], startDate: string, method: 'grid' | 'annealing' = 'grid', target: string = 'calmar') => {
@@ -537,12 +548,10 @@ export default function StrategyPage() {
         let fullCandles = candles
         if (fullCandles.length === 0) {
           try {
-            const histRes = await fetch(`/py-api/api/candles/${tf}`)
-            if (histRes.ok) {
-              const hd = await histRes.json()
-              if (hd.candles?.length > 0) { fullCandles = normalizeCandles(hd.candles); setCandles(fullCandles) }
-            }
-          } catch {}
+            const loaded = await loadChartCandles(tf)
+            fullCandles = normalizeCandles(loaded as Candle[])
+            setCandles(fullCandles)
+          } catch { /* 忽略 */ }
         }
         processResult(result, fullCandles)
         const m = result.metrics as Record<string, number>
@@ -550,7 +559,7 @@ export default function StrategyPage() {
       } catch (e: unknown) { setLogs(p => [...p, `✗ ${(e as Error).message}`]) }
       finally { setRunning(false) }
     })()
-  }, [code, tf, candles, processResult, btStartDate, btEndDate])
+  }, [code, tf, candles, processResult, btStartDate, btEndDate, normalizeCandles])
 
   // 模板列表
   const [templates, setTemplates] = useState<{id:string;name:string;category:string}[]>([])
@@ -621,10 +630,37 @@ export default function StrategyPage() {
           </div>
         </div>
         <div style={{ height: s1Height, background:'#131722', overflow:'hidden' }}>
-          {candles.length === 0
-            ? <div style={{ height:'100%', display:'flex', alignItems:'center', justifyContent:'center', color:'#787b86', fontSize:12, fontFamily:"'JetBrains Mono',monospace" }}>K 线加载中...</div>
-            : <MiniChart candles={candles} markers={markers} strategyLines={strategyLines} height={s1Height} />
-          }
+          {candles.length > 0 ? (
+            <MiniChart candles={candles} markers={markers} strategyLines={strategyLines} height={s1Height} />
+          ) : (
+            <div style={{ height:'100%', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:10, color:'#787b86', fontSize:12, fontFamily:"'JetBrains Mono',monospace", padding:16, textAlign:'center' }}>
+              {candlesError ? (
+                <>
+                  <span style={{ color:'#ef5350' }}>K 线加载失败：{candlesError}</span>
+                  <button
+                    type="button"
+                    onClick={() => fetchCandles(tf)}
+                    style={{ padding:'6px 14px', borderRadius:4, border:'1px solid #363a45', background:'#2a2e39', color:'#d1d4dc', cursor:'pointer', fontSize:11 }}
+                  >
+                    重试
+                  </button>
+                </>
+              ) : candlesLoading ? (
+                <span>K 线加载中…</span>
+              ) : (
+                <>
+                  <span>暂无 K 线数据</span>
+                  <button
+                    type="button"
+                    onClick={() => fetchCandles(tf)}
+                    style={{ padding:'6px 14px', borderRadius:4, border:'1px solid #363a45', background:'#2a2e39', color:'#d1d4dc', cursor:'pointer', fontSize:11 }}
+                  >
+                    重新加载
+                  </button>
+                </>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
