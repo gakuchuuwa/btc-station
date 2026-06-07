@@ -146,6 +146,9 @@ interface Props {
   equity?: EquityPoint[];
   /** Closed-trade balance curve */
   balance?: EquityPoint[];
+  /** 回测区间锁定（传给资金曲线） */
+  rangeStart?: string;
+  rangeEnd?: string;
   /** Download URL for the TV-compatible XLSX (S3) */
   xlsxDownloadUrl?: string | null;
   /** Strategy name shown in export filename */
@@ -417,7 +420,21 @@ function ConsoleTab({ logs, running, summary }: { logs: string[]; running: boole
   );
 }
 
-function EquityTab({ equity, trades = [], balance = [], summary }: { equity: EquityPoint[]; balance?: EquityPoint[]; trades?: TradeRecord[]; summary?: BacktestSummary | null }) {
+function EquityTab({
+  equity,
+  trades = [],
+  balance = [],
+  summary,
+  rangeStart,
+  rangeEnd,
+}: {
+  equity: EquityPoint[]
+  balance?: EquityPoint[]
+  trades?: TradeRecord[]
+  summary?: BacktestSummary | null
+  rangeStart?: string
+  rangeEnd?: string
+}) {
   if (trades.length === 0 && equity.length === 0 && balance.length === 0) {
     return (
       <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "var(--text-mute)", fontSize: 12 }}>
@@ -425,7 +442,18 @@ function EquityTab({ equity, trades = [], balance = [], summary }: { equity: Equ
       </div>
     );
   }
-  return <EquityChart trades={trades} equity={equity} balance={balance} summary={summary} fillHeight showHeader />;
+  return (
+    <EquityChart
+      trades={trades}
+      equity={equity}
+      balance={balance}
+      summary={summary}
+      rangeStart={rangeStart}
+      rangeEnd={rangeEnd}
+      fillHeight
+      showHeader
+    />
+  );
 }
 
 function TradesTab({ trades }: { trades: TradeRecord[] }) {
@@ -1110,6 +1138,8 @@ export default function StrategyTesterPanel({
   trades = [],
   equity = [],
   balance = [],
+  rangeStart,
+  rangeEnd,
   xlsxDownloadUrl,
   strategyName,
   logs = [],
@@ -1196,7 +1226,7 @@ export default function StrategyTesterPanel({
         {/* Content */}
         <div style={{ flex: 1, overflow: "hidden" }}>
           {activeTab === "回测控制台" && <ConsoleTab logs={logs} running={running} summary={summary} />}
-          {activeTab === "资金曲线"   && <EquityTab equity={equity} balance={balance} trades={trades} summary={summary} />}
+          {activeTab === "资金曲线"   && <EquityTab equity={equity} balance={balance} trades={trades} summary={summary} rangeStart={rangeStart} rangeEnd={rangeEnd} />}
           {activeTab === "交易明细"   && <TradesTab trades={trades} />}
           {activeTab === "参数优化"   && <OptimizeTab onOptimizeStart={onOptimizeStart} optimizeStatus={optimizeStatus} optimizeEpochs={optimizeEpochs} optimizeError={optimizeError} optimizeProgress={optimizeProgress} onOptimizeCsvDownload={onOptimizeCsvDownload} onApplyBestParams={onApplyBestParams} strategyCode={strategyCode} strategyName={strategyName} />}
           {activeTab === "FTMO 风控"  && <FtmoTab ftmoScan={ftmoScan} />}
@@ -1237,7 +1267,7 @@ export default function StrategyTesterPanel({
       {!collapsed && (
         <div style={{ flex: 1, overflow: "hidden" }}>
           {activeTab === "回测控制台" && <ConsoleTab logs={logs} running={running} summary={summary} />}
-          {activeTab === "资金曲线"   && <EquityTab equity={equity} balance={balance} trades={trades} summary={summary} />}
+          {activeTab === "资金曲线"   && <EquityTab equity={equity} balance={balance} trades={trades} summary={summary} rangeStart={rangeStart} rangeEnd={rangeEnd} />}
           {activeTab === "交易明细"   && <TradesTab trades={trades} />}
           {activeTab === "参数优化"   && <OptimizeTab onOptimizeStart={onOptimizeStart} optimizeStatus={optimizeStatus} optimizeEpochs={optimizeEpochs} optimizeError={optimizeError} optimizeProgress={optimizeProgress} onOptimizeCsvDownload={onOptimizeCsvDownload} onApplyBestParams={onApplyBestParams} strategyCode={strategyCode} strategyName={strategyName} />}
           {activeTab === "FTMO 风控"  && <FtmoTab ftmoScan={ftmoScan} />}

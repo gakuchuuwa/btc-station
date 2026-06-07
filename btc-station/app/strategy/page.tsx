@@ -3,7 +3,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import dynamic from 'next/dynamic'
 import MiniChart, { type Candle, type ChartMarker, type StrategyLine } from '@/components/MiniChart'
-import EquityChart from '@/components/EquityChart'
 import StrategyTesterPanel, { type BacktestSummary, type TradeRecord, type EpochRecord, type ParamRow } from '@/components/StrategyTesterPanel'
 import { saveStrategy, listMyStrategies, deleteStrategy, type StrategyMeta } from '@/lib/freqtrade-api'
 import { loadChartCandles } from '@/lib/chart-klines'
@@ -54,8 +53,6 @@ const SS_BT_RESULT_KEY = 'strategy_s3_backtest_result'
 const SS_OPT_RESULT_KEY = 'strategy_s4_opt_result'
 const SS_UI_STATE_KEY = 'strategy_ui_state'
 const INDICATOR_COLORS = ['#26a69a', '#ef5350', '#FFD700', '#7B68EE', '#FF8C00', '#00CED1']
-/** K 线下方资金曲线面板高度（含标题栏） */
-const EQUITY_PANE_HEIGHT = 172
 
 export default function StrategyPage() {
   const [code, setCode] = useState('')
@@ -599,9 +596,6 @@ export default function StrategyPage() {
 
   // 最新一根K线的OHLC
   const lastCandle = candles.length > 0 ? candles[candles.length - 1] : null
-  const showEquityPane = (trades.length > 0 || equity.length > 0) && !!summary
-  const klineHeight = showEquityPane ? Math.max(s1Height - EQUITY_PANE_HEIGHT, 200) : s1Height
-
   const S = {
     page: { background:'#131722', color:'#d1d4dc', fontFamily:"'Space Grotesk',system-ui,sans-serif", fontSize:13, display:'flex', flexDirection:'column' as const, overflowY:'auto' as const },
     layerHead: { height:40, display:'flex', alignItems:'center', padding:'0 12px', background:'#1e222d', borderBottom:'1px solid #363a45', flexShrink:0 as const },
@@ -648,22 +642,9 @@ export default function StrategyPage() {
         </div>
         <div style={{ height: s1Height, background:'#131722', overflow:'hidden', display:'flex', flexDirection:'column' }}>
           {candles.length > 0 ? (
-            <>
-              <div style={{ height: klineHeight, flexShrink: 0, overflow:'hidden' }}>
-                <MiniChart candles={candles} markers={markers} strategyLines={strategyLines} height={klineHeight} />
-              </div>
-              {showEquityPane && (
-                <EquityChart
-                  trades={trades}
-                  equity={equity}
-                  balance={balance}
-                  summary={summary}
-                  height={EQUITY_PANE_HEIGHT}
-                  rangeStart={btStartDate || summary?.backtest_start || undefined}
-                  rangeEnd={btEndDate || summary?.backtest_end || undefined}
-                />
-              )}
-            </>
+            <div style={{ height: '100%', flexShrink: 0, overflow:'hidden' }}>
+              <MiniChart candles={candles} markers={markers} strategyLines={strategyLines} height={s1Height} />
+            </div>
           ) : (
             <div style={{ height:'100%', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:10, color:'#787b86', fontSize:12, fontFamily:"'JetBrains Mono',monospace", padding:16, textAlign:'center' }}>
               {candlesError ? (
@@ -862,7 +843,7 @@ export default function StrategyPage() {
       </div>
 
       {/* ══ 第三层：回测结果 ══ */}
-      <div style={{ borderBottom:'1px solid #363a45', height: s3Height }}>
+      <div style={{ borderBottom:'1px solid #363a45', height: s3Height, display:'flex', flexDirection:'column', overflow:'hidden' }}>
         <div style={S.layerHead}>
           <span style={S.layerTitle}>03 · 回测结果</span>
           {summary && (
@@ -949,11 +930,14 @@ export default function StrategyPage() {
             )}
           </div>
         </div>
+        <div style={{ flex:1, minHeight:0, overflow:'hidden' }}>
         <StrategyTesterPanel
           visible fixedPanel
           defaultTab="回测控制台"
           allowedTabs={['回测控制台','资金曲线','交易明细','下载报告']}
           summary={summary} trades={trades} equity={equity} balance={balance}
+          rangeStart={btStartDate || summary?.backtest_start || undefined}
+          rangeEnd={btEndDate || summary?.backtest_end || undefined}
           xlsxDownloadUrl={xlsxToken ?? null}
           strategyName={strategyName} logs={logs} running={running}
           onOptimizeStart={handleOptimizeStart}
@@ -961,6 +945,7 @@ export default function StrategyPage() {
           optimizeProgress={optimizeProgress}
           onOptimizeCsvDownload={handleOptimizeCsvDownload} onApplyBestParams={handleApplyBestParams}
         />
+        </div>
       </div>
 
       {/* S3 底部拖拽把手 */}
