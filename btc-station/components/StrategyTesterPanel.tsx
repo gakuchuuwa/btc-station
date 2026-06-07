@@ -328,8 +328,9 @@ function SummaryGrid({ summary }: { summary: BacktestSummary }) {
         { label: "期望收益",   value: fmtAbs(s.expectancy_abs) },
         { label: "年化收益率", value: fmtPct(s.cagr_pct),                 color: (s.cagr_pct ?? 0) >= 0 ? upColor : downColor },
         { label: "手续费",     value: s.commission_paid != null ? `-${s.commission_paid.toFixed(2)} USDT` : "—", color: downColor },
-        { label: "最大回撤",   value: fmtPct(-Math.abs(s.max_drawdown_pct ?? 0)), color: downColor },
-        { label: "最大回撤时长", value: s.max_drawdown_duration_days != null ? `${s.max_drawdown_duration_days} 天` : "—" },
+        { label: "资金最大回撤", value: fmtPct(-Math.abs(s.closed_max_drawdown_pct ?? s.max_drawdown_pct ?? 0)), color: downColor },
+        { label: "权益最大回撤", value: fmtPct(-Math.abs(s.max_drawdown_pct ?? 0)), color: "#f7931a" },
+        { label: "权益回撤时长", value: s.max_drawdown_duration_days != null ? `${s.max_drawdown_duration_days} 天` : "—" },
       ],
     },
     {
@@ -1179,7 +1180,7 @@ export default function StrategyTesterPanel({
         <div style={{ display: "flex", alignItems: "center", borderBottom: "1px solid var(--border)", flexShrink: 0, paddingLeft: 4, background: "var(--bg-elev, #0d1117)" }}>
           {showTabBar ? visibleTabs.map(tab => (
             <button key={tab} onClick={() => setActiveTab(tab)} style={{
-              padding: "7px 14px", fontSize: 11, fontWeight: activeTab === tab ? 600 : 400,
+              padding: "8px 16px", fontSize: 13, fontWeight: activeTab === tab ? 600 : 400,
               background: "none", border: "none", cursor: "pointer",
               color: activeTab === tab ? "var(--text)" : "var(--text-mute)",
               borderBottom: activeTab === tab ? "2px solid var(--up)" : "2px solid transparent",
@@ -1187,7 +1188,7 @@ export default function StrategyTesterPanel({
               {tab}
             </button>
           )) : (
-            <span style={{ padding: "7px 14px", fontSize: 11, fontWeight: 600, color: "var(--text)", borderBottom: "2px solid var(--up)" }}>
+            <span style={{ padding: "8px 16px", fontSize: 13, fontWeight: 600, color: "var(--text)", borderBottom: "2px solid var(--up)" }}>
               {visibleTabs[0]}
             </span>
           )}
@@ -1215,7 +1216,7 @@ export default function StrategyTesterPanel({
       <div style={{ display: "flex", alignItems: "center", borderBottom: collapsed ? "none" : "1px solid var(--border)", flexShrink: 0, paddingLeft: 4, background: "var(--bg-elev, #0d1117)" }}>
         {TABS.map(tab => (
           <button key={tab} onClick={() => { setActiveTab(tab); setCollapsed(false); setHeight(h => h <= MIN_HEIGHT + 4 ? DEFAULT_HEIGHT : h); }} style={{
-            padding: "7px 14px", fontSize: 11, fontWeight: activeTab === tab && !collapsed ? 600 : 400,
+            padding: "8px 16px", fontSize: 13, fontWeight: activeTab === tab && !collapsed ? 600 : 400,
             background: "none", border: "none", cursor: "pointer",
             color: activeTab === tab && !collapsed ? "var(--text)" : "var(--text-mute)",
             borderBottom: activeTab === tab && !collapsed ? "2px solid var(--up)" : "2px solid transparent",

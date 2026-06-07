@@ -301,7 +301,7 @@ export default function EquityChart({
     ? { display: 'flex', flexDirection: 'column', height: '100%', background: '#131722', borderTop: showHeader ? '1px solid #363a45' : undefined }
     : { display: 'flex', flexDirection: 'column', height, background: '#131722', borderTop: '1px solid #363a45', flexShrink: 0 }
 
-  const chartBodyHeight = fillHeight ? '100%' : Math.max(80, height - (showHeader ? 28 : 0))
+  const chartBodyHeight = fillHeight ? '100%' : Math.max(80, height - (showHeader ? 32 : 0))
 
   if (!hasEquity && !hasBalance) {
     return (
@@ -316,12 +316,12 @@ export default function EquityChart({
       {showHeader && (
         <div
           style={{
-            height: 28,
+            height: 32,
             display: 'flex',
             alignItems: 'center',
             gap: 10,
             padding: '0 12px',
-            fontSize: 11,
+            fontSize: 12,
             fontFamily: "'JetBrains Mono', monospace",
             color: '#787b86',
             flexShrink: 0,
@@ -331,14 +331,14 @@ export default function EquityChart({
         >
           <LegendDot color="#26A69A" label="资金" />
           {balanceMaxDd != null && balanceMaxDd > 0 && (
-            <span style={{ fontSize: 10 }}>
-              回撤 <b style={{ color: '#ef5350' }}>-{balanceMaxDd.toFixed(2)}%</b>
+            <span style={{ fontSize: 11 }}>
+              资金回撤 <b style={{ color: '#ef5350' }}>-{balanceMaxDd.toFixed(2)}%</b>
             </span>
           )}
           <LegendDot color="#00d4ff" label="权益" />
           {equityMaxDd != null && equityMaxDd > 0 && (
-            <span style={{ fontSize: 10 }}>
-              回撤 <b style={{ color: '#ef5350' }}>-{equityMaxDd.toFixed(2)}%</b>
+            <span style={{ fontSize: 11 }}>
+              权益回撤 <b style={{ color: '#f7931a' }}>-{equityMaxDd.toFixed(2)}%</b>
               {equityDdDays != null ? ` · ${equityDdDays} 天` : ''}
             </span>
           )}

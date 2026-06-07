@@ -604,8 +604,8 @@ export default function StrategyPage() {
 
   const S = {
     page: { background:'#131722', color:'#d1d4dc', fontFamily:"'Space Grotesk',system-ui,sans-serif", fontSize:13, display:'flex', flexDirection:'column' as const, overflowY:'auto' as const },
-    layerHead: { height:36, display:'flex', alignItems:'center', padding:'0 12px', background:'#1e222d', borderBottom:'1px solid #363a45', flexShrink:0 as const },
-    layerTitle: { fontSize:11, fontWeight:600, color:'#787b86', fontFamily:"'JetBrains Mono',monospace", letterSpacing:'.06em', textTransform:'uppercase' as const },
+    layerHead: { height:40, display:'flex', alignItems:'center', padding:'0 12px', background:'#1e222d', borderBottom:'1px solid #363a45', flexShrink:0 as const },
+    layerTitle: { fontSize:12, fontWeight:600, color:'#787b86', fontFamily:"'JetBrains Mono',monospace", letterSpacing:'.06em', textTransform:'uppercase' as const },
     ohlcItem: { fontFamily:"'JetBrains Mono',monospace", fontSize:11, color:'#787b86', whiteSpace:'nowrap' as const },
     ohlcVal: { color:'#d1d4dc', fontWeight:500 },
     tfBtn: (active: boolean) => ({ padding:'3px 8px', borderRadius:3, fontFamily:"'JetBrains Mono',monospace", fontSize:11, border:'none', cursor:'pointer' as const, color: active ? '#00d4ff' : '#787b86', background: active ? 'rgba(0,212,255,.1)' : 'transparent', fontWeight: active ? 600 : 400 }),
@@ -866,13 +866,20 @@ export default function StrategyPage() {
         <div style={S.layerHead}>
           <span style={S.layerTitle}>03 · 回测结果</span>
           {summary && (
-            <div style={{ marginLeft:12, display:'flex', gap:16, fontFamily:"'JetBrains Mono',monospace", fontSize:11 }}>
-              <span style={{ color: (summary.net_profit_pct ?? 0) >= 0 ? '#26a69a' : '#ef5350', fontWeight:600 }}>
+            <div style={{ marginLeft:12, display:'flex', gap:18, alignItems:'center', fontFamily:"'JetBrains Mono',monospace", fontSize:13 }}>
+              <span style={{ color: (summary.net_profit_pct ?? 0) >= 0 ? '#26a69a' : '#ef5350', fontWeight:700, fontSize:15 }}>
                 {(summary.net_profit_pct ?? 0) >= 0 ? '+' : ''}{(summary.net_profit_pct ?? 0).toFixed(2)}%
               </span>
-              <span style={{ color:'#787b86', display:'flex', alignItems:'center', gap:4 }}>最大回撤 <b style={{ color:'#ef5350', fontSize:13 }}>{(summary.max_drawdown_pct ?? 0).toFixed(2)}%</b></span>
-              <span style={{ color:'#787b86' }}>胜率 <b style={{ color:'#00d4ff' }}>{(summary.win_rate_pct ?? 0).toFixed(1)}%</b></span>
-              <span style={{ color:'#787b86' }}>{summary.total_trades ?? 0} 笔</span>
+              <span style={{ color:'#787b86', display:'flex', alignItems:'center', gap:5 }}>
+                资金回撤 <b style={{ color:'#ef5350', fontSize:15 }}>{(summary.closed_max_drawdown_pct ?? summary.max_drawdown_pct ?? 0).toFixed(2)}%</b>
+              </span>
+              {summary.closed_max_drawdown_pct != null && (
+                <span style={{ color:'#787b86', display:'flex', alignItems:'center', gap:5 }} title="含持仓浮盈浮亏，相对权益峰值">
+                  权益回撤 <b style={{ color:'#f7931a', fontSize:15 }}>{(summary.max_drawdown_pct ?? 0).toFixed(2)}%</b>
+                </span>
+              )}
+              <span style={{ color:'#787b86' }}>胜率 <b style={{ color:'#00d4ff', fontSize:15 }}>{(summary.win_rate_pct ?? 0).toFixed(1)}%</b></span>
+              <span style={{ color:'#787b86', fontSize:13 }}><b style={{ color:'#d1d4dc', fontSize:15 }}>{summary.total_trades ?? 0}</b> 笔</span>
               <button 
                 onClick={() => {
                   // 必须同时传 profitUSDT 和 profitPct:蒙特卡洛默认是"复利比例模式",
