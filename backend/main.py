@@ -953,6 +953,7 @@ def run_dynamic_strategy(request: StrategyRequest):
             "trades": portfolio_data["trades"],
             "indicators": portfolio_data.get("indicators", {}),
             "equity": portfolio_data.get("equity", []),
+            "balance": portfolio_data.get("balance", []),
             "csv_token": csv_token,
             "xlsx_token": xlsx_token,
         }

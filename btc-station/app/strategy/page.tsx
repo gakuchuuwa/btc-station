@@ -49,7 +49,7 @@ def execute(df, parameters):
 const LS_CODE_KEY = 'custom_strategy_code'
 const LS_NAME_KEY = 'custom_strategy_name'
 // S3 回测结果 sessionStorage 键名：跨页面切换保留，关闭 tab 才清；下次成功回测时覆盖
-const SS_BT_RESULT_KEY = 'strategy_s3_backtest_result'
+const SS_BT_RESULT_KEY = 'strategy_s3_backtest_result_v2'
 const SS_OPT_RESULT_KEY = 'strategy_s4_opt_result'
 const SS_UI_STATE_KEY = 'strategy_ui_state'
 const INDICATOR_COLORS = ['#26a69a', '#ef5350', '#FFD700', '#7B68EE', '#FF8C00', '#00CED1']
@@ -377,7 +377,13 @@ export default function StrategyPage() {
     }))
     setTrades(parsedTrades)
     setEquity((result.equity ?? []) as {time:number;equity:number}[])
-    setBalance((result.balance ?? []) as {time:number;equity:number}[])
+    const bal = Array.isArray(result.balance)
+      ? (result.balance as { time: number; equity: number }[])
+      : []
+    setBalance(bal)
+    if ((result.equity as unknown[] | undefined)?.length && bal.length === 0) {
+      console.warn('[回测] API 未返回 balance，资金曲线无法显示。请确认后端已更新。')
+    }
 
     // Markers（TV 风格：做多绿色、做空红色、平仓紫色）
     const sortedTimes = [...fullCandles].sort((a, b) => a.time - b.time).map(c => c.time)

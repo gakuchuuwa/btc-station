@@ -247,9 +247,10 @@ function MergedEquityPane({
     })
 
     balanceSeriesRef.current = chart.addSeries(LineSeries, {
-      color: '#26A69A',
+      color: '#00E676',
       lineWidth: 3,
       lineType: LineType.WithSteps,
+      crosshairMarkerVisible: true,
       priceLineVisible: false,
       lastValueVisible: true,
       title: '资金',
@@ -358,7 +359,7 @@ export default function EquityChart({
             overflow: 'hidden',
           }}
         >
-          <LegendDot color="#26A69A" label="资金" />
+          <LegendDot color="#00E676" label="资金" />
           {balanceMaxDd != null && balanceMaxDd > 0 && (
             <span style={{ fontSize: 11 }}>
               资金回撤 <b style={{ color: '#ef5350' }}>-{balanceMaxDd.toFixed(2)}%</b>
