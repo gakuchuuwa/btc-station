@@ -331,14 +331,26 @@ def run_dynamic_code(code_string: str, df, parameters: dict, timeframe: str = '4
         except Exception:
             pass
 
-        # 2. 结算资金最大回撤（根据平仓记录）
+        # 2. 结算资金最大回撤（按出场时间排序后逐笔结算）
+        def _exit_ts_key(t):
+            ex = t.get("Exit Timestamp")
+            if not ex:
+                return pd.Timestamp.min
+            try:
+                return pd.Timestamp(ex)
+            except Exception:
+                return pd.Timestamp.min
+
+        closed_trades = sorted(
+            [t for t in trades_list if t.get("Exit Timestamp")],
+            key=_exit_ts_key,
+        )
+
         closed_equity_list = [init_cash]
         closed_equity_idx = [pf_value.index[0] if len(pf_value) else pd.Timestamp.now()]
-        for t in trades_list:
-            ex_ts = t.get("Exit Timestamp")
-            if ex_ts:
-                closed_equity_list.append(closed_equity_list[-1] + float(t.get("PnL", 0)))
-                closed_equity_idx.append(pd.Timestamp(ex_ts))
+        for t in closed_trades:
+            closed_equity_list.append(closed_equity_list[-1] + float(t.get("PnL", 0)))
+            closed_equity_idx.append(pd.Timestamp(t["Exit Timestamp"]))
         
         closed_equity_series = pd.Series(closed_equity_list, index=closed_equity_idx)
         _c_peak = closed_equity_series.cummax()
@@ -347,12 +359,65 @@ def run_dynamic_code(code_string: str, df, parameters: dict, timeframe: str = '4
 
         closed_max_dd_peak_ts = None
         closed_max_dd_trough_ts = None
+        closed_max_dd_recovery_ts = None
+        max_dd_duration_days = None
+        avg_dd_duration_days = None
+        avg_dd_pct = None
+        max_dd_profit_at_trough = None
         try:
-            if len(_c_dd_pct) > 0 and _c_dd_pct.min() < 0:
-                trough_idx = _c_dd_pct.idxmin()
-                closed_max_dd_trough_ts = int(trough_idx.timestamp())
-                peak_idx = closed_equity_series.loc[:trough_idx].idxmax()
-                closed_max_dd_peak_ts = int(peak_idx.timestamp())
+            if len(closed_equity_series) > 1 and _c_dd_pct.min() < 0:
+                # 位置索引，避免重复出场时间戳导致 loc 歧义
+                trough_pos = int(_c_dd_pct.values.argmin())
+                peak_val = float(closed_equity_series.iloc[:trough_pos + 1].max())
+                peak_pos = int(closed_equity_series.iloc[:trough_pos + 1].values.argmax())
+
+                closed_max_dd_trough_ts = int(closed_equity_series.index[trough_pos].timestamp())
+                closed_max_dd_peak_ts = int(closed_equity_series.index[peak_pos].timestamp())
+
+                rec_pos = len(closed_equity_series) - 1
+                for j in range(trough_pos + 1, len(closed_equity_series)):
+                    if float(closed_equity_series.iloc[j]) >= peak_val:
+                        rec_pos = j
+                        break
+                closed_max_dd_recovery_ts = int(closed_equity_series.index[rec_pos].timestamp())
+
+                t_peak = pd.Timestamp(closed_max_dd_peak_ts, unit='s')
+                t_rec = pd.Timestamp(closed_max_dd_recovery_ts, unit='s')
+                max_dd_duration_days = max(0, (t_rec - t_peak).days)
+
+                max_dd_profit_at_trough = round(float(closed_equity_series.iloc[trough_pos]) - init_cash, 2)
+
+                # 各段回撤时长/深度（用于平均回撤时长、平均回撤深度）
+                c_peak_s = closed_equity_series.cummax()
+                dd_durations = []
+                dd_depths = []
+                start_idx = None
+                current_dd_max_depth = 0.0
+                for i, val in enumerate(closed_equity_series.values):
+                    pk = float(c_peak_s.iloc[i])
+                    if val < pk:
+                        if start_idx is None:
+                            start_idx = i
+                            current_dd_max_depth = 0.0
+                        depth = (pk - val) / pk * 100
+                        dd_depths.append(depth)
+                        if depth > current_dd_max_depth:
+                            current_dd_max_depth = depth
+                    elif start_idx is not None:
+                        peak_i = start_idx - 1 if start_idx > 0 else start_idx
+                        dd_durations.append(
+                            (closed_equity_series.index[i] - closed_equity_series.index[peak_i]).days
+                        )
+                        start_idx = None
+                if start_idx is not None:
+                    peak_i = start_idx - 1 if start_idx > 0 else start_idx
+                    dd_durations.append(
+                        (closed_equity_series.index[-1] - closed_equity_series.index[peak_i]).days
+                    )
+                if dd_durations:
+                    avg_dd_duration_days = round(sum(dd_durations) / len(dd_durations), 1)
+                if dd_depths:
+                    avg_dd_pct = round(sum(dd_depths) / len(dd_depths), 4)
         except Exception:
             pass
 
@@ -496,85 +561,6 @@ def run_dynamic_code(code_string: str, df, parameters: dict, timeframe: str = '4
             years = (end_dt - start_dt).days / 365.25
             if years > 0 and init_cash > 0:
                 cagr_pct = round(((end_value / init_cash) ** (1 / years) - 1) * 100, 2)
-        except Exception:
-            pass
-
-        # ── 最大回撤持续时间（天）—— 基于结算资金 ──────────────────
-        max_dd_duration_days = None
-        avg_dd_duration_days = None
-        avg_dd_pct = None
-        max_dd_profit_at_trough = None
-        try:
-            if len(closed_equity_series) > 1:
-                c_peak_s = closed_equity_series.cummax()
-                in_dd = closed_equity_series < c_peak_s
-
-                dd_durations = []
-                dd_depths = []
-                dd_events = []
-                start_idx = None
-                current_dd_max_depth = 0
-                for i, (ts_i, val) in enumerate(closed_equity_series.items()):
-                    pk = float(c_peak_s.iloc[i])
-                    if val < pk:  # 进入回撤
-                        if start_idx is None:
-                            start_idx = i
-                            current_dd_max_depth = 0
-                        depth = (pk - val) / pk * 100
-                        dd_depths.append(depth)
-                        if depth > current_dd_max_depth:
-                            current_dd_max_depth = depth
-                    else:  # 离开回撤
-                        if start_idx is not None:
-                            try:
-                                # start_idx is the first underwater point. The peak is exactly the point before it (start_idx - 1)
-                                peak_idx_for_dd = start_idx - 1 if start_idx > 0 else start_idx
-                                t_start = closed_equity_series.index[peak_idx_for_dd]
-                                t_end   = closed_equity_series.index[i]
-                                dur_days = (t_end - t_start).days
-                                rec_ts = int(t_end.timestamp()) if hasattr(t_end, 'timestamp') else None
-                            except Exception:
-                                dur_days = i - start_idx
-                                rec_ts = None
-                            dd_durations.append(dur_days)
-                            dd_events.append({"dur_days": dur_days, "max_depth": current_dd_max_depth, "recovery_ts": rec_ts})
-                            start_idx = None
-
-                # 如果最后仍在回撤中（尚未恢复到新高）
-                if start_idx is not None:
-                    try:
-                        peak_idx_for_dd = start_idx - 1 if start_idx > 0 else start_idx
-                        t_start = closed_equity_series.index[peak_idx_for_dd]
-                        t_end   = closed_equity_series.index[-1]
-                        dur_days = (t_end - t_start).days
-                        rec_ts = int(t_end.timestamp()) if hasattr(t_end, 'timestamp') else None
-                    except Exception:
-                        dur_days = len(closed_equity_series) - start_idx
-                        rec_ts = None
-                    dd_durations.append(dur_days)
-                    dd_events.append({"dur_days": dur_days, "max_depth": current_dd_max_depth, "recovery_ts": rec_ts})
-
-                closed_max_dd_recovery_ts = None
-                if dd_events:
-                    deepest_dd_event = max(dd_events, key=lambda x: x["max_depth"])
-                    max_dd_duration_days = deepest_dd_event["dur_days"]
-                    closed_max_dd_recovery_ts = deepest_dd_event["recovery_ts"]
-                    avg_dd_duration_days = round(sum(dd_durations) / len(dd_durations), 1)
-                if dd_depths:
-                    avg_dd_pct = round(sum(dd_depths) / len(dd_depths), 4)
-
-                # 最大回撤波谷时刻的结算余额 - 初始本金 = 剩余利润
-                if len(_c_dd_pct) > 0 and _c_dd_pct.min() < 0:
-                    trough_idx = _c_dd_pct.argmin()
-                    trough_val = float(closed_equity_series.iloc[trough_idx])
-                    max_dd_profit_at_trough = round(trough_val - init_cash, 2)
-                    
-                # 强制令 max_drawdown_duration_days = Recovery - Peak 以保证与图表红框完全一致
-                if closed_max_dd_peak_ts is not None and closed_max_dd_recovery_ts is not None:
-                    max_drawdown_duration_days = (pd.Timestamp(closed_max_dd_recovery_ts, unit='s') - pd.Timestamp(closed_max_dd_peak_ts, unit='s')).days
-                elif closed_max_dd_peak_ts is not None and len(closed_equity_series):
-                    # 尚未 recovery
-                    max_drawdown_duration_days = (closed_equity_series.index[-1] - pd.Timestamp(closed_max_dd_peak_ts, unit='s')).days
         except Exception:
             pass
 
@@ -842,25 +828,18 @@ def run_dynamic_code(code_string: str, df, parameters: dict, timeframe: str = '4
             "raw_parameters":         {**_extract_param_defaults(code_string), **(parameters or {})},
         }
 
-        # ── 计算完结资金曲线 (Balance Curve) ─────────────────────────
+        # ── 计算完结资金曲线 (Balance Curve，按出场时间结算) ─────────
         balance_points = []
         try:
             cum_bal = init_cash
-            if trades_list:
-                # Add initial point
+            if closed_trades:
                 first_ts = equity_points[0]["time"] if equity_points else 0
                 balance_points.append({"time": first_ts, "equity": cum_bal})
-                for t in trades_list:
-                    # Parse exit timestamp
-                    ex_ts = t.get("Exit Timestamp")
-                    if ex_ts:
-                        # Convert to unix timestamp if it's an ISO string
-                        if isinstance(ex_ts, str):
-                            t_val = int(pd.Timestamp(ex_ts).timestamp())
-                        else:
-                            t_val = int(ex_ts)
-                        cum_bal += float(t.get("PnL", 0))
-                        balance_points.append({"time": t_val, "equity": round(cum_bal, 2)})
+                for t in closed_trades:
+                    ex_ts = t["Exit Timestamp"]
+                    t_val = int(pd.Timestamp(ex_ts).timestamp())
+                    cum_bal += float(t.get("PnL", 0))
+                    balance_points.append({"time": t_val, "equity": round(cum_bal, 2)})
         except Exception:
             pass
 

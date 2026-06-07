@@ -429,6 +429,10 @@ function ConsoleTab({ logs, running, summary }: { logs: string[]; running: boole
   );
 }
 
+function toPlotIso(unixSec: number) {
+  return new Date(unixSec * 1000).toISOString();
+}
+
 function EquityTab({ equity, balance, trades = [], summary }: { equity: EquityPoint[]; balance?: EquityPoint[]; trades?: TradeRecord[]; summary?: BacktestSummary | null }) {
   if (equity.length === 0) {
     return (
@@ -439,24 +443,25 @@ function EquityTab({ equity, balance, trades = [], summary }: { equity: EquityPo
   }
 
   const initialCapital = summary?.initial_capital ?? 10000;
-  const xs = equity.map(p => new Date(p.time * 1000).toISOString().slice(0, 10));
+  const xs = equity.map(p => toPlotIso(p.time));
   const ys = equity.map(p => p.equity);
 
-  const trace: Plotly.Data = {
+  // 辅线：每根 K 线的账户浮动权益（含未实现盈亏）
+  const floatingTrace: Plotly.Data = {
     type: "scatter",
     mode: "lines",
     x: xs,
     y: ys,
-    line: { color: "rgba(38,166,154,0.35)", width: 1.5 }, // Make real-time equity semi-transparent
+    line: { color: "rgba(38,166,154,0.3)", width: 1 },
     fill: "tozeroy",
-    fillcolor: "rgba(38,166,154,0.08)",
-    name: "浮动资金",
+    fillcolor: "rgba(38,166,154,0.05)",
+    name: "浮动资金（参考）",
     hovertemplate: "%{x}<br>浮动: $%{y:,.2f}<extra></extra>",
   };
 
-  // Build balance curve directly from trades to include entry/exit details
+  // 主线：仅在出场时刻结算已实现盈亏
   let cumBal = initialCapital;
-  const balanceX: string[] = [xs[0] || new Date().toISOString().slice(0, 10)];
+  const balanceX: string[] = [toPlotIso(equity[0].time)];
   const balanceY: number[] = [cumBal];
   const balanceHover: string[] = ["初始本金"];
 
@@ -464,9 +469,10 @@ function EquityTab({ equity, balance, trades = [], summary }: { equity: EquityPo
   for (const t of sortedTrades) {
     if (t.exit_time) {
       cumBal += t.pnl_abs || 0;
-      balanceX.push(new Date(t.exit_time * 1000).toISOString().slice(0, 10));
+      balanceX.push(toPlotIso(t.exit_time));
       balanceY.push(cumBal);
       balanceHover.push(
+        `出场: ${new Date(t.exit_time * 1000).toLocaleString("zh-CN", { hour12: false })}<br>` +
         `进场价: $${t.entry_price?.toFixed(2) || 0}<br>` +
         `出场价: $${t.exit_price?.toFixed(2) || 0}<br>` +
         `数量: ${t.size?.toFixed(4) || 0}<br>` +
@@ -478,11 +484,11 @@ function EquityTab({ equity, balance, trades = [], summary }: { equity: EquityPo
   const balanceTrace: Plotly.Data | null = balanceY.length > 1 ? {
     type: "scatter",
     mode: "lines",
-    line: { shape: "vh", color: "#26a69a", width: 2 }, // Step-line for closed trades
+    line: { shape: "vh", color: "#26a69a", width: 2.5 },
     x: balanceX,
     y: balanceY,
     text: balanceHover,
-    name: "结算资金",
+    name: "结算资金（出场结算）",
     hovertemplate: "%{x}<br>结算: $%{y:,.2f}<br><br>%{text}<extra></extra>",
   } : null;
 
@@ -497,7 +503,7 @@ function EquityTab({ equity, balance, trades = [], summary }: { equity: EquityPo
     showlegend: false,
   };
 
-  const data = balanceTrace ? [baseline, trace, balanceTrace] : [baseline, trace];
+  const data = balanceTrace ? [baseline, floatingTrace, balanceTrace] : [baseline, floatingTrace];
 
   let maxDd = summary?.max_drawdown_pct ? Math.abs(summary.max_drawdown_pct) / 100 : 0;
   
@@ -507,8 +513,8 @@ function EquityTab({ equity, balance, trades = [], summary }: { equity: EquityPo
   let f_annotationY: number | undefined;
 
   if (summary?.max_dd_peak_ts && summary?.max_dd_trough_ts) {
-    f_x0 = new Date(summary.max_dd_peak_ts * 1000).toISOString().slice(0, 10);
-    f_x1 = new Date(summary.max_dd_trough_ts * 1000).toISOString().slice(0, 10);
+    f_x0 = toPlotIso(summary.max_dd_peak_ts);
+    f_x1 = toPlotIso(summary.max_dd_trough_ts);
     let minDiff = Infinity;
     for (let i = 0; i < equity.length; i++) {
       const diff = Math.abs(equity[i].time - summary.max_dd_trough_ts);
@@ -555,15 +561,15 @@ function EquityTab({ equity, balance, trades = [], summary }: { equity: EquityPo
   let closedMaxDd = summary?.closed_max_drawdown_pct ? Math.abs(summary.closed_max_drawdown_pct) / 100 : 0;
 
   if (summary?.closed_max_dd_peak_ts && summary?.closed_max_dd_trough_ts) {
-    c_x0 = new Date(summary.closed_max_dd_peak_ts * 1000).toISOString().slice(0, 10);
-    c_x1 = new Date(summary.closed_max_dd_trough_ts * 1000).toISOString().slice(0, 10);
-    c_x2 = summary?.closed_max_dd_recovery_ts 
-      ? new Date(summary.closed_max_dd_recovery_ts * 1000).toISOString().slice(0, 10) 
+    c_x0 = toPlotIso(summary.closed_max_dd_peak_ts);
+    c_x1 = toPlotIso(summary.closed_max_dd_trough_ts);
+    c_x2 = summary?.closed_max_dd_recovery_ts
+      ? toPlotIso(summary.closed_max_dd_recovery_ts)
       : c_x1;
 
     let minDiff = Infinity;
     for (let i = 0; i < balanceY.length; i++) {
-      const bTs = new Date(balanceX[i]).getTime() / 1000;
+      const bTs = balanceX[i] ? new Date(balanceX[i]).getTime() / 1000 : 0;
       const diff = Math.abs(bTs - summary.closed_max_dd_trough_ts);
       if (diff < minDiff) {
         minDiff = diff;
@@ -626,19 +632,20 @@ function EquityTab({ equity, balance, trades = [], summary }: { equity: EquityPo
     paper_bgcolor: "transparent",
     plot_bgcolor: "transparent",
     font: { color: "#888", size: 10 },
-    margin: { t: 10, r: 20, b: 36, l: 60 },
+    margin: { t: 32, r: 20, b: 36, l: 60 },
     xaxis: {
       gridcolor: "#1a1a1a",
       tickfont: { size: 10 },
       showgrid: true,
       type: "date",
       tickformat: "%Y-%m",
-      hoverformat: "%Y-%m-%d",
+      hoverformat: "%Y-%m-%d %H:%M",
       dtick: "M3",
     },
     yaxis: { gridcolor: "#1a1a1a", tickfont: { size: 10 }, tickprefix: "$", showgrid: true },
     hovermode: "x unified",
-    showlegend: false,
+    showlegend: true,
+    legend: { orientation: "h", y: 1.12, x: 0, font: { size: 10, color: "#888" } },
     shapes,
     annotations,
   };
@@ -691,6 +698,7 @@ function TradesTab({ trades }: { trades: TradeRecord[] }) {
             <th style={{ ...thStyle, width: 40, textAlign: "center" }}>#</th>
             {[
               { key: "entry_time", label: "入场时间" },
+              { key: "exit_time",  label: "出场时间" },
               { key: "pair",       label: "标的" },
               { key: "direction",  label: "方向" },
               { key: "signal",     label: "信号" },
@@ -712,6 +720,7 @@ function TradesTab({ trades }: { trades: TradeRecord[] }) {
             <tr key={i} style={{ borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
               <td style={{ padding: "5px 10px", textAlign: "center", color: "var(--text-mute)", fontFamily: "monospace", fontSize: 10 }}>{trades.length - i}</td>
               <td style={{ padding: "5px 10px", color: "var(--text-mute)", whiteSpace: "nowrap" }}>{ts(t.entry_time)}</td>
+              <td style={{ padding: "5px 10px", color: "var(--text-mute)", whiteSpace: "nowrap" }}>{t.exit_time ? ts(t.exit_time) : "—"}</td>
               <td style={{ padding: "5px 10px", color: "var(--text)", fontWeight: 600 }}>{t.pair}</td>
               <td style={{ padding: "5px 10px", color: t.direction === "long" ? "var(--up)" : "var(--down)", fontWeight: 600 }}>
                 {t.direction === "long" ? "做多" : "做空"}
