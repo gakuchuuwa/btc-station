@@ -138,21 +138,36 @@ export default function MiniChart({ candles, markers, strategyLines, height }: {
       (candles ?? []).map(c => c.time > 1e12 ? Math.floor(c.time / 1000) : c.time)
     )
 
-    // 同一时间戳只保留一个 Marker，防止渲染崩溃
-    const uniqueMap = new Map<number, { time: Time; position: SeriesMarkerBarPosition; color: string; shape: SeriesMarkerShape; text: string; size: number }>()
+    // 按 (时间, 位置, 形状) 去重——同一根 K 线上多笔加仓只保留一个箭头，禁止拼接文字
+    const uniqueMap = new Map<string, { time: Time; position: SeriesMarkerBarPosition; color: string; shape: SeriesMarkerShape; text: string; size: number; count: number }>()
     markers.forEach(m => {
       const t = m.time > 1e12 ? Math.floor(m.time / 1000) : m.time
       if (!validTimes.has(t)) return
-      if (uniqueMap.has(t)) {
-        const existing = uniqueMap.get(t)!
-        existing.text = `${existing.text}/${m.text ?? ''}`
-        existing.color = '#FFD700'
+      const key = `${t}|${m.position}|${m.shape}`
+      const existing = uniqueMap.get(key)
+      if (existing) {
+        existing.count += 1
+        existing.text = '' // 多笔同向信号不堆文字，避免「做多/平仓/做多…」铺满图表
       } else {
-        uniqueMap.set(t, { time: t as Time, position: m.position as SeriesMarkerBarPosition, color: m.color, shape: m.shape as SeriesMarkerShape, text: m.text ?? '', size: 1.2 })
+        uniqueMap.set(key, {
+          time: t as Time,
+          position: m.position as SeriesMarkerBarPosition,
+          color: m.color,
+          shape: m.shape as SeriesMarkerShape,
+          text: m.text ?? '',
+          size: 1.2,
+          count: 1,
+        })
       }
     })
 
-    const lwtMarkers = Array.from(uniqueMap.values()).sort((a, b) => (a.time as number) - (b.time as number))
+    const lwtMarkers = Array.from(uniqueMap.values())
+      .map(({ count, ...m }) => ({
+        ...m,
+        text: count > 1 ? '' : m.text,
+        size: count > 1 ? 1.4 : m.size,
+      }))
+      .sort((a, b) => (a.time as number) - (b.time as number))
     try { markerPluginRef.current.setMarkers(lwtMarkers) } catch (e) { console.error('[MiniChart] Marker加载错误:', e) }
   }, [markers, candles])
 

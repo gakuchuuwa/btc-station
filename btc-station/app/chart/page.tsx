@@ -609,10 +609,16 @@ function ChartPanel({
         }
         return candleTimes[lo] ?? t
       }
-      const lwtMarkers = markers
-        .map(m => ({ ...m, time: snapToCandle(m.time) }))
-        .sort((a, b) => a.time - b.time)
-        .map(m => ({ time: m.time as Time, position: m.position, color: m.color, shape: m.shape, text: m.text ?? '' }))
+      const uniqueMap = new Map<string, { time: Time; position: string; color: string; shape: string; text: string }>()
+      for (const m of markers) {
+        const t = snapToCandle(m.time)
+        if (!validTimes.has(t)) continue
+        const key = `${t}|${m.position}|${m.shape}`
+        if (!uniqueMap.has(key)) {
+          uniqueMap.set(key, { time: t as Time, position: m.position, color: m.color, shape: m.shape, text: '' })
+        }
+      }
+      const lwtMarkers = Array.from(uniqueMap.values()).sort((a, b) => (a.time as number) - (b.time as number))
       markersInstanceRef.current = createSeriesMarkers(series as any, lwtMarkers as any) as any
     }
   }, [markers, candles])

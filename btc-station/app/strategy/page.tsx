@@ -380,7 +380,7 @@ export default function StrategyPage() {
         position: isLong ? 'belowBar' : 'aboveBar',
         color:    isLong ? '#26a69a' : '#ef5350',
         shape:    isLong ? 'arrowUp' : 'arrowDown',
-        text:     isLong ? '做多' : '做空',
+        text:     '',
       })
       // 平仓
       if (t.exit_time) mkrs.push({
@@ -388,7 +388,7 @@ export default function StrategyPage() {
         position: isLong ? 'aboveBar' : 'belowBar',
         color:    '#9c27b0',
         shape:    isLong ? 'arrowDown' : 'arrowUp',
-        text:     '平仓',
+        text:     '',
       })
     })
     mkrs.sort((a, b) => a.time - b.time)
