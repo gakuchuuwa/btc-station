@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useRef } from 'react'
 import {
-  BaselineSeries,
   LineSeries,
   LineType,
   createChart,
@@ -74,6 +73,39 @@ function toChartData(points: EquityPoint[]): { time: Time; value: number }[] {
     .map(p => ({ time: normalizeUnixSec(p.time) as Time, value: p.equity }))
     .sort((a, b) => (a.time as number) - (b.time as number))
     .filter((p, i, arr) => i === 0 || p.time !== arr[i - 1].time)
+}
+
+/** 把稀疏结算点扩成与 equity 同时间轴的阶梯序列，否则 WithSteps 在缩放后几乎看不见 */
+function expandBalanceSteps(balance: EquityPoint[], equity: EquityPoint[]): EquityPoint[] {
+  if (balance.length === 0) return []
+  if (equity.length === 0) return balance
+
+  const bal = [...balance]
+    .map(p => ({ time: normalizeUnixSec(p.time), equity: p.equity }))
+    .sort((a, b) => a.time - b.time)
+
+  const eqTimes = equity.map(p => normalizeUnixSec(p.time)).sort((a, b) => a - b)
+  const out: EquityPoint[] = []
+  let bi = 0
+  let cur = bal[0].equity
+
+  for (const t of eqTimes) {
+    while (bi + 1 < bal.length && bal[bi + 1].time <= t) {
+      bi++
+      cur = bal[bi].equity
+    }
+    const prev = out[out.length - 1]
+    if (!prev || prev.time !== t || prev.equity !== cur) {
+      out.push({ time: t, equity: cur })
+    }
+  }
+
+  const lastBal = bal[bal.length - 1]
+  const lastT = eqTimes[eqTimes.length - 1]
+  if (lastBal.time > lastT) {
+    out.push({ time: lastBal.time, equity: lastBal.equity })
+  }
+  return out
 }
 
 /** 后端未返回 balance 时，从 trades 按出场时间重建阶梯资金曲线 */
@@ -151,8 +183,10 @@ function MergedEquityPane({
 }) {
   const chartAreaRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
-  const equitySeriesRef = useRef<ISeriesApi<'Baseline'> | null>(null)
+  const equitySeriesRef = useRef<ISeriesApi<'Line'> | null>(null)
   const balanceSeriesRef = useRef<ISeriesApi<'Line'> | null>(null)
+
+  const chartBalance = useMemo(() => expandBalanceSteps(balance, equity), [balance, equity])
 
   const initialCapital = summary?.initial_capital ?? equity[0]?.equity ?? balance[0]?.equity ?? DEFAULT_INITIAL_CAPITAL
   const rangeSource = equity.length > 0 ? equity : balance
@@ -202,27 +236,23 @@ function MergedEquityPane({
     })
     chartRef.current = chart
 
+    // 先画权益（底层），再画资金（顶层），避免被盖住
+    equitySeriesRef.current = chart.addSeries(LineSeries, {
+      color: 'rgba(0,212,255,0.9)',
+      lineWidth: 2,
+      lineType: LineType.Simple,
+      priceLineVisible: false,
+      lastValueVisible: true,
+      title: '权益',
+    })
+
     balanceSeriesRef.current = chart.addSeries(LineSeries, {
       color: '#26A69A',
-      lineWidth: 2,
+      lineWidth: 3,
       lineType: LineType.WithSteps,
       priceLineVisible: false,
       lastValueVisible: true,
       title: '资金',
-    })
-
-    equitySeriesRef.current = chart.addSeries(BaselineSeries, {
-      topLineColor: 'rgba(0,212,255,0.85)',
-      bottomLineColor: 'rgba(0,212,255,0.55)',
-      topFillColor1: 'rgba(0,212,255,0.12)',
-      topFillColor2: 'rgba(0,212,255,0.02)',
-      bottomFillColor1: 'rgba(0,212,255,0.08)',
-      bottomFillColor2: 'rgba(0,212,255,0.01)',
-      lineWidth: 1,
-      priceLineVisible: false,
-      lastValueVisible: true,
-      baseValue: { type: 'price', price: initialCapital },
-      title: '权益',
     })
 
     const ro = new ResizeObserver(entries => {
@@ -246,17 +276,16 @@ function MergedEquityPane({
   useEffect(() => {
     if (!chartRef.current) return
 
-    if (balanceSeriesRef.current && balance.length > 0) {
-      balanceSeriesRef.current.setData(toChartData(balance))
+    if (balanceSeriesRef.current && chartBalance.length > 0) {
+      balanceSeriesRef.current.setData(toChartData(chartBalance))
     }
 
     if (equitySeriesRef.current && equity.length > 0) {
       equitySeriesRef.current.setData(toChartData(equity))
-      equitySeriesRef.current.applyOptions({ baseValue: { type: 'price', price: initialCapital } })
     }
 
     applyRange()
-  }, [equity, balance, initialCapital, applyRange])
+  }, [equity, chartBalance, applyRange])
 
   return <div ref={chartAreaRef} style={{ flex: 1, minHeight: 80, height: chartHeight === '100%' ? undefined : chartHeight }} />
 }
@@ -366,7 +395,7 @@ export default function EquityChart({
           )}
         </div>
       )}
-      <div style={{ flex: 1, minHeight: 80, display: 'flex', flexDirection: 'column' }}>
+      <div style={{ flex: 1, minHeight: 80, display: 'flex', flexDirection: 'column', position: 'relative' }}>
         <MergedEquityPane
           equity={equity}
           balance={balance}
@@ -375,6 +404,26 @@ export default function EquityChart({
           rangeEnd={rangeEnd}
           chartHeight={chartBodyHeight}
         />
+        {hasEquity && !hasBalance && (
+          <div
+            style={{
+              position: 'absolute',
+              bottom: 8,
+              left: 12,
+              right: 12,
+              padding: '6px 10px',
+              borderRadius: 4,
+              background: 'rgba(245,158,11,0.12)',
+              border: '1px solid rgba(245,158,11,0.35)',
+              color: '#f59e0b',
+              fontSize: 11,
+              fontFamily: "'JetBrains Mono', monospace",
+              pointerEvents: 'none',
+            }}
+          >
+            仅显示权益曲线（青色）。请重新运行回测以加载资金曲线（绿色阶梯线）。
+          </div>
+        )}
       </div>
     </div>
   )
