@@ -1,12 +1,14 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   LineSeries,
   LineType,
   createChart,
+  createSeriesMarkers,
   type IChartApi,
   type ISeriesApi,
+  type ISeriesMarkersPluginApi,
   type Time,
 } from 'lightweight-charts'
 import { DEFAULT_INITIAL_CAPITAL } from '@/lib/backtest/constants'
@@ -26,9 +28,78 @@ export interface EquitySummary {
   max_drawdown_pct?: number | null
   closed_max_drawdown_pct?: number | null
   max_drawdown_duration_days?: number | null
+  max_dd_peak_ts?: number | null
+  max_dd_trough_ts?: number | null
+  max_dd_recovery_ts?: number | null
+  closed_max_dd_peak_ts?: number | null
+  closed_max_dd_trough_ts?: number | null
+  closed_max_dd_recovery_ts?: number | null
   backtest_start?: string | null
   backtest_end?: string | null
   total_trades?: number
+}
+
+interface DrawdownZone {
+  id: string
+  from: number
+  to: number
+  fill: string
+  border: string
+  labelColor: string
+  label: string
+  pct: number
+}
+
+function buildDrawdownZones(summary?: EquitySummary | null): DrawdownZone[] {
+  if (!summary) return []
+  const zones: DrawdownZone[] = []
+
+  const push = (
+    id: string,
+    peak: number | null | undefined,
+    trough: number | null | undefined,
+    pct: number | null | undefined,
+    style: { fill: string; border: string; labelColor: string; label: string },
+  ) => {
+    if (peak == null || trough == null || pct == null || pct <= 0) return
+    const from = normalizeUnixSec(peak)
+    const to = normalizeUnixSec(trough)
+    if (!from || !to || from >= to) return
+    zones.push({
+      id,
+      from,
+      to,
+      pct: Math.abs(pct),
+      ...style,
+      label: style.label,
+    })
+  }
+
+  push(
+    'balance-dd',
+    summary.closed_max_dd_peak_ts,
+    summary.closed_max_dd_trough_ts,
+    summary.closed_max_drawdown_pct,
+    {
+      fill: 'rgba(0,230,118,0.14)',
+      border: 'rgba(0,230,118,0.55)',
+      labelColor: '#00E676',
+      label: '资金回撤',
+    },
+  )
+  push(
+    'equity-dd',
+    summary.max_dd_peak_ts,
+    summary.max_dd_trough_ts,
+    summary.max_drawdown_pct,
+    {
+      fill: 'rgba(245,158,11,0.14)',
+      border: 'rgba(245,158,11,0.55)',
+      labelColor: '#f7931a',
+      label: '权益回撤',
+    },
+  )
+  return zones
 }
 
 interface EquityChartProps {
@@ -166,6 +237,93 @@ function LegendDot({ color, label }: { color: string; label: string }) {
   )
 }
 
+function DrawdownZoneOverlay({
+  chartRef,
+  wrapRef,
+  zones,
+}: {
+  chartRef: React.RefObject<IChartApi | null>
+  wrapRef: React.RefObject<HTMLDivElement | null>
+  zones: DrawdownZone[]
+}) {
+  const [bands, setBands] = useState<Array<{ left: number; width: number; zone: DrawdownZone; labelTop: number }>>([])
+
+  useEffect(() => {
+    const chart = chartRef.current
+    const wrap = wrapRef.current
+    if (!chart || !wrap || zones.length === 0) {
+      setBands([])
+      return
+    }
+
+    const update = () => {
+      const ts = chart.timeScale()
+      const next = zones
+        .map((zone, idx) => {
+          const x1 = ts.timeToCoordinate(zone.from as Time)
+          const x2 = ts.timeToCoordinate(zone.to as Time)
+          if (x1 == null || x2 == null) return null
+          const left = Math.min(x1, x2)
+          const width = Math.abs(x2 - x1)
+          if (width < 3) return null
+          return { left, width, zone, labelTop: 6 + idx * 18 }
+        })
+        .filter((b): b is { left: number; width: number; zone: DrawdownZone; labelTop: number } => b != null)
+      setBands(next)
+    }
+
+    update()
+    chart.timeScale().subscribeVisibleTimeRangeChange(update)
+    const ro = new ResizeObserver(update)
+    ro.observe(wrap)
+    return () => {
+      chart.timeScale().unsubscribeVisibleTimeRangeChange(update)
+      ro.disconnect()
+    }
+  }, [chartRef, wrapRef, zones])
+
+  if (bands.length === 0) return null
+
+  return (
+    <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', overflow: 'hidden' }}>
+      {bands.map(b => (
+        <div
+          key={b.zone.id}
+          style={{
+            position: 'absolute',
+            top: 0,
+            bottom: 22,
+            left: b.left,
+            width: b.width,
+            background: b.zone.fill,
+            borderLeft: `1px dashed ${b.zone.border}`,
+            borderRight: `1px dashed ${b.zone.border}`,
+          }}
+        >
+          <div
+            style={{
+              position: 'absolute',
+              top: b.labelTop,
+              left: 4,
+              padding: '1px 6px',
+              borderRadius: 3,
+              background: 'rgba(19,23,34,0.85)',
+              border: `1px solid ${b.zone.border}`,
+              color: b.zone.labelColor,
+              fontSize: 10,
+              fontFamily: "'JetBrains Mono', monospace",
+              fontWeight: 600,
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {b.zone.label} -{b.zone.pct.toFixed(2)}%
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function MergedEquityPane({
   equity,
   balance,
@@ -182,11 +340,15 @@ function MergedEquityPane({
   chartHeight: number | string
 }) {
   const chartAreaRef = useRef<HTMLDivElement>(null)
+  const wrapRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
   const equitySeriesRef = useRef<ISeriesApi<'Line'> | null>(null)
   const balanceSeriesRef = useRef<ISeriesApi<'Line'> | null>(null)
+  const equityMarkersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null)
+  const balanceMarkersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null)
 
   const chartBalance = useMemo(() => expandBalanceSteps(balance, equity), [balance, equity])
+  const ddZones = useMemo(() => buildDrawdownZones(summary), [summary])
 
   const initialCapital = summary?.initial_capital ?? equity[0]?.equity ?? balance[0]?.equity ?? DEFAULT_INITIAL_CAPITAL
   const rangeSource = equity.length > 0 ? equity : balance
@@ -256,6 +418,9 @@ function MergedEquityPane({
       title: '资金',
     })
 
+    equityMarkersRef.current = createSeriesMarkers(equitySeriesRef.current, [])
+    balanceMarkersRef.current = createSeriesMarkers(balanceSeriesRef.current, [])
+
     const ro = new ResizeObserver(entries => {
       const entry = entries[0]
       if (!entry) return
@@ -270,6 +435,8 @@ function MergedEquityPane({
       chartRef.current = null
       equitySeriesRef.current = null
       balanceSeriesRef.current = null
+      equityMarkersRef.current = null
+      balanceMarkersRef.current = null
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -288,7 +455,44 @@ function MergedEquityPane({
     applyRange()
   }, [equity, chartBalance, applyRange])
 
-  return <div ref={chartAreaRef} style={{ flex: 1, minHeight: 80, height: chartHeight === '100%' ? undefined : chartHeight }} />
+  useEffect(() => {
+    const eqMarkers: Array<{ time: Time; position: 'aboveBar' | 'belowBar'; color: string; shape: 'circle' | 'arrowDown'; text: string }> = []
+    const balMarkers: Array<{ time: Time; position: 'aboveBar' | 'belowBar'; color: string; shape: 'circle' | 'arrowDown'; text: string }> = []
+
+    if (summary?.max_dd_peak_ts && summary.max_dd_trough_ts) {
+      const pct = Math.abs(summary.max_drawdown_pct ?? 0)
+      eqMarkers.push(
+        { time: normalizeUnixSec(summary.max_dd_peak_ts) as Time, position: 'aboveBar', color: '#f7931a', shape: 'circle', text: '权益峰' },
+        { time: normalizeUnixSec(summary.max_dd_trough_ts) as Time, position: 'belowBar', color: '#f7931a', shape: 'arrowDown', text: pct > 0 ? `-${pct.toFixed(1)}%` : '谷底' },
+      )
+    }
+    if (summary?.closed_max_dd_peak_ts && summary.closed_max_dd_trough_ts) {
+      const pct = Math.abs(summary.closed_max_drawdown_pct ?? 0)
+      balMarkers.push(
+        { time: normalizeUnixSec(summary.closed_max_dd_peak_ts) as Time, position: 'aboveBar', color: '#00E676', shape: 'circle', text: '资金峰' },
+        { time: normalizeUnixSec(summary.closed_max_dd_trough_ts) as Time, position: 'belowBar', color: '#00E676', shape: 'arrowDown', text: pct > 0 ? `-${pct.toFixed(1)}%` : '谷底' },
+      )
+    }
+
+    equityMarkersRef.current?.setMarkers(eqMarkers)
+    balanceMarkersRef.current?.setMarkers(balMarkers)
+  }, [summary])
+
+  const wrapStyle: React.CSSProperties = {
+    position: 'relative',
+    flex: 1,
+    minHeight: 80,
+    height: chartHeight === '100%' ? '100%' : chartHeight,
+    display: 'flex',
+    flexDirection: 'column',
+  }
+
+  return (
+    <div ref={wrapRef} style={wrapStyle}>
+      <div ref={chartAreaRef} style={{ flex: 1, minHeight: 0, width: '100%' }} />
+      <DrawdownZoneOverlay chartRef={chartRef} wrapRef={wrapRef} zones={ddZones} />
+    </div>
+  )
 }
 
 export default function EquityChart({
@@ -326,6 +530,7 @@ export default function EquityChart({
     : null
   const equityMaxDd = summary?.max_drawdown_pct != null ? Math.abs(summary.max_drawdown_pct) : null
   const equityDdDays = summary?.max_drawdown_duration_days
+  const ddZones = useMemo(() => buildDrawdownZones(summary), [summary])
 
   const outerStyle: React.CSSProperties = fillHeight
     ? { display: 'flex', flexDirection: 'column', height: '100%', background: '#131722', borderTop: showHeader ? '1px solid #363a45' : undefined }
@@ -375,6 +580,11 @@ export default function EquityChart({
           {timeRange && (
             <span style={{ color: '#5d606b', fontSize: 10, marginLeft: 2 }}>
               {formatDateLabel(timeRange.from)} ~ {formatDateLabel(timeRange.to)}
+            </span>
+          )}
+          {(ddZones.length > 0) && (
+            <span style={{ color: '#5d606b', fontSize: 10 }} title="峰值→谷底区间">
+              色带=回撤段
             </span>
           )}
           <span style={{ marginLeft: 'auto', fontSize: 10 }}>
