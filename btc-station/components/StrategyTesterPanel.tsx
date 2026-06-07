@@ -9,17 +9,7 @@
  */
 
 import { useState, useRef, useCallback, useEffect } from "react";
-import dynamic from "next/dynamic";
-import { DEFAULT_INITIAL_CAPITAL } from "@/lib/backtest/constants";
-
-const Plot = dynamic(() => import("react-plotly.js"), {
-  ssr: false,
-  loading: () => (
-    <div style={{ height: 200, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-mute)", fontSize: 12 }}>
-      图表加载中…
-    </div>
-  ),
-});
+import EquityChart from "@/components/EquityChart";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -426,163 +416,15 @@ function ConsoleTab({ logs, running, summary }: { logs: string[]; running: boole
   );
 }
 
-function toPlotIso(unixSec: number) {
-  return new Date(unixSec * 1000).toISOString();
-}
-
 function EquityTab({ equity, summary }: { equity: EquityPoint[]; balance?: EquityPoint[]; trades?: TradeRecord[]; summary?: BacktestSummary | null }) {
   if (equity.length === 0) {
     return (
       <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "var(--text-mute)", fontSize: 12 }}>
-        暂无资金曲线数据
+        运行回测后显示资金曲线（与上方 K 线区相同数据）
       </div>
     );
   }
-
-  const initialCapital = summary?.initial_capital ?? equity[0]?.equity ?? DEFAULT_INITIAL_CAPITAL;
-  const equityTimes = equity.map(p => p.time);
-  const xs = equityTimes.map(toPlotIso);
-  const ys = equity.map(p => p.equity);
-
-  const baseline: Plotly.Data = {
-    type: "scatter",
-    mode: "lines",
-    x: [xs[0], xs[xs.length - 1]],
-    y: [initialCapital, initialCapital],
-    line: { color: "rgba(255,255,255,0.15)", width: 1, dash: "dot" },
-    hoverinfo: "skip",
-    showlegend: false,
-  };
-
-  const equityTrace: Plotly.Data = {
-    type: "scatter",
-    mode: "lines",
-    x: xs,
-    y: ys,
-    line: { color: "#26a69a", width: 2 },
-    fill: "tonexty",
-    fillcolor: "rgba(38,166,154,0.12)",
-    name: "账户权益",
-    hovertemplate: "%{x}<br>权益: $%{y:,.2f}<extra></extra>",
-  };
-
-  const data: Plotly.Data[] = [baseline, equityTrace];
-
-  let maxDd = summary?.max_drawdown_pct ? Math.abs(summary.max_drawdown_pct) / 100 : 0;
-  let ddPeakX: string | undefined;
-  let ddTroughX: string | undefined;
-  let ddRecoveryX: string | undefined;
-  let ddTroughY: number | undefined;
-
-  if (summary?.max_dd_peak_ts && summary?.max_dd_trough_ts) {
-    ddPeakX = toPlotIso(summary.max_dd_peak_ts);
-    ddTroughX = toPlotIso(summary.max_dd_trough_ts);
-    ddRecoveryX = summary.max_dd_recovery_ts
-      ? toPlotIso(summary.max_dd_recovery_ts)
-      : ddTroughX;
-    let minDiff = Infinity;
-    for (let i = 0; i < equity.length; i++) {
-      const diff = Math.abs(equityTimes[i] - summary.max_dd_trough_ts);
-      if (diff < minDiff) {
-        minDiff = diff;
-        ddTroughY = ys[i];
-      }
-    }
-  } else {
-    let localMaxDd = 0;
-    let peakIdx = 0;
-    let troughIdx = 0;
-    let currentPeakVal = -Infinity;
-    let currentPeakIdx = 0;
-
-    for (let i = 0; i < ys.length; i++) {
-      const y = ys[i];
-      if (y > currentPeakVal) {
-        currentPeakVal = y;
-        currentPeakIdx = i;
-      }
-      const dd = currentPeakVal > 0 ? (currentPeakVal - y) / currentPeakVal : 0;
-      if (dd > localMaxDd) {
-        localMaxDd = dd;
-        peakIdx = currentPeakIdx;
-        troughIdx = i;
-      }
-    }
-
-    if (!summary?.max_drawdown_pct) maxDd = localMaxDd;
-    if (localMaxDd > 0) {
-      ddPeakX = xs[peakIdx];
-      ddTroughX = xs[troughIdx];
-      ddRecoveryX = xs[troughIdx];
-      ddTroughY = ys[troughIdx];
-    }
-  }
-
-  const shapes: Partial<Plotly.Shape>[] = [];
-  if (maxDd > 0 && ddPeakX && ddRecoveryX) {
-    shapes.push({
-      type: "rect",
-      xref: "x",
-      yref: "paper",
-      x0: ddPeakX,
-      x1: ddRecoveryX,
-      y0: 0,
-      y1: 1,
-      fillcolor: "rgba(239, 83, 80, 0.12)",
-      line: { width: 0 },
-    });
-  }
-
-  const annotations: Partial<Plotly.Annotations>[] = [];
-  const durText = summary?.max_drawdown_duration_days != null
-    ? `<br>时长: ${summary.max_drawdown_duration_days}天`
-    : "";
-
-  if (maxDd > 0 && ddTroughX && ddTroughY !== undefined) {
-    annotations.push({
-      x: ddTroughX,
-      y: ddTroughY,
-      xref: "x",
-      yref: "y",
-      text: `最大回撤 -${(maxDd * 100).toFixed(2)}%${durText}`,
-      showarrow: true,
-      arrowcolor: "#ef5350",
-      font: { color: "#ef5350", size: 10 },
-      ax: 0,
-      ay: 40,
-    });
-  }
-
-  const layout: Partial<Plotly.Layout> = {
-    paper_bgcolor: "transparent",
-    plot_bgcolor: "transparent",
-    font: { color: "#888", size: 10 },
-    margin: { t: 24, r: 20, b: 36, l: 60 },
-    xaxis: {
-      gridcolor: "#1a1a1a",
-      tickfont: { size: 10 },
-      showgrid: true,
-      type: "date",
-      tickformat: "%Y-%m",
-      hoverformat: "%Y-%m-%d %H:%M",
-      dtick: "M3",
-    },
-    yaxis: { gridcolor: "#1a1a1a", tickfont: { size: 10 }, tickprefix: "$", showgrid: true },
-    hovermode: "x",
-    showlegend: false,
-    shapes,
-    annotations,
-  };
-
-  return (
-    <Plot
-      data={data}
-      layout={layout}
-      config={{ responsive: true, displayModeBar: false }}
-      style={{ width: "100%", height: "100%" }}
-      useResizeHandler
-    />
-  );
+  return <EquityChart equity={equity} summary={summary} fillHeight showHeader />;
 }
 
 function TradesTab({ trades }: { trades: TradeRecord[] }) {
