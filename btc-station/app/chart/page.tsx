@@ -17,6 +17,8 @@ import {
 import { formatUsd, formatPercent } from '@/lib/format'
 import type { Market } from '@/lib/okx'
 import StrategyTesterPanel from '@/components/StrategyTesterPanel'
+import { DEFAULT_INITIAL_CAPITAL } from '@/lib/backtest/constants'
+import { buildBacktestParameters } from '@/lib/backtest/params'
 
 // ============================
 // 指标计算（客户端 JS）
@@ -1458,7 +1460,7 @@ export default function ChartPage() {
   // ── Strategy settings modal ──────────────────────────────────────────────
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [settingsStrategyId, setSettingsStrategyId] = useState<string | null>(null)
-  const [settingsCapital, setSettingsCapital] = useState(10000)
+  const [settingsCapital, setSettingsCapital] = useState(DEFAULT_INITIAL_CAPITAL)
   const [settingsDateFrom, setSettingsDateFrom] = useState('20230101')
   const [settingsDateTo, setSettingsDateTo] = useState('20260101')
 
@@ -1486,6 +1488,9 @@ export default function ChartPage() {
     setTesterVisible(true)
 
     const capital  = opts?.capital  ?? settingsCapital
+    const dateFrom = opts?.dateFrom ?? settingsDateFrom
+    const dateTo   = opts?.dateTo   ?? settingsDateTo
+    const btParams = buildBacktestParameters({ capital, startDate: dateFrom, endDate: dateTo })
 
     try {
       // Step 1: fetch template code（禁用缓存，确保拉到最新策略代码）
@@ -1503,7 +1508,7 @@ export default function ChartPage() {
           code,
           symbol: 'BTC/USDT',
           timeframe: tf,
-          parameters: { start_date: '2019-12-16 13:00:00' },
+          parameters: btParams,
         }),
       })
       if (!btRes.ok) {
@@ -1536,6 +1541,7 @@ export default function ChartPage() {
           closed_max_drawdown_pct:   m.closed_max_drawdown_pct ?? null,
           max_dd_peak_ts:            m.max_dd_peak_ts ?? null,
           max_dd_trough_ts:          m.max_dd_trough_ts ?? null,
+          max_dd_recovery_ts:        m.max_dd_recovery_ts ?? null,
           closed_max_dd_peak_ts:     m.closed_max_dd_peak_ts ?? null,
           closed_max_dd_trough_ts:   m.closed_max_dd_trough_ts ?? null,
           ftmo_drawdown_pct:         m.ftmo_drawdown_pct ?? null,
@@ -1615,7 +1621,7 @@ export default function ChartPage() {
         fetch('/py-api/api/backtest/ftmo_scan', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ code, symbol: 'BTC/USDT', timeframe: tf, parameters: { start_date: '2019-12-16 13:00:00' } }),
+          body: JSON.stringify({ code, symbol: 'BTC/USDT', timeframe: tf, parameters: btParams }),
         })
           .then(r => r.ok ? r.json() : null)
           .then(data => { if (data?.ftmo_scan) setTesterFtmoScan(data.ftmo_scan) })

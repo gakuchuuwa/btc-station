@@ -320,14 +320,30 @@ def run_dynamic_code(code_string: str, df, parameters: dict, timeframe: str = '4
         _dd_pct = ((pf_value - _peak) / _peak * 100).clip(upper=0)
         _max_dd_pct = round(abs(float(_dd_pct.min())), 4) if len(_dd_pct) else 0.0
 
+        # TV 口径：权益曲线 = 每根 K 线收盘时的账户总值（含浮盈浮亏）
         max_dd_peak_ts = None
         max_dd_trough_ts = None
+        max_dd_recovery_ts = None
+        max_dd_duration_days = None
+        max_dd_profit_at_trough = None
         try:
             if len(_dd_pct) > 0 and _dd_pct.min() < 0:
                 trough_idx = _dd_pct.idxmin()
                 max_dd_trough_ts = int(trough_idx.timestamp())
                 peak_idx = pf_value.loc[:trough_idx].idxmax()
                 max_dd_peak_ts = int(peak_idx.timestamp())
+                peak_val = float(pf_value.loc[peak_idx])
+                max_dd_profit_at_trough = round(float(pf_value.loc[trough_idx]) - init_cash, 2)
+
+                rec_idx = pf_value.index[-1]
+                for ts in pf_value.loc[trough_idx:].index:
+                    if float(pf_value.loc[ts]) >= peak_val:
+                        rec_idx = ts
+                        break
+                max_dd_recovery_ts = int(rec_idx.timestamp())
+                t_peak = pd.Timestamp(max_dd_peak_ts, unit='s')
+                t_rec = pd.Timestamp(max_dd_recovery_ts, unit='s')
+                max_dd_duration_days = max(0, (t_rec - t_peak).days)
         except Exception:
             pass
 
@@ -360,10 +376,8 @@ def run_dynamic_code(code_string: str, df, parameters: dict, timeframe: str = '4
         closed_max_dd_peak_ts = None
         closed_max_dd_trough_ts = None
         closed_max_dd_recovery_ts = None
-        max_dd_duration_days = None
         avg_dd_duration_days = None
         avg_dd_pct = None
-        max_dd_profit_at_trough = None
         try:
             if len(closed_equity_series) > 1 and _c_dd_pct.min() < 0:
                 # 位置索引，避免重复出场时间戳导致 loc 歧义
@@ -381,13 +395,7 @@ def run_dynamic_code(code_string: str, df, parameters: dict, timeframe: str = '4
                         break
                 closed_max_dd_recovery_ts = int(closed_equity_series.index[rec_pos].timestamp())
 
-                t_peak = pd.Timestamp(closed_max_dd_peak_ts, unit='s')
-                t_rec = pd.Timestamp(closed_max_dd_recovery_ts, unit='s')
-                max_dd_duration_days = max(0, (t_rec - t_peak).days)
-
-                max_dd_profit_at_trough = round(float(closed_equity_series.iloc[trough_pos]) - init_cash, 2)
-
-                # 各段回撤时长/深度（用于平均回撤时长、平均回撤深度）
+                # 各段回撤时长/深度（结算阶梯曲线，仅内部统计）
                 c_peak_s = closed_equity_series.cummax()
                 dd_durations = []
                 dd_depths = []
@@ -738,6 +746,7 @@ def run_dynamic_code(code_string: str, df, parameters: dict, timeframe: str = '4
             "closed_max_drawdown_pct": _closed_max_dd_pct,
             "max_dd_peak_ts":         max_dd_peak_ts,
             "max_dd_trough_ts":       max_dd_trough_ts,
+            "max_dd_recovery_ts":     max_dd_recovery_ts,
             "closed_max_dd_peak_ts":   closed_max_dd_peak_ts,
             "closed_max_dd_trough_ts": closed_max_dd_trough_ts,
             "closed_max_dd_recovery_ts": closed_max_dd_recovery_ts,

@@ -6,6 +6,8 @@ import MiniChart, { type Candle, type ChartMarker, type StrategyLine } from '@/c
 import StrategyTesterPanel, { type BacktestSummary, type TradeRecord, type EpochRecord, type ParamRow } from '@/components/StrategyTesterPanel'
 import { saveStrategy, listMyStrategies, deleteStrategy, type StrategyMeta } from '@/lib/freqtrade-api'
 import { loadChartCandles } from '@/lib/chart-klines'
+import { DEFAULT_INITIAL_CAPITAL } from '@/lib/backtest/constants'
+import { buildBacktestParameters } from '@/lib/backtest/params'
 
 const MonacoEditor = dynamic(() => import('@monaco-editor/react'), { ssr: false, loading: () => <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-mute)' }}>编辑器加载中…</div> })
 
@@ -122,6 +124,7 @@ export default function StrategyPage() {
   // S3 回测时间范围(空字符串=不限制)
   const [btStartDate, setBtStartDate] = useState('')
   const [btEndDate, setBtEndDate] = useState('')
+  const [initialCapital, setInitialCapital] = useState(DEFAULT_INITIAL_CAPITAL)
 
   // Optimize state
   const [optimizeStatus, setOptimizeStatus] = useState<'idle'|'running'|'completed'|'failed'>('idle')
@@ -146,7 +149,11 @@ export default function StrategyPage() {
       const raw = sessionStorage.getItem(SS_BT_RESULT_KEY)
       if (raw) {
         const s = JSON.parse(raw)
-        if (s.summary) setSummary(s.summary as BacktestSummary)
+        if (s.summary) {
+          setSummary(s.summary as BacktestSummary)
+          const cap = Number((s.summary as BacktestSummary).initial_capital)
+          if (cap > 0) setInitialCapital(cap)
+        }
         if (s.xlsxToken) setXlsxToken(s.xlsxToken as string)
         if (Array.isArray(s.trades)) setTrades(s.trades as TradeRecord[])
         if (Array.isArray(s.equity)) setEquity(s.equity as {time:number;equity:number}[])
@@ -348,7 +355,9 @@ export default function StrategyPage() {
   // Process backtest result into UI state
   const processResult = useCallback((result: Record<string, unknown>, fullCandles: Candle[]) => {
     const m = { ...(result.metrics as Record<string, number>), net_profit_pct: (result.metrics as Record<string, number>)?.total_return_pct ?? 0 }
-    setSummary({ ...m, initial_capital: 10000 } as BacktestSummary)
+    const cap = Number(m.initial_capital) || initialCapital
+    setInitialCapital(cap)
+    setSummary({ ...m, initial_capital: cap } as BacktestSummary)
     setXlsxToken((result.xlsx_token as string | null) ?? null)
 
     const rawTrades = (result.trades ?? []) as Record<string, unknown>[]
@@ -402,10 +411,11 @@ export default function StrategyPage() {
     // 持久化到 sessionStorage：切到其他页面再回来时可恢复，避免回测结果丢失
     try {
       const snapshot = {
-        summary: { ...m, initial_capital: 10000 },
+        summary: { ...m, initial_capital: cap },
         xlsxToken: (result.xlsx_token as string | null) ?? null,
         trades: parsedTrades,
         equity: result.equity ?? [],
+        balance: result.balance ?? [],
         markers: mkrs,
         strategyLines: lines,
       }
@@ -414,7 +424,7 @@ export default function StrategyPage() {
       // sessionStorage 写失败（容量超限/隐私模式）不阻塞主流程
       console.warn('回测结果持久化失败:', e)
     }
-  }, [snapToCandle])
+  }, [snapToCandle, initialCapital])
 
   // Run backtest
   const handleRun = useCallback(async () => {
@@ -423,9 +433,9 @@ export default function StrategyPage() {
     const rangeLabel = btStartDate || btEndDate ? `${btStartDate || '最早'} → ${btEndDate || '至今'}` : '全量历史数据'
     setLogs([`▶ ${strategyName} · ${tf} · ${rangeLabel}`])
     try {
-      const btParams: Record<string, unknown> = { initial_capital: 10000 }
-      if (btStartDate) btParams.start_date = btStartDate
-      if (btEndDate) btParams.end_date = btEndDate
+      const btParams = buildBacktestParameters(
+        { capital: initialCapital, startDate: btStartDate, endDate: btEndDate },
+      )
       const btRes = await fetch('/py-api/api/backtest/dynamic', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ code, symbol: 'BTC/USDT', timeframe: tf, parameters: btParams }),
@@ -450,7 +460,7 @@ export default function StrategyPage() {
     } catch (e: unknown) {
       setLogs(p => [...p, `✗ ${(e as Error).message}`])
     } finally { setRunning(false) }
-  }, [code, tf, strategyName, candles, running, processResult, btStartDate, btEndDate, normalizeCandles])
+  }, [code, tf, strategyName, candles, running, processResult, btStartDate, btEndDate, initialCapital, normalizeCandles])
 
   // Optimize
   const handleOptimizeStart = useCallback(async (paramRows: ParamRow[], startDate: string, method: 'grid' | 'annealing' = 'grid', target: string = 'calmar') => {
@@ -539,9 +549,10 @@ export default function StrategyPage() {
       try {
         const parsedParams: Record<string, number|string> = {}
         for (const [k, v] of Object.entries(params)) { const n = Number(v); parsedParams[k] = isNaN(n) ? v : n }
-        const applyParams: Record<string, unknown> = { ...parsedParams, initial_capital: 10000 }
-        if (btStartDate) applyParams.start_date = btStartDate
-        if (btEndDate) applyParams.end_date = btEndDate
+        const applyParams = buildBacktestParameters(
+          { capital: initialCapital, startDate: btStartDate, endDate: btEndDate },
+          parsedParams,
+        )
         const btRes = await fetch('/py-api/api/backtest/dynamic', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code, symbol: 'BTC/USDT', timeframe: tf, parameters: applyParams }) })
         if (!btRes.ok) { const err = await btRes.json().catch(() => ({ detail: btRes.statusText })); throw new Error(err.detail) }
         const result = await btRes.json()
@@ -559,7 +570,7 @@ export default function StrategyPage() {
       } catch (e: unknown) { setLogs(p => [...p, `✗ ${(e as Error).message}`]) }
       finally { setRunning(false) }
     })()
-  }, [code, tf, candles, processResult, btStartDate, btEndDate, normalizeCandles])
+  }, [code, tf, candles, processResult, btStartDate, btEndDate, initialCapital, normalizeCandles])
 
   // 模板列表
   const [templates, setTemplates] = useState<{id:string;name:string;category:string}[]>([])
@@ -875,6 +886,16 @@ export default function StrategyPage() {
           )}
           {/* S3 时间范围:留空=全量 */}
           <div style={{ marginLeft:'auto', display:'flex', alignItems:'center', gap:6, fontFamily:"'JetBrains Mono',monospace", fontSize:10, color:'#787b86' }}>
+            <span>本金</span>
+            <input
+              type="number"
+              min={100}
+              step={1000}
+              value={initialCapital}
+              onChange={e => setInitialCapital(Math.max(100, Number(e.target.value) || DEFAULT_INITIAL_CAPITAL))}
+              title="回测初始本金（USDT）"
+              style={{ width:72, background:'#1a1a1a', border:'1px solid #333', color:'#eee', fontSize:10, padding:'2px 6px', borderRadius:3 }}
+            />
             <span>回测范围</span>
             <input
               type="date"

@@ -10,6 +10,7 @@
 
 import { useState, useRef, useCallback, useEffect } from "react";
 import dynamic from "next/dynamic";
+import { DEFAULT_INITIAL_CAPITAL } from "@/lib/backtest/constants";
 
 const Plot = dynamic(() => import("react-plotly.js"), {
   ssr: false,
@@ -70,6 +71,7 @@ export interface BacktestSummary {
   closed_max_drawdown_pct?: number;
   max_dd_peak_ts?: number | null;
   max_dd_trough_ts?: number | null;
+  max_dd_recovery_ts?: number | null;
   closed_max_dd_peak_ts?: number | null;
   closed_max_dd_trough_ts?: number | null;
   closed_max_dd_recovery_ts?: number | null;
@@ -336,13 +338,8 @@ function SummaryGrid({ summary }: { summary: BacktestSummary }) {
         { label: "期望收益",   value: fmtAbs(s.expectancy_abs) },
         { label: "年化收益率", value: fmtPct(s.cagr_pct),                 color: (s.cagr_pct ?? 0) >= 0 ? upColor : downColor },
         { label: "手续费",     value: s.commission_paid != null ? `-${s.commission_paid.toFixed(2)} USDT` : "—", color: downColor },
-        { label: "最大浮亏",      value: fmtPct(-Math.abs(s.max_drawdown_pct ?? 0)), color: downColor },
-        { label: "最大回撤",      value: s.closed_max_drawdown_pct != null ? fmtPct(-Math.abs(s.closed_max_drawdown_pct)) : "—", color: downColor },
-        { label: "绝对回撤",      value: s.ftmo_drawdown_pct != null ? fmtPct(-Math.abs(s.ftmo_drawdown_pct)) : "—", color: downColor },
-        { label: "最大回撤时长",  value: s.max_drawdown_duration_days != null ? `${s.max_drawdown_duration_days} 天` : "—" },
-        { label: "平均回撤时长",  value: s.avg_drawdown_duration_days != null ? `${s.avg_drawdown_duration_days} 天` : "—" },
-        { label: "平均回撤幅度",  value: s.avg_drawdown_pct != null ? fmtPct(-Math.abs(s.avg_drawdown_pct)) : "—", color: downColor },
-        { label: "最大回撤时收益", value: s.max_dd_profit_at_trough != null ? fmtAbs(s.max_dd_profit_at_trough) : "—", color: (s.max_dd_profit_at_trough ?? 0) >= 0 ? upColor : downColor },
+        { label: "最大回撤",   value: fmtPct(-Math.abs(s.max_drawdown_pct ?? 0)), color: downColor },
+        { label: "最大回撤时长", value: s.max_drawdown_duration_days != null ? `${s.max_drawdown_duration_days} 天` : "—" },
       ],
     },
     {
@@ -433,7 +430,7 @@ function toPlotIso(unixSec: number) {
   return new Date(unixSec * 1000).toISOString();
 }
 
-function EquityTab({ equity, balance, trades = [], summary }: { equity: EquityPoint[]; balance?: EquityPoint[]; trades?: TradeRecord[]; summary?: BacktestSummary | null }) {
+function EquityTab({ equity, summary }: { equity: EquityPoint[]; balance?: EquityPoint[]; trades?: TradeRecord[]; summary?: BacktestSummary | null }) {
   if (equity.length === 0) {
     return (
       <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "var(--text-mute)", fontSize: 12 }}>
@@ -442,56 +439,10 @@ function EquityTab({ equity, balance, trades = [], summary }: { equity: EquityPo
     );
   }
 
-  const initialCapital = summary?.initial_capital ?? 10000;
-  const xs = equity.map(p => toPlotIso(p.time));
+  const initialCapital = summary?.initial_capital ?? equity[0]?.equity ?? DEFAULT_INITIAL_CAPITAL;
+  const equityTimes = equity.map(p => p.time);
+  const xs = equityTimes.map(toPlotIso);
   const ys = equity.map(p => p.equity);
-
-  // 辅线：每根 K 线的账户浮动权益（含未实现盈亏）
-  const floatingTrace: Plotly.Data = {
-    type: "scatter",
-    mode: "lines",
-    x: xs,
-    y: ys,
-    line: { color: "rgba(38,166,154,0.3)", width: 1 },
-    fill: "tozeroy",
-    fillcolor: "rgba(38,166,154,0.05)",
-    name: "浮动资金（参考）",
-    hovertemplate: "%{x}<br>浮动: $%{y:,.2f}<extra></extra>",
-  };
-
-  // 主线：仅在出场时刻结算已实现盈亏
-  let cumBal = initialCapital;
-  const balanceX: string[] = [toPlotIso(equity[0].time)];
-  const balanceY: number[] = [cumBal];
-  const balanceHover: string[] = ["初始本金"];
-
-  const sortedTrades = [...trades].sort((a, b) => (a.exit_time || 0) - (b.exit_time || 0));
-  for (const t of sortedTrades) {
-    if (t.exit_time) {
-      cumBal += t.pnl_abs || 0;
-      balanceX.push(toPlotIso(t.exit_time));
-      balanceY.push(cumBal);
-      balanceHover.push(
-        `出场: ${new Date(t.exit_time * 1000).toLocaleString("zh-CN", { hour12: false })}<br>` +
-        `进场价: $${t.entry_price?.toFixed(2) || 0}<br>` +
-        `出场价: $${t.exit_price?.toFixed(2) || 0}<br>` +
-        `数量: ${t.size?.toFixed(4) || 0}<br>` +
-        `盈亏: ${t.pnl_abs >= 0 ? "+" : ""}$${t.pnl_abs?.toFixed(2) || 0}`
-      );
-    }
-  }
-
-  const balanceTrace: Plotly.Data | null = balanceY.length > 1 ? {
-    type: "scatter",
-    mode: "lines",
-    line: { shape: "vh", color: "#26a69a", width: 2.5 },
-    x: balanceX,
-    y: balanceY,
-    text: balanceHover,
-    name: "结算资金（出场结算）",
-    hovertemplate: "%{x}<br>结算: $%{y:,.2f}<br><br>%{text}<extra></extra>",
-  } : null;
-
 
   const baseline: Plotly.Data = {
     type: "scatter",
@@ -499,35 +450,48 @@ function EquityTab({ equity, balance, trades = [], summary }: { equity: EquityPo
     x: [xs[0], xs[xs.length - 1]],
     y: [initialCapital, initialCapital],
     line: { color: "rgba(255,255,255,0.15)", width: 1, dash: "dot" },
-    hoverinfo: "none",
+    hoverinfo: "skip",
     showlegend: false,
   };
 
-  const data = balanceTrace ? [baseline, floatingTrace, balanceTrace] : [baseline, floatingTrace];
+  const equityTrace: Plotly.Data = {
+    type: "scatter",
+    mode: "lines",
+    x: xs,
+    y: ys,
+    line: { color: "#26a69a", width: 2 },
+    fill: "tonexty",
+    fillcolor: "rgba(38,166,154,0.12)",
+    name: "账户权益",
+    hovertemplate: "%{x}<br>权益: $%{y:,.2f}<extra></extra>",
+  };
+
+  const data: Plotly.Data[] = [baseline, equityTrace];
 
   let maxDd = summary?.max_drawdown_pct ? Math.abs(summary.max_drawdown_pct) / 100 : 0;
-  
-  // Use precise timestamps from backend if available
-  let f_x0: string | undefined;
-  let f_x1: string | undefined;
-  let f_annotationY: number | undefined;
+  let ddPeakX: string | undefined;
+  let ddTroughX: string | undefined;
+  let ddRecoveryX: string | undefined;
+  let ddTroughY: number | undefined;
 
   if (summary?.max_dd_peak_ts && summary?.max_dd_trough_ts) {
-    f_x0 = toPlotIso(summary.max_dd_peak_ts);
-    f_x1 = toPlotIso(summary.max_dd_trough_ts);
+    ddPeakX = toPlotIso(summary.max_dd_peak_ts);
+    ddTroughX = toPlotIso(summary.max_dd_trough_ts);
+    ddRecoveryX = summary.max_dd_recovery_ts
+      ? toPlotIso(summary.max_dd_recovery_ts)
+      : ddTroughX;
     let minDiff = Infinity;
     for (let i = 0; i < equity.length; i++) {
-      const diff = Math.abs(equity[i].time - summary.max_dd_trough_ts);
+      const diff = Math.abs(equityTimes[i] - summary.max_dd_trough_ts);
       if (diff < minDiff) {
         minDiff = diff;
-        f_annotationY = equity[i].equity;
+        ddTroughY = ys[i];
       }
     }
   } else {
-    // Fallback logic for floating
     let localMaxDd = 0;
-    let maxDdPeakIdx = 0;
-    let maxDdTroughIdx = 0;
+    let peakIdx = 0;
+    let troughIdx = 0;
     let currentPeakVal = -Infinity;
     let currentPeakIdx = 0;
 
@@ -540,91 +504,52 @@ function EquityTab({ equity, balance, trades = [], summary }: { equity: EquityPo
       const dd = currentPeakVal > 0 ? (currentPeakVal - y) / currentPeakVal : 0;
       if (dd > localMaxDd) {
         localMaxDd = dd;
-        maxDdPeakIdx = currentPeakIdx;
-        maxDdTroughIdx = i;
+        peakIdx = currentPeakIdx;
+        troughIdx = i;
       }
     }
-    
+
     if (!summary?.max_drawdown_pct) maxDd = localMaxDd;
     if (localMaxDd > 0) {
-      f_x0 = xs[maxDdPeakIdx];
-      f_x1 = xs[maxDdTroughIdx];
-      f_annotationY = ys[maxDdTroughIdx];
-    }
-  }
-
-  // Closed drawdown annotation
-  let c_x0: string | undefined;
-  let c_x1: string | undefined;
-  let c_x2: string | undefined;
-  let c_annotationY: number | undefined;
-  let closedMaxDd = summary?.closed_max_drawdown_pct ? Math.abs(summary.closed_max_drawdown_pct) / 100 : 0;
-
-  if (summary?.closed_max_dd_peak_ts && summary?.closed_max_dd_trough_ts) {
-    c_x0 = toPlotIso(summary.closed_max_dd_peak_ts);
-    c_x1 = toPlotIso(summary.closed_max_dd_trough_ts);
-    c_x2 = summary?.closed_max_dd_recovery_ts
-      ? toPlotIso(summary.closed_max_dd_recovery_ts)
-      : c_x1;
-
-    let minDiff = Infinity;
-    for (let i = 0; i < balanceY.length; i++) {
-      const bTs = balanceX[i] ? new Date(balanceX[i]).getTime() / 1000 : 0;
-      const diff = Math.abs(bTs - summary.closed_max_dd_trough_ts);
-      if (diff < minDiff) {
-        minDiff = diff;
-        c_annotationY = balanceY[i];
-      }
+      ddPeakX = xs[peakIdx];
+      ddTroughX = xs[troughIdx];
+      ddRecoveryX = xs[troughIdx];
+      ddTroughY = ys[troughIdx];
     }
   }
 
   const shapes: Partial<Plotly.Shape>[] = [];
-  if (maxDd > 0 && f_x0 && f_x1) {
+  if (maxDd > 0 && ddPeakX && ddRecoveryX) {
     shapes.push({
       type: "rect",
-      xref: "x", yref: "paper",
-      x0: f_x0, x1: f_x1,
-      y0: 0, y1: 1,
-      fillcolor: "rgba(239, 83, 80, 0.1)", // slightly lighter red
-      line: { width: 0 }
-    });
-  }
-  if (closedMaxDd > 0 && c_x0 && c_x2) {
-    shapes.push({
-      type: "rect",
-      xref: "x", yref: "paper",
-      x0: c_x0, x1: c_x2,
-      y0: 0, y1: 1,
-      fillcolor: "rgba(239, 83, 80, 0.15)", // red tint for closed dd
-      line: { width: 0 }
+      xref: "x",
+      yref: "paper",
+      x0: ddPeakX,
+      x1: ddRecoveryX,
+      y0: 0,
+      y1: 1,
+      fillcolor: "rgba(239, 83, 80, 0.12)",
+      line: { width: 0 },
     });
   }
 
   const annotations: Partial<Plotly.Annotations>[] = [];
-  const durText = summary?.max_drawdown_duration_days ? `<br>时长: ${summary.max_drawdown_duration_days}天` : "";
+  const durText = summary?.max_drawdown_duration_days != null
+    ? `<br>时长: ${summary.max_drawdown_duration_days}天`
+    : "";
 
-  if (maxDd > 0 && f_x1 && f_annotationY !== undefined) {
+  if (maxDd > 0 && ddTroughX && ddTroughY !== undefined) {
     annotations.push({
-      x: f_x1,
-      y: f_annotationY,
-      xref: "x", yref: "y",
-      text: `最大浮亏 -${(maxDd * 100).toFixed(2)}%`,
+      x: ddTroughX,
+      y: ddTroughY,
+      xref: "x",
+      yref: "y",
+      text: `最大回撤 -${(maxDd * 100).toFixed(2)}%${durText}`,
       showarrow: true,
       arrowcolor: "#ef5350",
       font: { color: "#ef5350", size: 10 },
-      ax: 0, ay: 40
-    });
-  }
-  if (closedMaxDd > 0 && c_x1 && c_annotationY !== undefined) {
-    annotations.push({
-      x: c_x1,
-      y: c_annotationY,
-      xref: "x", yref: "y",
-      text: `最大回撤 -${(closedMaxDd * 100).toFixed(2)}%${durText}`,
-      showarrow: true,
-      arrowcolor: "#ef5350",
-      font: { color: "#ef5350", size: 10, weight: "bold" } as any,
-      ax: 0, ay: -40
+      ax: 0,
+      ay: 40,
     });
   }
 
@@ -632,7 +557,7 @@ function EquityTab({ equity, balance, trades = [], summary }: { equity: EquityPo
     paper_bgcolor: "transparent",
     plot_bgcolor: "transparent",
     font: { color: "#888", size: 10 },
-    margin: { t: 32, r: 20, b: 36, l: 60 },
+    margin: { t: 24, r: 20, b: 36, l: 60 },
     xaxis: {
       gridcolor: "#1a1a1a",
       tickfont: { size: 10 },
@@ -643,9 +568,8 @@ function EquityTab({ equity, balance, trades = [], summary }: { equity: EquityPo
       dtick: "M3",
     },
     yaxis: { gridcolor: "#1a1a1a", tickfont: { size: 10 }, tickprefix: "$", showgrid: true },
-    hovermode: "x unified",
-    showlegend: true,
-    legend: { orientation: "h", y: 1.12, x: 0, font: { size: 10, color: "#888" } },
+    hovermode: "x",
+    showlegend: false,
     shapes,
     annotations,
   };
