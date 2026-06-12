@@ -214,17 +214,11 @@ async def analyze_pattern_report(file: UploadFile = File(...)) -> Dict[str, Any]
     )
     entries["进场信号"] = entries[col_signal].astype(str)
 
-    # Scale-in 加仓单：加仓单的"交易 #"始终是底仓单的"交易 #" + 1，
-    # 信号列形如"Scale-in Long 1"无 P 编号，需查上一笔底仓的形态。
-    # 加仓单作为独立形态分组（如"P1多·加仓"），与底仓分开归因。
-    pattern_map = dict(zip(
-        entries.loc[entries["形态"].notna(), col_trade],
-        entries.loc[entries["形态"].notna(), "形态"],
-    ))
+    # Scale-in 加仓单：信号列形如"Scale-in Long 1"无 P 编号。
+    # 策略设计上加仓由 P1 信号在持仓中触发（仓位为 P1 的一半），
+    # 故所有加仓单统一归入独立形态"P1加仓"。
     scale_in_mask = entries[col_signal].astype(str).str.contains("Scale-in", na=False)
-    entries.loc[scale_in_mask, "形态"] = entries.loc[scale_in_mask, col_trade].map(
-        lambda tn: pattern_map.get(tn - 1) + "·加仓" if pattern_map.get(tn - 1) else None
-    )
+    entries.loc[scale_in_mask, "形态"] = "P1加仓"
 
     # 仍无形态的（如"开盘价"未平仓收尾单）保留原信号名作为分组标签
     no_pattern_mask = entries["形态"].isna()
