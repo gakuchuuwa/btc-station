@@ -48,6 +48,10 @@ const fmtMoney = (n: number) =>
   (n >= 0 ? '+' : '') + n.toLocaleString('en-US', { maximumFractionDigits: 2 }) + ' USDT'
 const fmtPct = (n: number, d = 2) => (n >= 0 ? '+' : '') + n.toFixed(d) + '%'
 
+// 趋势策略不踏空：凯利推荐仓位最低按 1% 保底
+const KELLY_FLOOR = 0.01
+const kellyPos = (k: number) => Math.max(k, KELLY_FLOOR)
+
 type SortKey = 'pattern' | 'trades' | 'win_rate' | 'total_pnl_usdt' | 'avg_pnl_pct' | 'profit_factor' | 'kelly'
 
 export default function PatternReportPage() {
@@ -107,8 +111,8 @@ export default function PatternReportPage() {
         r.profit_factor ?? '',
         r.max_win_usdt, r.max_loss_usdt,
         r.avg_win_usdt, r.avg_loss_usdt,
-        r.kelly > 0 ? (r.kelly * 100).toFixed(2) : '0',
-        r.kelly > 0 ? (r.kelly * 50).toFixed(2) : '0',
+        (kellyPos(r.kelly) * 100).toFixed(2),
+        (kellyPos(r.kelly * 0.5) * 100).toFixed(2),
       ].join(','))
     })
     const blob = new Blob(['﻿' + lines.join('\n')], { type: 'text/csv;charset=utf-8' })
@@ -299,13 +303,14 @@ export default function PatternReportPage() {
                         {r.profit_factor === null ? '∞' : r.profit_factor.toFixed(2)}
                       </td>
                       <td className="num" style={{ padding: '10px 14px', whiteSpace: 'nowrap' }}>
-                        {r.kelly > 0 ? (
-                          <>
-                            <span style={{ color: 'var(--gold)', fontWeight: 700 }}>{(r.kelly * 100).toFixed(1)}%</span>
-                            <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>（半凯利 {(r.kelly * 50).toFixed(1)}%）</span>
-                          </>
-                        ) : (
-                          <span style={{ color: 'var(--down)' }}>无优势，不建仓</span>
+                        <span style={{ color: r.kelly <= 0 ? 'var(--down)' : 'var(--gold)', fontWeight: 700 }}>
+                          {(kellyPos(r.kelly) * 100).toFixed(1)}%
+                        </span>
+                        <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>
+                          （半凯利 {(kellyPos(r.kelly * 0.5) * 100).toFixed(1)}%）
+                        </span>
+                        {r.kelly <= 0 && (
+                          <span style={{ color: 'var(--down)', fontSize: 11 }}>保底</span>
                         )}
                       </td>
                       <td style={{ padding: '10px 14px', fontSize: 11 }}>
@@ -332,8 +337,9 @@ export default function PatternReportPage() {
             说明：胜率 = 净损益 USDT &gt; 0 的交易占比；盈亏比 = 盈利总额 / 亏损总额；
             未匹配到 P 编号的信号将按原信号名称分组。
             凯利仓位 f* = p − (1−p)/b，其中 p 为该形态胜率，b = 平均盈利 / 平均亏损（赔率）；
-            表示单笔投入占总资金的理论最优比例。全凯利波动较大，实盘通常建议采用半凯利；
-            凯利值 ≤ 0 表示该形态无统计优势，不建议开仓。样本数过少（&lt;20 笔）的形态结果仅供参考。
+            表示单笔投入占总资金的理论最优比例。全凯利波动较大，实盘通常建议采用半凯利。
+            为配合趋势策略不错过任何入场机会，推荐仓位最低按 1% 保底（标"保底"的形态凯利值 ≤ 0，
+            即历史上无统计优势，仅为不踏空保留最小仓位）。样本数过少（&lt;20 笔）的形态结果仅供参考。
           </div>
         </>
       )}
