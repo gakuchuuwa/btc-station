@@ -101,7 +101,7 @@ export default function PatternReportPage() {
 
   const exportCsv = () => {
     if (!data) return
-    const header = ['形态', '交易次数', '盈利', '亏损', '胜率', '总净收益USDT', '平均收益率%', '盈亏比', '最大盈利USDT', '最大亏损USDT', '平均盈利USDT', '平均亏损USDT', '凯利仓位%', '半凯利仓位%']
+    const header = ['形态', '交易次数', '盈利', '亏损', '胜率', '总净收益USDT', '平均收益率%', '盈亏比', '最大盈利USDT', '最大亏损USDT', '平均盈利USDT', '平均亏损USDT', '凯利仓位%', '半凯利仓位%', '相对仓位(最差=1)']
     const lines = [header.join(',')]
     sortedRows.forEach(r => {
       lines.push([
@@ -113,6 +113,7 @@ export default function PatternReportPage() {
         r.avg_win_usdt, r.avg_loss_usdt,
         (kellyPos(r.kelly) * 100).toFixed(2),
         (kellyPos(r.kelly * 0.5) * 100).toFixed(2),
+        (kellyPos(r.kelly) / minKellyPos).toFixed(1),
       ].join(','))
     })
     const blob = new Blob(['﻿' + lines.join('\n')], { type: 'text/csv;charset=utf-8' })
@@ -123,6 +124,8 @@ export default function PatternReportPage() {
   }
 
   const maxAbsPnl = data ? Math.max(...data.summary.map(r => Math.abs(r.total_pnl_usdt)), 1) : 1
+  // 相对仓位基准：全部形态保底后凯利的最小值（最差形态 = 1）
+  const minKellyPos = data ? Math.min(...data.summary.map(r => kellyPos(r.kelly))) : KELLY_FLOOR
 
   return (
     <div style={{ maxWidth: 'var(--max-w)', margin: '0 auto', padding: '32px 24px' }}>
@@ -279,6 +282,10 @@ export default function PatternReportPage() {
                         {label} {sortKey === k && (sortDesc ? '↓' : '↑')}
                       </th>
                     ))}
+                    <th onClick={() => toggleSort('kelly')} style={{
+                      padding: '10px 14px', textAlign: 'left', color: 'var(--text-mute)',
+                      fontWeight: 500, fontSize: 11, whiteSpace: 'nowrap', cursor: 'pointer', userSelect: 'none',
+                    }}>相对仓位（最差=1）</th>
                     <th style={{ padding: '10px 14px', textAlign: 'left', color: 'var(--text-mute)', fontWeight: 500, fontSize: 11 }}>方向</th>
                     <th style={{ padding: '10px 14px', textAlign: 'left', color: 'var(--text-mute)', fontWeight: 500, fontSize: 11 }}>最大盈/亏 USDT</th>
                   </tr>
@@ -313,6 +320,9 @@ export default function PatternReportPage() {
                           <span style={{ color: 'var(--down)', fontSize: 11 }}>保底</span>
                         )}
                       </td>
+                      <td className="num" style={{ padding: '10px 14px', fontWeight: 700, color: 'var(--accent)' }}>
+                        ×{(kellyPos(r.kelly) / minKellyPos).toFixed(1)}
+                      </td>
                       <td style={{ padding: '10px 14px', fontSize: 11 }}>
                         {r.long_trades > 0 && (
                           <span style={{ color: 'var(--up)', marginRight: 6 }}>多{r.long_trades}</span>
@@ -339,7 +349,10 @@ export default function PatternReportPage() {
             凯利仓位 f* = p − (1−p)/b，其中 p 为该形态胜率，b = 平均盈利 / 平均亏损（赔率）；
             表示单笔投入占总资金的理论最优比例。全凯利波动较大，实盘通常建议采用半凯利。
             为配合趋势策略不错过任何入场机会，推荐仓位最低按 1% 保底（标"保底"的形态凯利值 ≤ 0，
-            即历史上无统计优势，仅为不踏空保留最小仓位）。样本数过少（&lt;20 笔）的形态结果仅供参考。
+            即历史上无统计优势，仅为不踏空保留最小仓位）。
+            Scale-in 加仓单按底仓形态独立分组（如"P1多·加仓"），与底仓分开归因；
+            相对仓位以保底后凯利最小的形态为 1，给出其他形态的建仓倍数。
+            样本数过少（&lt;20 笔）的形态结果仅供参考。
           </div>
         </>
       )}
