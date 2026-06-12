@@ -170,10 +170,13 @@ def execute(df, parameters):
         (6, False): float(p.get("mult_p6_s", 1.0)),
     }
 
-    # ── 数据起点裁剪（对齐 TV 图表第一根 K 线）────────────────────────────────
+    # ── 入场时间闸门（对齐 TV：指标/状态机用全部历史计算，start_date 只过滤入场）──
+    # 注意不能在这里裁剪 df：裁剪会让 576 周期 RMA 等指标重新预热约 96 天，
+    # 导致 start_date 后约 4 个月无信号，与 Pine（指标算全图、时间窗只挡入场）分叉。
+    start_ts = None
     if start_date is not None:
-        df = df[df.index >= pd.Timestamp(start_date)]
-        if df.empty:
+        start_ts = pd.Timestamp(start_date)
+        if df[df.index >= start_ts].empty:
             raise ValueError(f"start_date={start_date} 之后没有数据，请检查时间格式或数据范围。")
 
     # ── 指标计算 ────────────────────────────────────────────────────────────────
@@ -613,6 +616,11 @@ def execute(df, parameters):
 
             if not obv_long_ok:  signal_long = None
             if not obv_short_ok: signal_short = None
+
+            # 实盘时间窗过滤（对齐 Pine in_trade_window：信号K线早于 start_date 不入场）
+            if start_ts is not None and idx[i] < start_ts:
+                signal_long = None
+                signal_short = None
 
             # 做多入场（TV 在信号K线收盘确认，下一根开盘成交）
             if signal_long:
