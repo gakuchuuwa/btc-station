@@ -69,8 +69,10 @@ export default function PatternReportPage() {
       const fd = new FormData()
       fd.append('file', file)
       const res = await fetch('/py-api/api/pattern-report/analyze', { method: 'POST', body: fd })
-      const json = await res.json()
-      if (!res.ok) throw new Error(json.detail || '解析失败')
+      let json: Resp & { detail?: string } | null = null
+      try { json = await res.json() } catch { /* 网关 500/502 时返回纯文本，非 JSON */ }
+      if (!res.ok) throw new Error(json?.detail || `服务器错误（HTTP ${res.status}），后端可能正在重启，请稍后重试`)
+      if (!json) throw new Error('服务器返回了无法解析的内容，请稍后重试')
       setData(json)
     } catch (e) {
       setErr(e instanceof Error ? e.message : '未知错误')
