@@ -18,7 +18,7 @@ PATTERN_RE = re.compile(r"P\d+")
 # 列名容错映射 — TradingView 中英文/不同版本可能略有差异
 # 英文别名以 TradingView 原生导出为准（实测：Net P&L USDT / Net P&L % / Date and time）
 COL_ALIASES = {
-    "交易 #":    ["交易 #", "交易#", "Trade #", "trade_num"],
+    "交易 #":    ["交易 #", "交易#", "交易编号", "Trade #", "trade_num"],
     "类型":      ["类型", "Type"],
     "信号":      ["信号", "Signal"],
     "日期和时间":  ["日期和时间", "Date and time", "Date/Time"],
@@ -46,8 +46,9 @@ SUMMARY_METRICS = {
     "表现": [
         (["净利润",       "Net profit"],          "全部 USDT", "net_profit_usdt"),
         (["净利润",       "Net profit"],          "全部 %",    "net_profit_pct"),
-        (["最大净值回撤", "Max equity drawdown"], "全部 USDT", "max_drawdown_usdt"),
-        (["最大净值回撤", "Max equity drawdown"], "全部 %",    "max_drawdown_pct"),
+        # "最大回撤（intrabar）" 为 TradingView 新版中文导出的行名（即旧版"最大净值回撤"）
+        (["最大净值回撤", "最大回撤（intrabar）", "Max equity drawdown"], "全部 USDT", "max_drawdown_usdt"),
+        (["最大净值回撤", "最大回撤（intrabar）", "Max equity drawdown"], "全部 %",    "max_drawdown_pct"),
         (["年化收益率",   "Annualized return"],   "全部 %",    "cagr_pct"),
         (["已支付佣金",   "Commission paid"],     "全部 USDT", "commission_usdt"),
     ],
@@ -87,12 +88,13 @@ def _load_dataframe(filename: str, raw: bytes) -> tuple[pd.DataFrame, Optional[p
     if lower.endswith(".xlsx") or lower.endswith(".xls"):
         xls = pd.ExcelFile(io.BytesIO(raw))
         target = None
-        # 兼容 BTC Station 中文（"交易清单"）与 TradingView 英文（"List of trades"，小写 t）。
-        # 注意不能用宽松的 "trades" 子串匹配，否则 TradingView 的 "Trades analysis"
-        # 汇总表会先于 "List of trades" 命中，结果选错 sheet（拿不到 Trade # 列）。
+        # 兼容 BTC Station 中文（"交易清单"）、TradingView 新版中文（"交易"）
+        # 与 TradingView 英文（"List of trades"，小写 t）。
+        # 注意："交易" 必须精确匹配，不能用子串，否则会误中 "交易分析" 汇总表；
+        # 同理英文不能用宽松的 "trades" 子串，否则 "Trades analysis" 会先命中。
         for name in xls.sheet_names:
             name_lower = name.lower()
-            if "交易清单" in name or "list of trades" in name_lower:
+            if "交易清单" in name or name == "交易" or "list of trades" in name_lower:
                 target = name
                 break
         if target is None:
