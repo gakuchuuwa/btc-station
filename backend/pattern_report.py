@@ -261,6 +261,21 @@ async def analyze_pattern_report(file: UploadFile = File(...)) -> Dict[str, Any]
         max_win    = float(g[col_pnl_usdt].max())
         max_loss   = float(g[col_pnl_usdt].min())
 
+        # 凯利公式 f* = p - (1-p)/b，b = 平均盈利/平均亏损（赔率）。
+        # 全亏（b 无法计算）→ kelly 为负的极端值用 -1 表示；
+        # 全胜（b 趋于无穷）→ f* 收敛于 p。结果不在此截断，由前端决定展示策略。
+        losses_n = total - wins
+        avg_win  = gross_win / wins      if wins     else 0.0
+        avg_loss = gross_loss / losses_n if losses_n else 0.0
+        p = wins / total if total else 0.0
+        if avg_loss <= 0:
+            kelly = p if wins else -1.0
+        elif avg_win <= 0:
+            kelly = -1.0
+        else:
+            b = avg_win / avg_loss
+            kelly = p - (1 - p) / b
+
         # 多空方向分布
         direction_counts = g["方向"].value_counts().to_dict()
 
@@ -275,6 +290,9 @@ async def analyze_pattern_report(file: UploadFile = File(...)) -> Dict[str, Any]
             "profit_factor":   round(gross_win / gross_loss, 2) if gross_loss > 0 else None,
             "max_win_usdt":    round(max_win, 2),
             "max_loss_usdt":   round(max_loss, 2),
+            "avg_win_usdt":    round(avg_win, 2),
+            "avg_loss_usdt":   round(avg_loss, 2),
+            "kelly":           round(min(kelly, 1.0), 4),
             "long_trades":     int(direction_counts.get("long", 0)),
             "short_trades":    int(direction_counts.get("short", 0)),
         })

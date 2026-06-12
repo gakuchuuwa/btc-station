@@ -13,6 +13,9 @@ interface Row {
   profit_factor: number | null
   max_win_usdt: number
   max_loss_usdt: number
+  avg_win_usdt: number
+  avg_loss_usdt: number
+  kelly: number
   long_trades: number
   short_trades: number
 }
@@ -45,7 +48,7 @@ const fmtMoney = (n: number) =>
   (n >= 0 ? '+' : '') + n.toLocaleString('en-US', { maximumFractionDigits: 2 }) + ' USDT'
 const fmtPct = (n: number, d = 2) => (n >= 0 ? '+' : '') + n.toFixed(d) + '%'
 
-type SortKey = 'pattern' | 'trades' | 'win_rate' | 'total_pnl_usdt' | 'avg_pnl_pct' | 'profit_factor'
+type SortKey = 'pattern' | 'trades' | 'win_rate' | 'total_pnl_usdt' | 'avg_pnl_pct' | 'profit_factor' | 'kelly'
 
 export default function PatternReportPage() {
   const [data, setData] = useState<Resp | null>(null)
@@ -94,7 +97,7 @@ export default function PatternReportPage() {
 
   const exportCsv = () => {
     if (!data) return
-    const header = ['形态', '交易次数', '盈利', '亏损', '胜率', '总净收益USDT', '平均收益率%', '盈亏比', '最大盈利USDT', '最大亏损USDT']
+    const header = ['形态', '交易次数', '盈利', '亏损', '胜率', '总净收益USDT', '平均收益率%', '盈亏比', '最大盈利USDT', '最大亏损USDT', '平均盈利USDT', '平均亏损USDT', '凯利仓位%', '半凯利仓位%']
     const lines = [header.join(',')]
     sortedRows.forEach(r => {
       lines.push([
@@ -103,6 +106,9 @@ export default function PatternReportPage() {
         r.total_pnl_usdt, r.avg_pnl_pct,
         r.profit_factor ?? '',
         r.max_win_usdt, r.max_loss_usdt,
+        r.avg_win_usdt, r.avg_loss_usdt,
+        r.kelly > 0 ? (r.kelly * 100).toFixed(2) : '0',
+        r.kelly > 0 ? (r.kelly * 50).toFixed(2) : '0',
       ].join(','))
     })
     const blob = new Blob(['﻿' + lines.join('\n')], { type: 'text/csv;charset=utf-8' })
@@ -259,6 +265,7 @@ export default function PatternReportPage() {
                       ['total_pnl_usdt', '总净收益 USDT'],
                       ['avg_pnl_pct', '平均收益率'],
                       ['profit_factor', '盈亏比'],
+                      ['kelly', '凯利仓位'],
                     ] as [SortKey, string][]).map(([k, label]) => (
                       <th key={k} onClick={() => toggleSort(k)} style={{
                         padding: '10px 14px', textAlign: 'left', color: 'var(--text-mute)',
@@ -291,6 +298,16 @@ export default function PatternReportPage() {
                       <td className="num" style={{ padding: '10px 14px', color: 'var(--text)' }}>
                         {r.profit_factor === null ? '∞' : r.profit_factor.toFixed(2)}
                       </td>
+                      <td className="num" style={{ padding: '10px 14px', whiteSpace: 'nowrap' }}>
+                        {r.kelly > 0 ? (
+                          <>
+                            <span style={{ color: 'var(--gold)', fontWeight: 700 }}>{(r.kelly * 100).toFixed(1)}%</span>
+                            <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>（半凯利 {(r.kelly * 50).toFixed(1)}%）</span>
+                          </>
+                        ) : (
+                          <span style={{ color: 'var(--down)' }}>无优势，不建仓</span>
+                        )}
+                      </td>
                       <td style={{ padding: '10px 14px', fontSize: 11 }}>
                         {r.long_trades > 0 && (
                           <span style={{ color: 'var(--up)', marginRight: 6 }}>多{r.long_trades}</span>
@@ -314,6 +331,9 @@ export default function PatternReportPage() {
           <div style={{ marginTop: 16, fontSize: 11, color: 'var(--text-dim)', lineHeight: 1.7 }}>
             说明：胜率 = 净损益 USDT &gt; 0 的交易占比；盈亏比 = 盈利总额 / 亏损总额；
             未匹配到 P 编号的信号将按原信号名称分组。
+            凯利仓位 f* = p − (1−p)/b，其中 p 为该形态胜率，b = 平均盈利 / 平均亏损（赔率）；
+            表示单笔投入占总资金的理论最优比例。全凯利波动较大，实盘通常建议采用半凯利；
+            凯利值 ≤ 0 表示该形态无统计优势，不建议开仓。样本数过少（&lt;20 笔）的形态结果仅供参考。
           </div>
         </>
       )}
