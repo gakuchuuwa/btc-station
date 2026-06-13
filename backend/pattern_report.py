@@ -214,13 +214,26 @@ async def analyze_pattern_report(file: UploadFile = File(...)) -> Dict[str, Any]
     )
     entries["进场信号"] = entries[col_signal].astype(str)
 
-    # Scale-in 加仓单：信号列形如"Scale-in Long 1"无 P 编号。
-    # 策略设计上加仓由 P1 信号在持仓中触发（仓位为 P1 的一半），
-    # 加仓无法独立成立，全部计入 P1 形态（按方向 P1多/P1空）。
-    scale_in_mask = entries[col_signal].astype(str).str.contains("Scale-in", na=False)
-    entries.loc[scale_in_mask, "形态"] = entries.loc[scale_in_mask, "方向"].map(
-        lambda d: "P1" + _DIR_SUFFIX.get(d, "")
-    )
+    # Scale-in 加仓单：信号列形如"Scale-in Long/Short 1"无 P 编号，加仓无法独立成立。
+    # 多头加仓：策略设计上由 P1 信号在持仓中触发（仓位为 P1 的一半），全部计入 P1多。
+    # 空头加仓：由空头底仓追踪激活触发、与底仓共享同一次出场（close_all），
+    # 按"相同出场时间"映射回底仓形态（P4空/P5空/P6空）。
+    scale_str = entries[col_signal].astype(str)
+    scale_long_mask  = scale_str.str.contains("Scale-in", na=False) & (entries["方向"] == "long")
+    scale_short_mask = scale_str.str.contains("Scale-in", na=False) & (entries["方向"] == "short")
+    entries.loc[scale_long_mask, "形态"] = "P1多"
+    if scale_short_mask.any() and col_dt is not None:
+        exit_time_by_trade = dict(zip(exits[col_trade], exits[col_dt]))
+        base_by_exit = {}
+        base_shorts = entries[entries["形态"].notna() & (entries["方向"] == "short")]
+        for _, r in base_shorts.iterrows():
+            t = exit_time_by_trade.get(r[col_trade])
+            if t is not None:
+                base_by_exit[t] = r["形态"]
+        entries.loc[scale_short_mask, "形态"] = entries.loc[scale_short_mask, col_trade].map(
+            lambda tn: base_by_exit.get(exit_time_by_trade.get(tn))
+        )
+    # 映射不到的空头加仓（无日期列等情况）走下方 no_pattern 兜底，保留原信号名分组
 
     # 仍无形态的（如"开盘价"未平仓收尾单）保留原信号名作为分组标签
     no_pattern_mask = entries["形态"].isna()
