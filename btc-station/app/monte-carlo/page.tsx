@@ -11,6 +11,9 @@ interface Trade {
   id: number
   profitUSDT: number
   profitPct: number
+  // 相对当时账户权益的收益率（分数）。TV 的"净损益%"是相对仓位价值的，
+  // 直接当权益收益率复利会放大失真；解析时用 USDT÷(初始资金+此前累计盈亏) 重建。
+  rEquity?: number
 }
 
 interface MCSimulation {
@@ -34,6 +37,78 @@ function StatCard({ label, value, color }: { label: string; value: string | Reac
       <div style={{ fontSize: 12, color: 'var(--text-mute)', marginBottom: 8, letterSpacing: '0.04em' }}>{label}</div>
       <div style={{ fontSize: 24, fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: color || 'var(--text)' }}>
         {value}
+      </div>
+    </div>
+  )
+}
+
+// ── 凯利最优杠杆 ─────────────────────────────────────────────────────────────
+// 在权益收益率序列上求对数增长最优的杠杆倍数 λ*（λ=1 即历史实际仓位），
+// 并用 bootstrap 重采样给出保守分位。λ* 是样本内上限，实盘建议取 1/4~1/8。
+function KellyLeverageCard({ trades }: { trades: Trade[] }) {
+  const res = useMemo(() => {
+    const rs = trades
+      .map(t => t.rEquity)
+      .filter((x): x is number => x != null && Number.isFinite(x))
+    if (rs.length < 20) return null
+
+    const lams: number[] = []
+    for (let l = 0.25; l <= 12.0001; l += 0.25) lams.push(l)
+    const growth = (lam: number, sample: number[]) => {
+      let s = 0
+      for (const r of sample) {
+        const x = 1 + lam * r
+        if (x <= 0) return -Infinity
+        s += Math.log(x)
+      }
+      return s / sample.length
+    }
+    const argmax = (sample: number[]) => {
+      let best = lams[0]
+      let bg = -Infinity
+      for (const l of lams) {
+        const v = growth(l, sample)
+        if (v > bg) { bg = v; best = l }
+      }
+      return best
+    }
+
+    const lamStar = argmax(rs)
+    const stars: number[] = []
+    for (let b = 0; b < 1000; b++) {
+      const sample: number[] = []
+      for (let i = 0; i < rs.length; i++) sample.push(rs[Math.floor(Math.random() * rs.length)])
+      stars.push(argmax(sample))
+    }
+    stars.sort((a, b) => a - b)
+    const q = (p: number) => stars[Math.floor(stars.length * p)]
+    const noEdge = stars.filter(s => s <= lams[0]).length / stars.length * 100
+    return { lamStar, p5: q(0.05), p25: q(0.25), p50: q(0.50), n: rs.length, noEdge }
+  }, [trades])
+
+  if (!res) return null
+  return (
+    <div className="card" style={{ padding: 24 }}>
+      <div style={{ fontSize: 15, fontWeight: 700, color: '#fff', marginBottom: 6 }}>凯利最优杠杆（Kelly Bootstrap）</div>
+      <div style={{ fontSize: 12, color: 'var(--text-mute)', marginBottom: 16, lineHeight: 1.7 }}>
+        基于 {res.n} 笔权益收益率求对数增长最优的仓位放大倍数 λ*（λ=1 即回测实际仓位），
+        bootstrap 重采样 1000 次给出保守分位。
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 16 }}>
+        <StatCard label="样本内最优 λ*" value={`×${res.lamStar.toFixed(2)}`} color="var(--gold)" />
+        <StatCard label="bootstrap 25% 分位" value={`×${res.p25.toFixed(2)}`} color="var(--text)" />
+        <StatCard label="bootstrap 5% 分位" value={`×${res.p5.toFixed(2)}`} color="var(--text)" />
+        <StatCard label="无优势概率" value={`${res.noEdge.toFixed(1)}%`} color={res.noEdge > 5 ? 'var(--down)' : 'var(--up)'} />
+      </div>
+      <div style={{ fontSize: 12, color: '#d1d4dc', lineHeight: 1.8 }}>
+        实盘换算：把当前 Base Risk 乘以建议倍数 ——
+        半凯利 <strong style={{ color: 'var(--gold)' }}>×{(res.lamStar / 2).toFixed(1)}</strong>、
+        1/4 凯利 <strong style={{ color: 'var(--gold)' }}>×{(res.lamStar / 4).toFixed(1)}</strong>、
+        1/8 凯利（单资产单策略小样本的稳健选择）<strong style={{ color: 'var(--gold)' }}>×{(res.lamStar / 8).toFixed(1)}</strong>。
+        <br />
+        <span style={{ color: 'var(--text-mute)' }}>
+          注意：λ* 假设交易独立且亏损不超过历史最差值，未建模持仓重叠与止损跳空击穿，是样本内上限而非目标。
+        </span>
       </div>
     </div>
   )
@@ -65,7 +140,8 @@ export default function MonteCarloPage() {
     let maxDd = 0
     fileData.forEach(t => {
       if (simulationMode === 'compounding') {
-        current = current * (1 + (t.profitPct || 0) / 100)
+        const r = t.rEquity != null ? t.rEquity : (t.profitPct || 0) / 100
+        current = current * (1 + r)
       } else {
         current += (t.profitUSDT || 0)
       }
@@ -90,7 +166,9 @@ export default function MonteCarloPage() {
     //
     // 绝对累加模式直接打乱 USDT 序列,数学上等价于"如果交易出现顺序不同会怎样",
     // 是数据缺失时唯一正确的兜底。
-    const hasAnyPct = trades.some(t => Number.isFinite(t.profitPct) && t.profitPct !== 0)
+    const hasAnyPct = trades.some(t =>
+      (Number.isFinite(t.profitPct) && t.profitPct !== 0) || (t.rEquity != null && t.rEquity !== 0)
+    )
     const hasAnyUsdt = trades.some(t => Number.isFinite(t.profitUSDT) && t.profitUSDT !== 0)
     if (!hasAnyPct && hasAnyUsdt) {
       setSimulationMode('absolute')
@@ -120,7 +198,7 @@ export default function MonteCarloPage() {
     }
 
     // 2. 如果没有新传入的，检查是否有本地页面的停留缓存
-    const localSession = sessionStorage.getItem('mc_page_state_v3')
+    const localSession = sessionStorage.getItem('mc_page_state_v4')
     if (localSession) {
       try {
         const state = JSON.parse(localSession)
@@ -152,7 +230,7 @@ export default function MonteCarloPage() {
         maxDrawdownPct: s.maxDrawdownPct,
         curve: [] as number[],
       }))
-      sessionStorage.setItem('mc_page_state_v3', JSON.stringify({
+      sessionStorage.setItem('mc_page_state_v4', JSON.stringify({
         fileData, fileName, initialCapital, numSimulations, ruinThreshold, simulationMode,
         simulations: lightSimulations, stats,
       }))
@@ -175,9 +253,10 @@ export default function MonteCarloPage() {
 
       // ── Step 1: 选择工作表 ──
       // 优先按名称匹配「交易清单 / List of trades」（大小写不敏感，兼容 TV 英文导出的小写 trades）
+      // "交易" 需精确匹配（TV 新版中文导出），避免误中"交易分析"汇总表
       let sheetName = workbook.SheetNames.find(n => {
         const lower = n.toLowerCase()
-        return n.includes('交易清单') || lower.includes('list of trades')
+        return n.includes('交易清单') || n === '交易' || lower.includes('list of trades')
       })
       // 单 sheet 文件（CSV 转 XLSX 或单表导出）直接用第一个
       if (!sheetName && workbook.SheetNames.length === 1) {
@@ -186,9 +265,9 @@ export default function MonteCarloPage() {
       // 多 sheet 文件没找到目标表 → 明确报错，不再静默回退到第一个 sheet（会拿到错误的概览表）
       if (!sheetName) {
         alert(
-          '解析失败：未在文件中找到「交易清单」工作表。\n\n' +
+          '解析失败：未在文件中找到「交易清单 / 交易 / List of trades」工作表。\n\n' +
           '当前文件包含的工作表：' + workbook.SheetNames.join('、') + '\n\n' +
-          '请确保上传的是 BTC Station S3 导出的 XLSX，或 TradingView 原生导出（含 List of trades 表）。'
+          '请确保上传的是 BTC Station S3 导出的 XLSX，或 TradingView 原生导出。'
         )
         return
       }
@@ -255,8 +334,28 @@ export default function MonteCarloPage() {
         })
 
         if (exitRows.length > 0) {
+          // 重建每笔进场时的账户权益：回测初始资金取自"属性"表（TV 导出自带），缺省 10000
+          let btInit = 10000
+          const propSheet = workbook.SheetNames.find(n => n === '属性' || n.toLowerCase() === 'properties')
+          if (propSheet) {
+            const props = XLSX.utils.sheet_to_json(workbook.Sheets[propSheet], { defval: '' }) as any[]
+            const propRow = props.find(p => {
+              const key = String(p.name ?? p.Name ?? '')
+              return key.includes('初始资金') || key.toLowerCase().includes('initial capital')
+            })
+            const v = propRow ? parseVal(propRow.value ?? propRow.Value) : 0
+            if (v > 0) btInit = v
+          }
+          let cum = 0
           trades = exitRows.map((r, i) => {
-            return { id: i + 1, profitUSDT: parseVal(r[profitCol!]), profitPct: pctCol ? parseVal(r[pctCol]) : 0 }
+            const pnl = parseVal(r[profitCol!])
+            const equityBefore = btInit + cum
+            cum += pnl
+            return {
+              id: i + 1, profitUSDT: pnl,
+              profitPct: pctCol ? parseVal(r[pctCol]) : 0,
+              rEquity: equityBefore > 0 ? pnl / equityBefore : undefined,
+            }
           })
         }
       }
@@ -324,7 +423,8 @@ export default function MonteCarloPage() {
           const trade = fileData[randomIdx]
           
           if (simulationMode === 'compounding') {
-            currentEquity = currentEquity * (1 + (trade.profitPct || 0) / 100)
+            const r = trade.rEquity != null ? trade.rEquity : (trade.profitPct || 0) / 100
+            currentEquity = currentEquity * (1 + r)
           } else {
             currentEquity += (trade.profitUSDT || 0)
           }
@@ -559,6 +659,11 @@ export default function MonteCarloPage() {
                 成功解析 <strong>{fileData.length}</strong> 笔历史交易
               </div>
             )}
+            {fileData.length > 0 && fileData.some(t => t.rEquity != null) && (
+              <div style={{ fontSize: 11, color: 'var(--up)', background: 'rgba(38,166,154,0.08)', border: '1px solid rgba(38,166,154,0.3)', padding: '8px 12px', borderRadius: 4, marginTop: 8, lineHeight: 1.6 }}>
+                ✓ 已按账户权益重建每笔真实收益率（TV 的"净损益%"相对仓位价值，直接复利会失真），复利模式使用重建值。
+              </div>
+            )}
             {pctFallbackUsed && (
               <div style={{ fontSize: 11, color: '#f0b90b', background: 'rgba(240,185,11,0.08)', border: '1px solid rgba(240,185,11,0.3)', padding: '8px 12px', borderRadius: 4, lineHeight: 1.6 }}>
                 ⚠ 数据源缺少"收益率%"列,已自动切换为"绝对累加模式"。
@@ -706,6 +811,9 @@ export default function MonteCarloPage() {
               </div>
             </>
           )}
+
+          {/* 凯利最优杠杆（解析成功即显示，不依赖模拟运行） */}
+          {fileData.length > 0 && <KellyLeverageCard trades={fileData} />}
         </div>
       </div>
     </div>
