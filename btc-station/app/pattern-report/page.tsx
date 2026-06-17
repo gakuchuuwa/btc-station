@@ -134,7 +134,7 @@ export default function PatternReportPage() {
       <div style={{ marginBottom: 24 }}>
         <h1 style={{ fontSize: 22, fontWeight: 700, color: 'var(--text)', marginBottom: 6 }}>形态归因分析</h1>
         <div style={{ fontSize: 13, color: 'var(--text-mute)', lineHeight: 1.7 }}>
-          上传 TradingView 策略测试器导出的"交易清单"（xlsx / csv），或 MetaTrader5 策略测试报告（html），
+          上传 TradingView 策略测试器导出的"交易清单"（xlsx），或 MetaTrader5 策略测试报告（html），
           自动按形态（P1–P99）匹配进场信号与出场盈亏，计算各形态的胜率与净收益。正则 <code style={{ color: 'var(--accent)' }}>(P\d+)</code> 提取形态。
         </div>
       </div>
@@ -157,10 +157,10 @@ export default function PatternReportPage() {
           {loading ? '解析中…' : '拖拽文件到此处，或点击选择'}
         </div>
         <div style={{ fontSize: 12, color: 'var(--text-mute)' }}>
-          支持 .xlsx（多 sheet 自动选"交易清单"） / .csv / MT5 报告 .html
+          支持 .xlsx（多 sheet 自动选"交易清单"） / MT5 报告 .html
         </div>
         <input
-          ref={inputRef} type="file" accept=".xlsx,.xls,.csv,.html,.htm"
+          ref={inputRef} type="file" accept=".xlsx,.xls,.html,.htm"
           style={{ display: 'none' }}
           onChange={e => { const f = e.target.files?.[0]; if (f) upload(f) }}
         />
