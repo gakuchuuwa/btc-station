@@ -76,9 +76,78 @@ def _resolve_col(df: pd.DataFrame, key: str) -> str:
     raise HTTPException(status_code=400, detail=f"未找到必需列 '{key}'，候选: {COL_ALIASES[key]}")
 
 
+def _parse_mt5_html(raw: bytes) -> pd.DataFrame:
+    """解析 MetaTrader5 策略测试报告(ReportTester*.html)的成交(Deals)表,
+    按持仓周期聚合成 TradingView 风格的"一进一出"两行结构,复用下游归因逻辑。
+
+    Deals 行结构(去标签后):时间 成交# 品种 buy/sell in/out 量 价 订单# 手续费 库存费 利润 结余 [注释]
+    - in 成交带注释(信号,如 S2L-P1 / MACDS-P5 / PyramidL1-P1),利润为 0
+    - out 成交带利润;按净持仓回 0 判定一个周期结束
+    - 多/空加仓(Pyramid)的成交自动并入同一周期,盈亏累加、形态取底仓首个 in 的注释
+    净损益 % 以该周期进场时账户结余为分母(相对当时权益的真实收益率)。
+    """
+    try:
+        html = raw.decode("utf-16")
+    except (UnicodeDecodeError, UnicodeError):
+        html = raw.decode("utf-8", errors="ignore")
+
+    deals = []
+    for tr in re.findall(r"<tr[^>]*>(.*?)</tr>", html, re.S):
+        tds = re.findall(r"<td[^>]*>(.*?)</td>", tr, re.S)
+        cells = [re.sub(r"<[^>]+>", "", c).replace("\xa0", " ").strip() for c in tds]
+        if len(cells) >= 12 and cells[3] in ("buy", "sell") and cells[4] in ("in", "out"):
+            deals.append(cells)
+
+    if not deals:
+        raise HTTPException(status_code=400, detail="未在 HTML 中找到 MT5 成交(Deals)表，请确认上传的是 MetaTrader5 策略测试报告。")
+
+    def _num(s: str) -> float:
+        s = s.replace(" ", "").replace("\xa0", "")
+        try:
+            return float(s)
+        except ValueError:
+            return 0.0
+
+    records = []
+    trade_no = 0
+    cur = None
+    pos = 0.0
+    for d in deals:
+        typ, io = d[3], d[4]
+        vol, comm, swap, profit, bal = _num(d[5]), _num(d[8]), _num(d[9]), _num(d[10]), _num(d[11])
+        note = d[12] if len(d) > 12 else ""
+        if io == "in":
+            if cur is None:
+                trade_no += 1
+                cur = {"no": trade_no, "dir": "多头" if typ == "buy" else "空头",
+                       "signal": note, "entry_time": d[0], "exit_time": d[0],
+                       "pnl": 0.0, "bal_ref": bal}
+            cur["pnl"] += profit + comm + swap
+            pos += vol if typ == "buy" else -vol
+        else:  # out
+            if cur is None:
+                continue
+            cur["pnl"] += profit + comm + swap
+            cur["exit_time"] = d[0]
+            pos += vol if typ == "buy" else -vol
+            if abs(pos) < 1e-6:
+                pct = (cur["pnl"] / cur["bal_ref"] * 100.0) if cur["bal_ref"] else 0.0
+                records.append([cur["no"], cur["dir"] + "进场", cur["signal"], cur["entry_time"], 0.0, 0.0])
+                records.append([cur["no"], cur["dir"] + "出场", "Exit", cur["exit_time"], round(cur["pnl"], 2), round(pct, 4)])
+                cur = None
+
+    if not records:
+        raise HTTPException(status_code=400, detail="MT5 成交表已找到但未能配对出任何完整持仓周期。")
+
+    return pd.DataFrame(records, columns=["交易编号", "类型", "信号", "日期和时间", "净损益 USDT", "净损益 %"])
+
+
 def _load_dataframe(filename: str, raw: bytes) -> tuple[pd.DataFrame, Optional[pd.ExcelFile]]:
-    """返回 (交易清单 DataFrame, ExcelFile对象或None)。csv 时 ExcelFile 为 None。"""
+    """返回 (交易清单 DataFrame, ExcelFile对象或None)。csv / MT5 html 时 ExcelFile 为 None。"""
     lower = filename.lower()
+    if lower.endswith(".html") or lower.endswith(".htm"):
+        return _parse_mt5_html(raw), None
+
     if lower.endswith(".csv"):
         try:
             return pd.read_csv(io.BytesIO(raw)), None
@@ -101,7 +170,7 @@ def _load_dataframe(filename: str, raw: bytes) -> tuple[pd.DataFrame, Optional[p
             target = xls.sheet_names[0]
         return pd.read_excel(xls, sheet_name=target), xls
 
-    raise HTTPException(status_code=400, detail="仅支持 .xlsx 或 .csv 文件")
+    raise HTTPException(status_code=400, detail="仅支持 .xlsx / .csv / MT5 .html 文件")
 
 
 def _resolve_sheet(xls: pd.ExcelFile, logical_name: str) -> Optional[str]:
