@@ -337,7 +337,7 @@ export default function EditorPage() {
         timeframe: "4h",
         timerange: "20250901-20260101",
         market: "futures",
-        initial_capital: 10000,
+        initial_capital: 27000,
         leverage: 1,
         fee_pct: 0.05,
       });
@@ -379,7 +379,7 @@ export default function EditorPage() {
     sharpe:          btResult.sharpe ?? undefined,
     sortino:         btResult.sortino ?? undefined,
     profit_factor:   btResult.profit_factor ?? undefined,
-    initial_capital: 10000,
+    initial_capital: 27000,
   } : null;
 
   return (

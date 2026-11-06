@@ -67,7 +67,7 @@ def _sheet_performance(wb: Workbook, m: dict):
 
     _hdr(ws, 1, ["", "全部 USDT", "全部 %", "多头 USDT", "多头 %", "空头 USDT", "空头 %"])
 
-    init = _v(m, "initial_capital", 10000) or 10000
+    init = _v(m, "initial_capital", 27000) or 27000
     np_l = _v(m, "net_profit_long",  0) or 0
     np_s = _v(m, "net_profit_short", 0) or 0
     rp_l = _v(m, "return_pct_long")
@@ -209,7 +209,7 @@ def _sheet_risk(wb: Workbook, m: dict):
 
 # ── Sheet 4：交易清单 ─────────────────────────────────────────────────────────
 
-def _sheet_trades(wb: Workbook, trades: list, initial_capital: float = 10000.0):
+def _sheet_trades(wb: Workbook, trades: list, initial_capital: float = 27000.0):
     ws = wb.create_sheet("交易清单")
 
     headers = [
@@ -294,7 +294,7 @@ def _sheet_attrs(wb: Workbook, m: dict, strategy_name: str, timeframe: str):
     }
     start = str(m.get("backtest_start", ""))
     end   = str(m.get("backtest_end",   ""))
-    init  = _v(m, "initial_capital", 10000)
+    init  = _v(m, "initial_capital", 27000)
 
     # 1. 系统属性(类似 TV 的"商品代码/时间周期/Tick"等)
     attrs = [
@@ -338,7 +338,7 @@ def vectorbt_to_xlsx(
 ) -> bytes:
     m      = raw.get("metrics", {})
     trades = raw.get("trades", [])
-    init   = float(m.get("initial_capital", 10000) or 10000)
+    init   = float(m.get("initial_capital", 27000) or 27000)
 
     wb = Workbook()
     wb.remove(wb.active)

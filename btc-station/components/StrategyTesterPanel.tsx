@@ -210,8 +210,8 @@ const EXECUTION_PARAM_NAMES = new Set([
 ]);
 
 const PRIORITY_PARAM_NAMES = [
-  "system1_period",
   "system2_period",
+  "atr_period",
   "atr_mult_init",
   "atr_mult_long_trail",
   "atr_mult_short_trail",

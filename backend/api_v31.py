@@ -209,7 +209,7 @@ class BacktestSubmit(BaseModel):
     timeframe: str = "4h"
     timerange: str = "20230101-20260101"
     market: str = "futures"
-    initial_capital: float = 10000.0
+    initial_capital: float = 27000.0
     leverage: int = 1
     fee_pct: float = 0.05
     engine: str = ""  # Force specific engine if set: "freqtrade" or "vectorbt"

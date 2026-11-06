@@ -310,7 +310,7 @@ def run_dynamic_code(code_string: str, df, parameters: dict, timeframe: str = '4
             pass
 
         # ── 基础数值 ─────────────────────────────────────────────────
-        init_cash  = float(portfolio.init_cash) if hasattr(portfolio, 'init_cash') else 10000.0
+        init_cash  = float(portfolio.init_cash) if hasattr(portfolio, 'init_cash') else 27000.0
         pf_value   = portfolio.value()
         end_value  = float(pf_value.iloc[-1]) if len(pf_value) > 0 else init_cash
         net_profit = round(end_value - init_cash, 2)

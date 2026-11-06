@@ -1054,7 +1054,7 @@ class FtmoScanRequest(BaseModel):
     symbol: str = 'BTC/USDT'
     timeframe: str = '4h'
     parameters: dict = {}
-    initial_capital: float = 10000.0
+    initial_capital: float = 27000.0
     rules: dict = {}  # 可覆盖 FTMO_SWING_DEFAULTS（daily_loss_pct / total_loss_pct / profit_target_pct 等）
 
 

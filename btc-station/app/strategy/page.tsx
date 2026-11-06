@@ -39,7 +39,7 @@ def execute(df, parameters):
 
     pf = vbt.Portfolio.from_signals(
         df["close"], entries, exits,
-        init_cash=parameters.get("initial_capital", 10000),
+        init_cash=parameters.get("initial_capital", 27000),
         fees=0.0005,
     )
 

@@ -43,7 +43,7 @@ def _duration_str(open_date: str, close_date: str) -> str:
 def freqtrade_json_to_tv_csv(
     raw: dict,
     user_params: dict | None = None,
-    initial_capital: float = 10000.0,
+    initial_capital: float = 27000.0,
 ) -> str:
     """
     raw        : parsed Freqtrade backtest result JSON
@@ -208,7 +208,7 @@ def freqtrade_json_to_tv_csv(
 def vectorbt_to_tv_csv(
     raw: dict,
     user_params: dict | None = None,
-    initial_capital: float = 10000.0,
+    initial_capital: float = 27000.0,
 ) -> str:
     """
     raw: dict containing 'metrics', 'trades', and 'indicators' from dynamic_runner.py

@@ -120,7 +120,7 @@ export default function MonteCarloPage() {
   const [fileData, setFileData] = useState<Trade[]>([])
   const [fileName, setFileName] = useState<string | null>(null)
   
-  const [initialCapital, setInitialCapital] = useState<number>(10000)
+  const [initialCapital, setInitialCapital] = useState<number>(27000)
   const [numSimulations, setNumSimulations] = useState<number>(5000)
   const [ruinThreshold, setRuinThreshold] = useState<number>(50)
 

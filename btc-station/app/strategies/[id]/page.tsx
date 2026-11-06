@@ -19,7 +19,7 @@ export default function StrategyDetailPage() {
   const [backtestConfig, setBacktestConfig] = useState<BacktestConfig>({
     market: 'spot',
     leverage: 1,
-    initial_capital: 10000,
+    initial_capital: 27000,
     position_sizing: 'all_in',
     position_value: 100,
     fee_pct: 0.1,
