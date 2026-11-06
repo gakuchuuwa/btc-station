@@ -16,15 +16,21 @@ class DataFeeder:
         if not os.path.exists(self.data_dir):
             os.makedirs(self.data_dir)
 
+    def _filename(self, symbol: str, timeframe: str) -> str:
+        """永续（含 ':' 后缀）用 _SWAP 标记，避免 NTFS 冒号 ADS 问题；现货不带后缀。"""
+        if ':' in symbol:
+            safe = symbol.split(':')[0].replace('/', '_') + '_SWAP'
+        else:
+            safe = symbol.replace('/', '_')
+        return os.path.join(self.data_dir, f"{safe}_{timeframe}.csv")
+
     def fetch_ohlcv(self, symbol: str = 'BTC/USDT', timeframe: str = '1h', limit: int = 1500) -> pd.DataFrame:
         """
         Fetches OHLCV (K-line) data from the exchange with pagination to handle large limits.
         Intelligently updates cache if sufficient data already exists.
         """
-        # 剥离永续后缀（同 get_local_data，避免 Windows NTFS ADS 问题）
-        clean_symbol = symbol.split(':')[0]
-        safe_symbol = clean_symbol.replace('/', '_')
-        filepath = os.path.join(self.data_dir, f"{safe_symbol}_{timeframe}.csv")
+        # 永续用 _SWAP 文件名（避免 Windows NTFS 冒号 ADS 问题）
+        filepath = self._filename(symbol, timeframe)
 
         cached_df = pd.DataFrame()
         if os.path.exists(filepath):
@@ -115,6 +121,32 @@ class DataFeeder:
         print(f"Saved {len(df)} rows to {filepath}")
         return df
 
+    def get_funding_history(self) -> pd.DataFrame:
+        """BTC 永续历史资金费率（每 8 小时一条，列 timestamp / funding_rate，费率为小数）。
+        OKX 公共接口只给最近约 3 个月，所以用 Binance BTCUSDT 永续的完整历史作代理（两家费率走势接近）。
+        本地缓存 data/BTC_USDT_SWAP_funding_binance.csv，每次调用从缓存末尾增量补到当前。"""
+        import time
+        path = os.path.join(self.data_dir, "BTC_USDT_SWAP_funding_binance.csv")
+        bn = ccxt.binanceusdm({"enableRateLimit": True})
+        cached = pd.read_csv(path, parse_dates=["timestamp"]) if os.path.exists(path) else pd.DataFrame(columns=["timestamp", "funding_rate"])
+        since = int(cached["timestamp"].iloc[-1].value // 10**6) + 1 if len(cached) else bn.parse8601("2019-09-01T00:00:00Z")
+        rows = []
+        while True:
+            batch = bn.fetch_funding_rate_history("BTC/USDT:USDT", since=since, limit=1000)
+            if not batch:
+                break
+            rows += [(r["timestamp"], r["fundingRate"]) for r in batch]
+            if len(batch) < 1000:
+                break
+            since = batch[-1]["timestamp"] + 1
+            time.sleep(0.3)
+        if rows:
+            new = pd.DataFrame(rows, columns=["timestamp", "funding_rate"])
+            new["timestamp"] = pd.to_datetime(new["timestamp"], unit="ms")
+            cached = pd.concat([cached, new]).drop_duplicates("timestamp").sort_values("timestamp")
+            cached.to_csv(path, index=False)
+        return cached
+
     # Global memory cache to prevent repetitive I/O and parsing
     _df_cache: Dict[str, pd.DataFrame] = {}
     _df_mtime: Dict[str, float] = {}
@@ -125,10 +157,8 @@ class DataFeeder:
         Windows NTFS 不支持冒号文件名，含 ':USDT' 等永续后缀的 symbol 会被解析为 ADS 流，
         导致读到不完整数据。这里统一剥离 ':XXX' 后缀，回退到现货文件名。
         """
-        # 永续合约后缀（如 BTC/USDT:USDT）在 Windows 上会触发 NTFS ADS，必须剥离
-        clean_symbol = symbol.split(':')[0]
-        safe_symbol = clean_symbol.replace('/', '_')
-        filepath = os.path.join(self.data_dir, f"{safe_symbol}_{timeframe}.csv")
+        # 永续（含 ':' 后缀）读 _SWAP 文件，现货读无后缀文件
+        filepath = self._filename(symbol, timeframe)
         
         if os.path.exists(filepath):
             # Check memory cache first
