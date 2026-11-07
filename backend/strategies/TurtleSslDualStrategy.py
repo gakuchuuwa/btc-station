@@ -9,7 +9,6 @@
 - 唐奇安突破只用 S2（144 根），双系统已删除
 - MACD 接力做多（P2/P3）/ 做空（P5）
 - 非对称 OBV 振荡器过滤（仅约束 MACD 接力单，突破单可豁免）
-- 成交量独立进场（Z-Score 超阈值 + 涨跌方向确认）
 - ATR 初始止损 + 追踪止损 + 百分比止损 + 通道反向突破平仓
 - 金字塔加仓（统一按 P7 倍数；按底仓形态选触发方式：激活即加 / 突破前高 / 转P1(空P4) / 不加）
 - 加仓后全仓亏损封顶（百分比止损与 均价∓R×倍数÷总数量 取更近者）
@@ -217,26 +216,12 @@ def execute(df, parameters):
     profit_atr_mult_short= float(p.get("profit_atr_mult_short", 5.0))
     enable_trailing      = _bool_param(p.get("enable_trailing_stop"), True)
     use_breakeven        = _bool_param(p.get("use_breakeven"), True)
-    # 多头追踪止损二段收紧（对齐 Pine enable_trail_ratchet / ratchet_profit_atr / ratchet_trail_atr）：
-    # 峰值浮盈（入场后最高价 - 均价）≥ ratchet_profit_atr × ATR 后，追踪距离改用 ratchet_trail_atr
-    # 默认关闭：全部数据回测（2020-06 起）显示它会把 2020-21 大牛市那笔 +537,570 砍成约 +10 万，
-    # 全段净利 747,714 → 332,562。只在 2022 以后的数据上看才显得更好。
-    enable_trail_ratchet = _bool_param(p.get("enable_trail_ratchet"), False)
-    ratchet_profit_atr   = float(p.get("ratchet_profit_atr", 12.0))
-    ratchet_trail_atr    = float(p.get("ratchet_trail_atr", 6.0))
     enable_regime        = _bool_param(p.get("enable_regime_filter"), True)
     enable_obv           = _bool_param(p.get("enable_obv_filter"), True)
     # 突破信号豁免 OBV（对齐 Pine enable_obv_breakout_exempt）：
     # 只有 MACD 接力信号（P2/P3做多、P5做空）受 OBV 约束，通道突破信号（P1/P4/P6）豁免。
     # 旧版接收了该参数却丢弃，导致 OBV 一律覆盖所有信号，与 Pine 不等价。
     obv_breakout_exempt  = _bool_param(p.get("enable_obv_breakout_exempt"), True)
-    # 成交量独立进场（对齐 Pine「成交量独立进场」一组）
-    enable_volume_entry  = _bool_param(p.get("enable_volume_entry"), False)
-    volume_ma_length     = int(p.get("volume_ma_length", 610))
-    volume_stdev_length  = int(p.get("volume_stdev_length", 610))
-    threshold_extra_high = float(p.get("thresholdExtraHigh", 4.0))
-    mult_volume_l        = float(p.get("mult_volume_l", 1.0))
-    mult_volume_s        = float(p.get("mult_volume_s", 1.0))
     pyramid_enable       = _bool_param(p.get("pyramid_enable"), True)
     pyramid_max_long     = int(p.get("pyramid_max_count_long", 1))
     # 默认 0 = 空头不加仓（全段实测：空头加仓净利只多约 1%，TV 回撤平均 10,506 → 13,099）
@@ -246,7 +231,7 @@ def execute(df, parameters):
     _mult_p7_raw         = p.get("mult_p7", None)
     mult_p7              = float(_mult_p7_raw) if _mult_p7_raw is not None else 1.7
     pyramid_mult         = float(p.get("pyramid_mult_u2", 0.5))
-    # 按底仓形态分别选择加仓方式（对齐 Pine add_mode_p1..p6 / add_mode_vol）：
+    # 按底仓形态分别选择加仓方式（对齐 Pine add_mode_p1..p6）：
     #   追踪激活即加    = 浮盈达到追踪激活倍数那一根立即加仓
     #   突破前高才加    = 追踪已激活后，等收盘突破前144根最高价(空头跌破最低价)才加
     #   转P1(空P4)才加 = 追踪已激活后，等形态转为 P1(空头 P4) 才加
@@ -261,7 +246,6 @@ def execute(df, parameters):
         4: str(p.get("add_mode_p4", ADD_BRK)),
         5: str(p.get("add_mode_p5", ADD_OFF)),
         6: str(p.get("add_mode_p6", ADD_ACT)),
-        0: str(p.get("add_mode_vol", ADD_ACT)),   # 成交量进场底仓
     }
     # 熊转牛：P6 试探做多（对齐 Pine enable_p6_bull_switch）
     enable_p6_bull_switch= _bool_param(p.get("enable_p6_bull_switch"), True)
@@ -372,13 +356,6 @@ def execute(df, parameters):
     # OBV 振荡器
     obv_osc = _obv_osc(close, volume, obv_length)
 
-    # 成交量独立进场的 Z-Score（对齐 Pine volume_zscore）：
-    # 成交量高出均量 thresholdExtraHigh 个标准差才触发，收阳做多、收阴做空。
-    # 610 周期窗口意味着前 610 根为 NaN，比较结果恒为 False，预热期不会误触发。
-    volume_ma     = volume.rolling(volume_ma_length).mean()
-    volume_stdev  = volume.rolling(volume_stdev_length, min_periods=volume_stdev_length).std(ddof=0)
-    volume_zscore = (volume - volume_ma) / volume_stdev
-
     # S2 唐奇安通道（偏移1，Pine 里 [1] 表示前一根）
     s2_high = high.rolling(system2_period).max().shift(1)
     s2_low  = low.rolling(system2_period).min().shift(1)
@@ -427,7 +404,6 @@ def execute(df, parameters):
     entry_time_ts = None        # 底仓入场时间戳，用于形态切换平仓的最短持仓天数判定
 
     long_stop = np.nan
-    long_peak_hi = 0.0   # 多头持仓期间最高价（入场取成交价，之后逐根取 high），供二段收紧判断
     long_trail = False
     long_trail_just = False
     short_stop = np.nan
@@ -779,18 +755,13 @@ def execute(df, parameters):
                 # ATR 追踪止损更新（TV 在进场成交根只设初始止损，下一根才开始追踪）
                 if not is_fill_bar:
                     profit_long = hi - pos_avg
-                    long_peak_hi = max(long_peak_hi, hi)
                     if enable_trailing:
                         if not long_trail and profit_long >= atr_v * profit_atr_mult_long:
                             long_trail = True; long_trail_just = True
                             calc = hi - atr_v * atr_mult_long_trail
                             long_stop = max(pos_avg, calc) if use_breakeven else calc
                         if long_trail and not long_trail_just:
-                            # 二段收紧：峰值浮盈达到触发倍数后，追踪距离改用二段倍数（取两者较小）
-                            _tm = atr_mult_long_trail
-                            if enable_trail_ratchet and (long_peak_hi - pos_avg) >= ratchet_profit_atr * atr_v:
-                                _tm = min(_tm, ratchet_trail_atr)
-                            new_s = cl - atr_v * _tm
+                            new_s = cl - atr_v * atr_mult_long_trail
                             long_stop = max(long_stop, new_s)
 
                     # 已加仓、非保本分支：止损常规上移，放在收盘止损判断与加仓之前（对齐 Pine 前移后的位置）
@@ -1069,18 +1040,6 @@ def execute(df, parameters):
                 signal_long = None
                 signal_short = None
 
-            # 成交量独立进场（对齐 Pine vol_signal_long/short）：
-            # 与形态信号并列，同一套仓位/止损/加仓逻辑；同根已有形态信号时让位。
-            vol_signal_long = False
-            vol_signal_short = False
-            _vz = volume_zscore.iloc[i]
-            if enable_volume_entry and (not np.isnan(_vz)) and _vz >= threshold_extra_high \
-                    and signal_long is None and signal_short is None:
-                if cl > open_.iloc[i]:
-                    vol_signal_long = True
-                elif cl < open_.iloc[i]:
-                    vol_signal_short = True
-
             # 做多入场（TV 在信号K线收盘确认，下一根开盘成交）
             if signal_long:
                 m = mult.get((cur_pat, True), 1.0)
@@ -1092,7 +1051,6 @@ def execute(df, parameters):
                     entry_atr_val = atr_v; entry_mult_val = m
                     entry_fill_i = i + 1
                     long_stop = fill - atr_v * atr_mult_init
-                    long_peak_hi = fill
                     long_trail = False; long_trail_just = False
                     has_p1 = (cur_pat == 1)
                     p2_ready = False; p3_ready = False
@@ -1141,52 +1099,6 @@ def execute(df, parameters):
                     if enable_regime and bull and cur_pat == 4:
                         regime_test = 'P4_bear_test'
 
-            # 成交量独立做多入场（对齐 Pine「成交量独立做多入场」）：
-            # 与形态入场并列，共用同一套仓位/ATR止损/追踪止损/加仓/平仓逻辑。
-            # 归因形态号 0（图表标签显示 VOL），不参与形态切换平仓（has_p1=False）。
-            elif vol_signal_long:
-                qty = _calc_qty(atr_v, mult_volume_l, cash)
-                if qty >= min_qty:
-                    fill = _record(next_ts, next_open, qty, 1)
-                    pos = qty; pos_avg = fill
-                    entry_system = 'VOL'; entry_pattern = 0
-                    entry_atr_val = atr_v; entry_mult_val = mult_volume_l
-                    entry_fill_i = i + 1
-                    long_stop = fill - atr_v * atr_mult_init
-                    long_peak_hi = fill
-                    long_trail = False; long_trail_just = False
-                    has_p1 = False
-                    p2_ready = False; p3_ready = False
-                    pyramid_long_cnt = 0; entry_price_first = cl
-                    _open_legs = [{
-                        'entry_ts': next_ts,
-                        'entry_px': fill,
-                        'qty':      qty,
-                        'signal':   'VOL Long',
-                    }]
-                    entry_time_ts = next_ts
-
-            # 成交量独立做空入场（对齐 Pine「成交量独立做空入场」）
-            elif vol_signal_short:
-                qty = _calc_qty(atr_v, mult_volume_s, cash)
-                if qty >= min_qty:
-                    fill = _record(next_ts, next_open, qty, -1)
-                    pos = -qty; pos_avg = fill
-                    entry_system = 'VOL'; entry_pattern = 0
-                    entry_atr_val = atr_v; entry_mult_val = mult_volume_s
-                    entry_fill_i = i + 1
-                    short_stop = fill + atr_v * atr_mult_init
-                    short_trail = False; short_trail_just = False
-                    has_p4 = False
-                    p5_ready = False
-                    pyramid_short_cnt = 0; entry_price_first = cl
-                    _open_legs = [{
-                        'entry_ts': next_ts,
-                        'entry_px': fill,
-                        'qty':      qty,
-                        'signal':   'VOL Short',
-                    }]
-                    entry_time_ts = next_ts
 
     # 强制平仓（回测结束，用最后一根收盘价；对齐 TV 敞口交易：不加滑点、不扣出场手续费）
     if pos != 0.0 and _open_legs:
