@@ -22,7 +22,6 @@ from contextlib import asynccontextmanager
 from api_v31 import router as router_v31
 
 # Phase 4 VectorBT Optimizer
-from optimizer.vbt_optimizer import router as vbt_optimizer_router
 
 # 形态归因分析（TradingView 交易清单上传分析）
 from pattern_report import router as pattern_report_router
@@ -57,7 +56,6 @@ app.add_middleware(
 app.include_router(router_v31, prefix="/api")
 
 # Phase 4 — VectorBT Optimizer
-app.include_router(vbt_optimizer_router, prefix="/api/vbt")
 
 # 形态归因分析
 app.include_router(pattern_report_router, prefix="/api")
@@ -83,12 +81,35 @@ class OptimizeRequest(BaseModel):
     grid: Dict[str, GridParam]
     method: str = 'grid'        # grid | random | annealing | pso
     iterations: int = 100       # random / annealing / pso 用
-    target: str = 'net_profit_pct'  # 优化目标指标
+    target: str = "return_dd_ratio"  # 优化目标指标(默认收益回撤比,分母是与TV对齐的已平仓回撤)
     start_date: str | None = None  # 回测起点(yyyy-mm-dd),None=用全量历史
     end_date: str | None = None    # 回测终点(yyyy-mm-dd),None=至今
+    # 固定参数：不参与搜索，原样传给策略。网格参数同名时以网格为准。
+    # 用途：让调参跑在与实盘一致的配置上（起始牛熊、通道平仓开关、data_start_date 等），
+    # 否则这些项只能取策略代码里的默认值，调参环境与实盘环境可能不一致。
+    base_params: Dict[str, Any] = {}
 
 # In-memory store for last optimization results (for CSV export)
 _last_optimization_results: list = []
+
+
+def _return_dd_ratio(m: dict) -> float:
+    """收益回撤比 = 总收益% / 已平仓资金回撤%（与 TradingView 对齐的真实回撤）。
+
+    为什么不用 VectorBT stats 里的 Calmar：它的分母是浮动权益回撤(pf.value()),
+    对杠杆/合约策略会把回撤放大 1.7~3.2 倍,排序会偏向"浮动回撤小"而非
+    "实际回撤小"的参数。这里的分母换成与 TradingView 对齐的已平仓回撤。
+
+    注：同一批优化里所有组合的回测时长相同,所以用总收益还是年化收益(CAGR)
+    做分子,排序结果完全一致,这里取总收益以免依赖回测天数字段。
+    """
+    try:
+        dd = float(m.get("closed_max_drawdown_pct", 0) or 0)
+        if dd <= 0:
+            return 0.0
+        return round(float(m.get("total_return_pct", 0) or 0) / dd, 4)
+    except Exception:
+        return 0.0
 
 
 def _build_optimizer_iterator(request: 'OptimizeRequest'):
@@ -121,7 +142,9 @@ def _build_optimizer_iterator(request: 'OptimizeRequest'):
         param_values = {n: build_values(request.grid[n]) for n in param_names}
 
         def to_params(combo):
-            out = {k: int(v) if float(v).is_integer() else v for k, v in combo.items()}
+            # 固定参数打底，网格参数覆盖同名项
+            out = dict(request.base_params or {})
+            out.update({k: int(v) if float(v).is_integer() else v for k, v in combo.items()})
             # 注入时间范围,让 dynamic_runner 裁剪 df
             if request.start_date:
                 out["start_date"] = request.start_date
@@ -139,11 +162,18 @@ def _build_optimizer_iterator(request: 'OptimizeRequest'):
                 # 关键排序字段(score 函数和前端表格直接用,不能丢)
                 "net_profit_pct":   round(float(m.get("total_return_pct", 0)), 4),
                 "win_rate_pct":     round(float(m.get("win_rate_pct", 0)), 4),
+                # 浮动权益回撤(VectorBT pf.value() 口径,含未平仓浮盈浮亏)
                 "max_drawdown_pct": round(float(m.get("max_drawdown_pct", 0)), 4),
+                # 已平仓资金回撤 —— 与 TradingView「最大回撤(收盘价到收盘价)」精确对齐,
+                # 前端过滤/评分应以此为准；浮动口径会把回撤放大 1.7~3.2 倍导致误杀好参数
+                "closed_max_drawdown_pct": round(float(m.get("closed_max_drawdown_pct", 0) or 0), 4),
                 "total_trades":     int(m.get("total_trades", 0)),
                 "sharpe":           round(float(m.get("sharpe", 0) or 0), 4),
                 "sortino":          round(float(m.get("sortino", 0) or 0), 4),
                 "calmar":           round(float(m.get("calmar", 0) or 0), 4),
+                # 收益回撤比 = 总收益 / 真实回撤，供前端按真实风险排序。
+                # 注意不要和上面 VBT 的 calmar 混淆：那个的分母是被放大的浮动回撤。
+                "return_dd_ratio":  _return_dd_ratio(m),
                 "profit_factor":    round(float(m.get("profit_factor", 0) or 0), 4),
                 # 完整 metrics 字典(CSV 导出/详细分析用,不参与排序)
                 "full_metrics":     m,
@@ -294,190 +324,30 @@ def read_root():
 def run_optimization(request: OptimizeRequest):
     """
     四种优化算法：grid（网格）/ random（随机）/ annealing（模拟退火）/ pso（粒子群）
+
+    非流式版：内部复用 `_build_optimizer_iterator` 跑完整轮，只取最后的 done 事件返回。
+    （历史上这里有一份独立的重复实现，两边各写一遍四种算法，改一处忘另一处就会
+      导致 /api/optimize 与 /api/optimize/stream 行为不一致，已合并。）
     """
-    import random, math
-    global _last_optimization_results
+    done = None
+    for event in _build_optimizer_iterator(request):
+        et = event.get("type")
+        if et == "error":
+            raise HTTPException(status_code=500, detail=event.get("detail", "优化失败"))
+        if et == "done":
+            done = event
+    if done is None:
+        raise HTTPException(status_code=500, detail="优化未返回结果")
 
-    try:
-        symbol_swap = request.symbol.replace('BTC/USDT', 'BTC/USDT:USDT')
-        df = feeder.get_local_data(symbol_swap, request.timeframe)
-        if df.empty:
-            raise HTTPException(status_code=503, detail="数据同步中，请稍后重试。")
-
-        param_names = list(request.grid.keys())
-
-        # 构建每个参数的离散候选值列表
-        def build_values(g: GridParam) -> list:
-            vals = []
-            v = g.start
-            while v <= g.stop + 1e-9:
-                vals.append(round(v, 8))
-                v += g.step
-            return vals or [g.start]
-
-        param_values = {n: build_values(request.grid[n]) for n in param_names}
-
-        def to_params(combo: dict) -> dict:
-            return {k: int(v) if float(v).is_integer() else v for k, v in combo.items()}
-
-        def evaluate(params: dict) -> dict | None:
-            result_data, error = run_dynamic_code(request.code, df, to_params(params), timeframe=request.timeframe)
-            if error or not result_data:
-                return None
-            m = result_data["metrics"]
-            return {
-                "parameters": params.copy(),
-                "status": "ok",
-                "net_profit_pct":   round(float(m.get("total_return_pct", 0)), 4),
-                "win_rate_pct":     round(float(m.get("win_rate_pct", 0)), 4),
-                "max_drawdown_pct": round(float(m.get("max_drawdown_pct", 0)), 4),
-                "total_trades":     int(m.get("total_trades", 0)),
-                "sharpe":           round(float(m.get("sharpe", 0) or 0), 4),
-                "sortino":          round(float(m.get("sortino", 0) or 0), 4),
-                "calmar":           round(float(m.get("calmar", 0) or 0), 4),
-                "profit_factor":    round(float(m.get("profit_factor", 0) or 0), 4),
-                "full_metrics":     m,
-            }
-
-        def score(r: dict | None) -> float:
-            if r is None: return -1e9
-            return float(r.get(request.target, r.get("net_profit_pct", -1e9)))
-
-        def rand_point() -> dict:
-            return {n: random.choice(param_values[n]) for n in param_names}
-
-        results = []
-        method = request.method
-        total = 0
-
-        # ── 网格搜索 ──────────────────────────────────────────────────────────
-        if method == "grid":
-            all_combos = list(itertools.product(*[param_values[n] for n in param_names]))
-            total = len(all_combos)
-            if total > 2000:
-                raise HTTPException(400, f"网格组合数 {total} 超过2000上限，请减小范围或增大步长。")
-            for combo in all_combos:
-                params = {param_names[i]: v for i, v in enumerate(combo)}
-                r = evaluate(params)
-                results.append(r or {"parameters": params, "status": "error"})
-
-        # ── 随机搜索 ──────────────────────────────────────────────────────────
-        elif method == "random":
-            total = request.iterations
-            seen = set()
-            completed = 0
-            max_attempts = total * 5  # 避免无限循环
-            attempts = 0
-            while completed < total and attempts < max_attempts:
-                attempts += 1
-                params = rand_point()
-                key = str(sorted(params.items()))
-                if key in seen:
-                    continue
-                seen.add(key)
-                r = evaluate(params)
-                results.append(r or {"parameters": params, "status": "error"})
-                completed += 1
-
-        # ── 模拟退火 ──────────────────────────────────────────────────────────
-        elif method == "annealing":
-            total = request.iterations
-            current = rand_point()
-            current_r = evaluate(current)
-            best_r = current_r
-            T = 1.0
-            alpha = 0.95
-
-            if current_r:
-                results.append(current_r)
-
-            for i in range(1, total):
-                T *= alpha
-                # 随机改变一个参数
-                neighbor = current.copy()
-                key = random.choice(param_names)
-                neighbor[key] = random.choice(param_values[key])
-
-                neighbor_r = evaluate(neighbor)
-                if neighbor_r:
-                    results.append(neighbor_r)
-                    delta = score(neighbor_r) - score(current_r)
-                    if delta > 0 or (T > 1e-6 and random.random() < math.exp(delta / T)):
-                        current = neighbor
-                        current_r = neighbor_r
-                        if score(neighbor_r) > score(best_r):
-                            best_r = neighbor_r
-
-        # ── 粒子群（PSO） ─────────────────────────────────────────────────────
-        elif method == "pso":
-            n_particles = max(5, min(20, request.iterations // 10))
-            n_iters = max(1, request.iterations // n_particles)
-            total = n_particles * n_iters
-            w, c1, c2 = 0.7, 1.5, 1.5  # 惯性/个体/社会权重
-
-            # 粒子位置用值列表中的索引表示
-            idx_ranges = {n: len(param_values[n]) - 1 for n in param_names}
-
-            def idx_to_params(idx: dict) -> dict:
-                return {n: param_values[n][max(0, min(idx_ranges[n], int(round(idx[n]))))]
-                        for n in param_names}
-
-            # 初始化粒子
-            particles = []
-            for _ in range(n_particles):
-                pos = {n: random.uniform(0, idx_ranges[n]) for n in param_names}
-                vel = {n: random.uniform(-1, 1) for n in param_names}
-                r = evaluate(idx_to_params(pos))
-                particles.append({"pos": pos, "vel": vel, "best_pos": pos.copy(), "best_r": r})
-                if r: results.append(r)
-
-            global_best = max(particles, key=lambda p: score(p["best_r"]))
-            g_best_pos = global_best["best_pos"].copy()
-            g_best_r = global_best["best_r"]
-
-            for _ in range(n_iters - 1):
-                for p in particles:
-                    for n in param_names:
-                        r1, r2 = random.random(), random.random()
-                        p["vel"][n] = (w * p["vel"][n]
-                                       + c1 * r1 * (p["best_pos"][n] - p["pos"][n])
-                                       + c2 * r2 * (g_best_pos[n] - p["pos"][n]))
-                        p["vel"][n] = max(-idx_ranges[n], min(idx_ranges[n], p["vel"][n]))
-                        p["pos"][n] = max(0, min(idx_ranges[n], p["pos"][n] + p["vel"][n]))
-
-                    r = evaluate(idx_to_params(p["pos"]))
-                    if r:
-                        results.append(r)
-                        if score(r) > score(p["best_r"]):
-                            p["best_pos"] = p["pos"].copy()
-                            p["best_r"] = r
-                        if score(r) > score(g_best_r):
-                            g_best_pos = p["pos"].copy()
-                            g_best_r = r
-        else:
-            raise HTTPException(400, f"未知方法: {method}，支持 grid/random/annealing/pso")
-
-        # 过滤掉失败结果，按目标指标排序
-        successful = [r for r in results if r and r.get("status") == "ok"]
-        successful.sort(key=lambda r: score(r), reverse=True)
-
-        _last_optimization_results = successful
-
-        return {
-            "symbol": request.symbol,
-            "timeframe": request.timeframe,
-            "method": method,
-            "total_combinations": total,
-            "successful": len(successful),
-            "failed": total - len(successful),
-            "results": successful,
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        import traceback
-        raise HTTPException(status_code=500, detail=str(e))
+    return {
+        "symbol": request.symbol,
+        "timeframe": request.timeframe,
+        "method": done.get("method", request.method),
+        "total_combinations": done.get("total_combinations", 0),
+        "successful": done.get("successful", 0),
+        "failed": done.get("failed", 0),
+        "results": done.get("results", []),
+    }
 
 
 @app.post("/api/optimize/stream")
@@ -547,7 +417,7 @@ def export_optimization_csv():
 
     # 动态参数列:用户勾几个就有几个,完全跟着实际跑的来
     param_names = list(results[0]["parameters"].keys())
-    init_cap = 10000.0
+    init_cap = 27000.0
 
     # ── CSV 列 → metrics key 映射表 ──────────────────────────────────────
     # 设计:CSV 列名固定(对齐 TV Assistant 行业标杆),metrics key 来自 dynamic_runner
@@ -818,12 +688,9 @@ def export_optimization_csv():
     writer = csv.writer(output, quoting=csv.QUOTE_NONNUMERIC)
     writer.writerow(header)
 
-    best_score = max(float(r.get("net_profit_pct", -1e9)) for r in results)
-
     for i, r in enumerate(results):
         # 优先用完整 metrics(80+ 字段),fallback 到简化结果
         fm = r.get("full_metrics") or {}
-        net_pct = float(r.get("net_profit_pct", 0))
         wr      = float(r.get("win_rate_pct", 0))
         trades  = int(r.get("total_trades", 0))
         win_cnt = round(trades * wr / 100) if trades else 0
@@ -849,7 +716,7 @@ def export_optimization_csv():
         _avg_dd_dur_s = f"{int(_avg_dd_dur)}天" if _avg_dd_dur is not None else ""
         _avg_runup_dur   = fm.get("avg_runup_duration_days")
         _avg_runup_dur_s = f"{int(_avg_runup_dur)}天" if _avg_runup_dur is not None else ""
-        _comment = "Best result." if net_pct == best_score and i == 0 else f"Rank {i+1}."
+        _comment = "Best result." if i == 0 else f"Rank {i+1}."
 
         computed = {
             "_max_dd_abs": _max_dd_abs,
@@ -931,7 +798,7 @@ def run_dynamic_strategy(request: StrategyRequest):
         xlsx_token = ""
 
         try:
-            csv_text = vectorbt_to_tv_csv(portfolio_data, request.parameters or {}, 10000.0)
+            csv_text = vectorbt_to_tv_csv(portfolio_data, request.parameters or {}, portfolio_data["metrics"]["initial_capital"])
             csv_token = _uuid.uuid4().hex
             _lru_set(_dynamic_csv_cache, csv_token, csv_text)
         except Exception:
@@ -1102,6 +969,28 @@ def run_ftmo_scan(request: FtmoScanRequest):
 def get_ftmo_defaults():
     """返回 FTMO Swing 默认规则，前端用来初始化规则编辑器。"""
     return {"rule_set": "FTMO_Swing", "defaults": FTMO_SWING_DEFAULTS}
+
+
+class AiChatRequest(BaseModel):
+    api_key: str
+    messages: list
+
+
+@app.post("/api/ai/chat")
+async def ai_chat(request: AiChatRequest):
+    """策略编辑器 AI 助手（BYOK，Key 由前端每次传入、不落盘）。SSE 推送 {delta} / {error} / [DONE]。"""
+    from ai_agent import stream_chat
+
+    async def event_gen():
+        try:
+            async for delta in stream_chat(request.api_key, request.messages):
+                yield f"data: {json.dumps({'delta': delta}, ensure_ascii=False)}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'error': str(e)}, ensure_ascii=False)}\n\n"
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(event_gen(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 if __name__ == '__main__':

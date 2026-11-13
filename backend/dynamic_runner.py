@@ -2,6 +2,9 @@ import types
 import importlib.util
 import traceback
 import ast
+import ctypes
+import pathlib
+import threading
 import pandas as pd
 import math
 
@@ -26,6 +29,56 @@ _FORBIDDEN_NAMES = {
     "memoryview", "type",  # type(x).__bases__ 是经典逃逸链入口
     "help", "exit", "quit",
 }
+
+# 允许的模块自带读写文件/联网/字符串求值能力（pd.read_csv 可读 /proc/self/environ 拿到密钥），按属性名拦截。
+# 所有 read_* 一律禁止；以下为其余危险属性。
+_FORBIDDEN_ATTRS = {
+    "to_csv", "to_pickle", "to_parquet", "to_excel", "to_json", "to_hdf", "to_sql",
+    "to_feather", "to_stata", "to_orc", "to_clipboard", "to_html", "to_xml", "to_latex", "to_markdown",
+    "fromfile", "tofile", "load", "loads", "loadtxt", "genfromtxt", "fromregex",
+    "save", "savez", "savez_compressed", "savetxt", "memmap", "DataSource",
+    "download", "eval", "query",
+}
+
+# 单次策略执行的最长秒数（实测单次回测 2~11 秒）。只能打断纯 Python 循环，打断不了卡在 C 代码里的调用。
+_EXEC_TIMEOUT_SEC = 60
+
+
+def _run_with_timeout(fn, *args):
+    """超时后向当前线程注入 TimeoutError。"""
+    tid = threading.get_ident()
+    lock = threading.Lock()
+    state = {"done": False}
+
+    def _kill():
+        with lock:
+            if not state["done"]:
+                ctypes.pythonapi.PyThreadState_SetAsyncExc(ctypes.c_ulong(tid), ctypes.py_object(TimeoutError))
+
+    timer = threading.Timer(_EXEC_TIMEOUT_SEC, _kill)
+    timer.daemon = True
+    timer.start()
+    try:
+        return fn(*args)
+    finally:
+        with lock:
+            state["done"] = True
+        timer.cancel()
+
+
+_FUNDING_CSV = pathlib.Path(__file__).parent / "data" / "BTC_USDT_SWAP_funding_binance.csv"
+_funding_cache = {"mtime": None, "df": None}
+
+
+def _load_funding_history():
+    """历史资金费率由这里读取后注入策略（沙箱禁止策略自己读文件）。文件不存在返回 None。"""
+    if not _FUNDING_CSV.exists():
+        return None
+    mtime = _FUNDING_CSV.stat().st_mtime
+    if _funding_cache["mtime"] != mtime:
+        _funding_cache["df"] = pd.read_csv(_FUNDING_CSV, parse_dates=["timestamp"])
+        _funding_cache["mtime"] = mtime
+    return _funding_cache["df"]
 
 
 def _validate_safe_ast(code_string: str) -> None:
@@ -68,6 +121,11 @@ def _validate_safe_ast(code_string: str) -> None:
                 raise ValueError(
                     f"安全沙箱拒绝：不允许访问 dunder 属性 '.{node.attr}'。"
                     f"这是 Python 沙箱逃逸的常用入口，已被禁止。"
+                )
+            if node.attr.startswith("read_") or node.attr in _FORBIDDEN_ATTRS:
+                raise ValueError(
+                    f"安全沙箱拒绝：不允许使用 '.{node.attr}'。"
+                    f"策略代码禁止读写文件、联网或字符串求值。"
                 )
 
         # ── 拒绝危险名字的使用（即使没 import 也能调用的内置）──
@@ -160,7 +218,8 @@ def run_dynamic_code(code_string: str, df, parameters: dict, timeframe: str = '4
         module_name = "dynamic_strategy"
         spec = importlib.util.spec_from_loader(module_name, loader=None)
         dynamic_module = importlib.util.module_from_spec(spec)
-        exec(code_string, dynamic_module.__dict__)
+        dynamic_module.__dict__["FUNDING_HISTORY"] = _load_funding_history()
+        _run_with_timeout(exec, code_string, dynamic_module.__dict__)
 
         if not hasattr(dynamic_module, 'execute'):
             raise ValueError("策略代码必须包含 execute(df, parameters) 函数。")
@@ -168,20 +227,22 @@ def run_dynamic_code(code_string: str, df, parameters: dict, timeframe: str = '4
         if 'timestamp' in df.columns:
             df = df.set_index('timestamp')
 
-        # start_date / end_date 裁剪：对齐 TV 图表的 Backtesting range
-        # 用法：parameters 里传 "start_date": "2019-12-16 13:00:00" 和/或 "end_date": "2026-05-15"
-        start_date = parameters.get("start_date")
+        # 数据起点/终点裁剪：对齐 TV 图表的 Backtesting range。
+        # 注意：start_date 在策略里是「入场过滤」（execute 内部用），不是数据裁剪——
+        # 用 start_date 裁剪 df 会让 576 周期 RMA 重新预热、段首后约 4 个月无信号。
+        # 数据起点裁剪用 data_start_date，终点用 end_date。
+        data_start = parameters.get("data_start_date")
         end_date = parameters.get("end_date")
-        if start_date:
-            df = df[df.index >= pd.Timestamp(start_date)].copy()
+        if data_start:
+            df = df[df.index >= pd.Timestamp(data_start)].copy()
             if df.empty:
-                raise ValueError(f"start_date={start_date} 之后无数据，请检查时间格式或数据范围。")
+                raise ValueError(f"data_start_date={data_start} 之后无数据。")
         if end_date:
             df = df[df.index <= pd.Timestamp(end_date)].copy()
             if df.empty:
                 raise ValueError(f"end_date={end_date} 之前无数据，请检查时间格式或数据范围。")
 
-        result = dynamic_module.execute(df, parameters)
+        result = _run_with_timeout(dynamic_module.execute, df, parameters)
 
         # 支持 3 元素返回：(portfolio, indicators, _strategy_trades)
         strategy_trades_raw = None
@@ -892,5 +953,7 @@ def run_dynamic_code(code_string: str, df, parameters: dict, timeframe: str = '4
 
         return {"metrics": m, "trades": trades_list, "indicators": indicators_out, "equity": equity_points, "balance": balance_points}, None
 
+    except TimeoutError:
+        return None, f"策略执行超过 {_EXEC_TIMEOUT_SEC} 秒已被中止，请检查代码中是否有死循环。"
     except Exception as e:
         return None, traceback.format_exc()

@@ -438,16 +438,14 @@ def execute(df, parameters):
     _bar_hours = (df.index[1] - df.index[0]).total_seconds() / 3600 if len(df) > 1 else 4.0
     _fund_rate = None
     if funding_use_history:
-        _fh = None
+        # 沙箱禁止策略读文件，历史费率由 dynamic_runner 注入为模块变量 FUNDING_HISTORY
         try:
-            _fh = pd.read_csv("data/BTC_USDT_SWAP_funding_binance.csv", parse_dates=["timestamp"])
-        except Exception:
-            try:
-                from data_feeder import DataFeeder
-                _fh = DataFeeder("okx").get_funding_history()
-            except Exception as _e:
-                raise ValueError("funding_use_history=1 但读不到历史资金费率（data/BTC_USDT_SWAP_funding_binance.csv），"
-                                 "也无法在线下载：%s。可改用固定费率 funding_rate_pct_8h。" % _e)
+            _fh = FUNDING_HISTORY
+        except NameError:
+            _fh = None
+        if _fh is None:
+            raise ValueError("funding_use_history=1 但读不到历史资金费率（backend/data/BTC_USDT_SWAP_funding_binance.csv）。"
+                             "可改用固定费率 funding_rate_pct_8h。")
         _fund_rate = _fh.set_index("timestamp")["funding_rate"].astype(float).sort_index()
         _fund_px = close.reindex(_fund_rate.index, method="ffill")
 
