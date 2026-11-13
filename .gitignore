@@ -5,6 +5,7 @@ backend/*.pyc
 backend/.env
 backend/custom_strategy.py
 backend/data/*.csv
+backend/promo_out/
 
 # === Node.js ===
 frontend/node_modules/
