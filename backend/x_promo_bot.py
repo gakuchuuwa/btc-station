@@ -258,9 +258,10 @@ def write_caption(facts, news, chart_desc, room):
 
 # ── X 接口（OAuth 1.0a） ──────────────────────────────────────────────────────
 
-def _oauth_header(method, url):
+def _oauth_header(method, url, form=None):
+    """form = application/x-www-form-urlencoded 的表单参数，OAuth 1.0a 规定必须参与签名（multipart / JSON 不参与）。"""
     q = lambda s: urllib.parse.quote(str(s), safe="")
-    params = {
+    oauth = {
         "oauth_consumer_key": os.environ["X_API_KEY"],
         "oauth_nonce": secrets.token_hex(16),
         "oauth_signature_method": "HMAC-SHA1",
@@ -268,27 +269,24 @@ def _oauth_header(method, url):
         "oauth_token": os.environ["X_ACCESS_TOKEN"],
         "oauth_version": "1.0",
     }
-    base = "&".join([method, q(url), q("&".join(f"{q(k)}={q(v)}" for k, v in sorted(params.items())))])
+    signed = {**oauth, **(form or {})}
+    base = "&".join([method, q(url), q("&".join(f"{q(k)}={q(v)}" for k, v in sorted(signed.items())))])
     key = f"{q(os.environ['X_API_SECRET'])}&{q(os.environ['X_ACCESS_TOKEN_SECRET'])}"
-    params["oauth_signature"] = base64.b64encode(hmac.new(key.encode(), base.encode(), hashlib.sha1).digest()).decode()
-    return "OAuth " + ", ".join(f'{q(k)}="{q(v)}"' for k, v in params.items())
+    oauth["oauth_signature"] = base64.b64encode(hmac.new(key.encode(), base.encode(), hashlib.sha1).digest()).decode()
+    return "OAuth " + ", ".join(f'{q(k)}="{q(v)}"' for k, v in oauth.items())
 
 
 def _x_post(url, **kw):
-    r = httpx.post(url, headers={"Authorization": _oauth_header("POST", url)}, timeout=60, **kw)
+    form = kw.get("data") if "files" not in kw else None
+    r = httpx.post(url, headers={"Authorization": _oauth_header("POST", url, form)}, timeout=60, **kw)
     if r.status_code >= 300:
         raise RuntimeError(f"X 接口 {url} 返回 {r.status_code}：{r.text[:300]}")
     return r.json() if r.content else {}
 
 
 def post_to_x(text, image_path):
-    upload = "https://api.x.com/2/media/upload"
-    data = image_path.read_bytes()
-    media_id = _x_post(upload, data={"command": "INIT", "total_bytes": str(len(data)), "media_type": "image/png",
-                                     "media_category": "tweet_image"})["data"]["id"]
-    _x_post(upload, data={"command": "APPEND", "media_id": media_id, "segment_index": "0"},
-            files={"media": (image_path.name, data, "image/png")})
-    _x_post(upload, data={"command": "FINALIZE", "media_id": media_id})
+    media_id = _x_post("https://api.x.com/2/media/upload", data={"media_category": "tweet_image"},
+                       files={"media": (image_path.name, image_path.read_bytes(), "image/png")})["data"]["id"]
     return _x_post("https://api.x.com/2/tweets", json={"text": text, "media": {"media_ids": [media_id]}})["data"]["id"]
 
 
