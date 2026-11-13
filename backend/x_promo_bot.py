@@ -238,7 +238,7 @@ def write_caption(facts, news, chart_desc, room):
             + f"\n\nThe attached image shows {chart_desc}. Write the post.")
     messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
     for attempt in range(2):
-        r = httpx.post("https://api.x.ai/v1/chat/completions", timeout=120,
+        r = httpx.post("https://api.x.ai/v1/chat/completions", timeout=300,
                        headers={"Authorization": f"Bearer {key}"},
                        json={"model": os.getenv("XAI_MODEL", "grok-4.7"), "messages": messages})
         r.raise_for_status()
