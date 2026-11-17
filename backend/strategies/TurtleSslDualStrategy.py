@@ -1,6 +1,7 @@
 """
 海龟 SSL 双系统 6形态 ATR 动态止损策略 — VectorBT 格式
-基于 Pine Script v6 版本移植（20260928 版）
+基于 Pine Script v6 版本移植（同步 20261111BTC4HPINE.md，20261106/20261111 版）
+默认：基础风险 5.0%、本金 27000 USDT（实盘模式固定本金）、手续费 0.1%、滑点 50 ticks×0.1、起算 2022-01-01。
 
 核心逻辑：
 - 双 SSL 通道（RMA高/低）识别 6 种市场形态
@@ -16,9 +17,6 @@
 调参建议：
   system2_period 100~200, atr_period 30~80
   atr_mult_init 1.5~3.0, atr_mult_long_trail 5~15
-
-修坑备份：TurtleSslDualStrategy.py.bak_0919 是 20260919 版（无成交量进场 /
-手动牛熊切换）。新版返回旧结果只需覆盖回去。
 """
 import pandas as pd
 import numpy as np
@@ -167,7 +165,7 @@ def execute(df, parameters):
     macd_slow            = int(p.get("macd_slow", 21))
     macd_signal_period   = int(p.get("macd_signal", 8))
     obv_length           = int(p.get("obv_length", 13))
-    base_risk_percent    = float(p.get("base_risk_percent", 4.0))
+    base_risk_percent    = float(p.get("base_risk_percent", 5.0))   # 20261111 Pine: 5%
     # 前端表单字段名为 initial_capital，此处兼容两种写法（否则页面设置的本金不生效）
     init_cash            = float(p.get("init_cash", p.get("initial_capital", 27000)))
     fees                 = float(p.get("fees", 0.001))          # Pine commission_value=0.1%

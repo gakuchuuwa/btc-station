@@ -91,6 +91,8 @@ class OptimizeRequest(BaseModel):
 
 # In-memory store for last optimization results (for CSV export)
 _last_optimization_results: list = []
+# 按 token 隔离的调参结果（多用户同时导出 CSV 不互相覆盖）
+_optimize_csv_cache: Dict[str, list] = {}
 
 
 def _return_dd_ratio(m: dict) -> float:
@@ -302,9 +304,13 @@ def _build_optimizer_iterator(request: 'OptimizeRequest'):
         successful = [r for r in results if r and r.get("status") == "ok"]
         successful.sort(key=lambda r: score(r), reverse=True)
         _last_optimization_results = successful
+        import uuid as _uuid
+        csv_token = _uuid.uuid4().hex
+        _lru_set(_optimize_csv_cache, csv_token, successful, limit=20)
 
         yield {
             "type": "done",
+            "csv_token": csv_token,
             "method": method,
             "total_combinations": total,
             "successful": len(successful),
@@ -347,6 +353,7 @@ def run_optimization(request: OptimizeRequest):
         "successful": done.get("successful", 0),
         "failed": done.get("failed", 0),
         "results": done.get("results", []),
+        "csv_token": done.get("csv_token", ""),
     }
 
 
@@ -402,16 +409,18 @@ async def run_optimization_stream(request: OptimizeRequest):
 
 
 @app.get("/api/optimize/export-csv")
-def export_optimization_csv():
+def export_optimization_csv(token: str = ""):
     """
     导出调参结果为 TradingView Assistant 兼容 CSV。
     格式：固定指标列 + _setTime_ + _parseTime_ + _duration_ + comment + __参数名 列
     """
-    global _last_optimization_results
-    if not _last_optimization_results:
+    source = _optimize_csv_cache.get(token) if token else None
+    if source is None:
+        source = _last_optimization_results   # 未传 token 时的兜底
+    if not source:
         raise HTTPException(status_code=404, detail="暂无调参结果，请先运行优化。")
 
-    results = [r for r in _last_optimization_results if r.get("status") == "ok"]
+    results = [r for r in source if r.get("status") == "ok"]
     if not results:
         raise HTTPException(status_code=404, detail="暂无成功的调参结果。")
 
@@ -864,7 +873,11 @@ def get_k_lines(symbol: str = 'BTC/USDT', timeframe: str = '1h', limit: int = 10
     In SaaS mode, this strictly reads from the local cache powered by the background syncer.
     """
     try:
-        df = feeder.get_local_data(symbol, timeframe)
+        df = None
+        if symbol == 'BTC/USDT':
+            df = feeder.get_local_data('BTC/USDT:USDT', timeframe)   # 优先永续缓存
+        if df is None or df.empty:
+            df = feeder.get_local_data(symbol, timeframe)
         if df.empty:
             raise HTTPException(status_code=503, detail="Data is syncing in the background. Please try again in 10 seconds.")
             

@@ -78,7 +78,7 @@ def load_data():
 
 def run_backtest(df):
     code = (BASE_DIR / "strategies" / "TurtleSslDualStrategy.py").read_text(encoding="utf-8")
-    result, err = run_dynamic_code(code, df, {"_timeframe": "4h"}, "4h")
+    result, err = run_dynamic_code(code, df, {"_timeframe": "4h", "enable_time_filter": False, "data_start_date": None}, "4h")  # full history from earliest data
     if err:
         raise RuntimeError(f"回测失败：{err[-500:]}")
     return result

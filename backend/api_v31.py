@@ -136,48 +136,73 @@ def _ensure_dev_user() -> str:
     _DEV_USER_ID_CACHE = "00000000-0000-0000-0000-000000000000"
     return _DEV_USER_ID_CACHE
 
+import hashlib as _hashlib
+import threading as _threading
+import time as _time
+
+_VERIFIED_TOKEN_CACHE: dict = {}   # token 哈希 -> (user_id, 过期时间戳)
+_VERIFIED_TOKEN_LOCK = _threading.Lock()
+
+
+def _jwt_exp(token: str):
+    """只读取 JWT 里的 exp 用来决定缓存时长；身份一律以 Supabase Auth 校验结果为准。"""
+    try:
+        parts = token.split(".")
+        padded = parts[1] + "=" * (4 - len(parts[1]) % 4)
+        exp = json.loads(_b64.urlsafe_b64decode(padded)).get("exp")
+        return float(exp) if isinstance(exp, (int, float)) else None
+    except Exception:
+        return None
+
+
 def _get_user_id(authorization: str | None = None) -> str:
     """
-    Extract user_id from Supabase access token.
-    Tries fast base64 JWT decode first; falls back to Supabase Auth API.
+    从 Supabase access token 得到 user_id。
+    必须经 Supabase Auth 接口验证签名与有效期，禁止仅 Base64 解码就信任 sub。
+    验证通过的 token 在内存缓存最多 5 分钟，避免每次请求都访问 Supabase。
     """
     if DEV_MODE:
         return _ensure_dev_user()
 
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="未登录")
-    token = authorization.split(" ", 1)[1]
+    token = authorization.split(" ", 1)[1].strip()
+    if not token:
+        raise HTTPException(status_code=401, detail="未登录")
+    if not _sb_url() or not _sb_key():
+        raise HTTPException(status_code=401, detail="鉴权服务未配置")
 
-    # Fast path: standard JWT (eyJ... format) — just decode payload, no sig verify
-    if token.startswith("eyJ"):
-        try:
-            parts = token.split(".")
-            if len(parts) == 3:
-                padded = parts[1] + "=" * (4 - len(parts[1]) % 4)
-                payload = json.loads(_b64.urlsafe_b64decode(padded))
-                uid = payload.get("sub")
-                if uid:
-                    return uid
-        except Exception:
-            pass
+    now = _time.time()
+    key = _hashlib.sha256(token.encode("utf-8")).hexdigest()
+    with _VERIFIED_TOKEN_LOCK:
+        hit = _VERIFIED_TOKEN_CACHE.get(key)
+        if hit and now < hit[1]:
+            return hit[0]
 
-    # Fallback: call Supabase Auth API to verify token
+    exp = _jwt_exp(token)
+    if exp is not None and exp <= now:
+        raise HTTPException(status_code=401, detail="Token 无效或已过期，请重新登录")
+
     try:
         import requests as _req
         r = _req.get(
             f"{_sb_url()}/auth/v1/user",
-            headers={
-                "apikey": _sb_key(),
-                "Authorization": f"Bearer {token}",
-            },
+            headers={"apikey": _sb_key(), "Authorization": f"Bearer {token}"},
             timeout=10,
         )
-        if r.status_code == 200:
-            return r.json()["id"]
+        uid = r.json().get("id") if r.status_code == 200 else None
     except Exception:
-        pass
+        uid = None
 
-    raise HTTPException(status_code=401, detail="Token 无效，请重新登录")
+    if not uid:
+        raise HTTPException(status_code=401, detail="Token 无效或已过期，请重新登录")
+
+    expire_at = min(now + 300, exp) if exp is not None else now + 300
+    with _VERIFIED_TOKEN_LOCK:
+        _VERIFIED_TOKEN_CACHE[key] = (uid, expire_at)
+        if len(_VERIFIED_TOKEN_CACHE) > 256:
+            _VERIFIED_TOKEN_CACHE.pop(next(iter(_VERIFIED_TOKEN_CACHE)), None)
+    return uid
 
 
 from fastapi import Header
@@ -290,11 +315,16 @@ async def delete_strategy(sid: str, user_id: str = Depends(current_user)):
 # ── Historical candles from local cache ────────────────────────────────────────
 
 @router.get("/candles/{timeframe}")
-async def get_cached_candles(timeframe: str):
-    """Return all locally-cached candles for BTC/USDT in the given timeframe."""
+async def get_cached_candles(timeframe: str, market: str = "swap"):
+    """返回本地缓存的 BTC K 线。默认永续（与回测同源），market=spot 读现货。"""
     import pandas as pd
     feeder = DataFeeder('okx')
-    df = feeder.get_local_data("BTC/USDT", timeframe)
+    if market == "spot":
+        df = feeder.get_local_data("BTC/USDT", timeframe)
+    else:
+        df = feeder.get_local_data("BTC/USDT:USDT", timeframe)
+        if df.empty:
+            df = feeder.get_local_data("BTC/USDT", timeframe)
     if df.empty:
         raise HTTPException(503, "数据正在初始化，请稍后重试")
 
@@ -329,12 +359,11 @@ async def get_cached_candles(timeframe: str):
 
 TEMPLATE_DIR = os.path.join(os.path.dirname(__file__), "strategies")
 TEMPLATES = [
-    # 清理说明:MaCross 和 Macd 已删除
-    # 实测 BTC 4h × 7.3 年 — MaCross 默认 +600%/-69%(无止损),Macd 默认 +51%/-76%(被手续费吃光)
-    # 默认参数下亏到不能见人,作为"内置策略"提供等于骗用户
-    {"id": "AtrChannelStrategy",      "name": "ATR 通道动态止损",  "category": "trend"},
+    # 2026-09-04:只保留海龟 SSL 双系统 6 形态（唯一在实盘使用的策略）。
+    # 其余内置策略（AtrChannel / Dca / MaCross / Macd / RSI / Bollinger）已全部删除——
+    # 它们与实盘策略无关，留着只会让编辑器里出现不该选的模板。
     {"id": "TurtleSslDualStrategy",   "name": "海龟SSL双系统6形态","category": "trend"},
-    {"id": "DcaStrategy",             "name": "DCA 定投补仓",      "category": "dca"},
+    {"id": "FixedQtyStrategy",   "name": "海龟SSL·形态倍数全1.0","category": "trend"},
 ]
 
 
@@ -636,80 +665,27 @@ async def get_quota(user_id: str = Depends(current_user)):
     }
 
 
-# ── Monte Carlo ───────────────────────────────────────────────────────────────
-
-class MonteCarloRequest(BaseModel):
+class WalkForwardRequest(BaseModel):
     code: str
     parameters: dict = {}
     timeframe: str = "4h"
-    n_simulations: int = 200
-    mode: str = "trade_shuffle"  # "trade_shuffle" | "param_perturbation" | "price_bootstrap"
+    segment: str = "year"  # 分段方式，目前只支持按年
 
-    @field_validator("n_simulations")
+    @field_validator("segment")
     @classmethod
-    def clamp_sims(cls, v):
-        return max(50, min(v, 1000))
-
-    @field_validator("mode")
-    @classmethod
-    def valid_mode(cls, v):
-        allowed = {"trade_shuffle", "param_perturbation", "price_bootstrap"}
-        if v not in allowed:
-            raise ValueError(f"mode 必须是 {allowed} 之一")
+    def valid_segment(cls, v):
+        if v != "year":
+            raise ValueError("segment 目前只支持 'year'")
         return v
 
 
-def _equity_from_trades(trades: list, initial: float) -> list:
-    """从交易列表重建权益曲线，返回每笔交易后的权益值列表。"""
-    eq = initial
-    curve = [eq]
-    for t in trades:
-        pnl = t.get("PnL", 0) or 0
-        eq += float(pnl)
-        curve.append(eq)
-    return curve
-
-
-def _metrics_from_equity(equity: list, initial: float) -> dict:
-    import math
-    if len(equity) < 2:
-        return {"total_return_pct": 0, "max_drawdown_pct": 0, "sharpe": None}
-    final = equity[-1]
-    total_return = (final - initial) / initial * 100
-
-    peak = equity[0]
-    max_dd = 0.0
-    for v in equity:
-        if v > peak:
-            peak = v
-        dd = (peak - v) / peak * 100 if peak > 0 else 0
-        if dd > max_dd:
-            max_dd = dd
-
-    rets = [(equity[i] - equity[i - 1]) / equity[i - 1] for i in range(1, len(equity)) if equity[i - 1] != 0]
-    if len(rets) > 1:
-        mean_r = sum(rets) / len(rets)
-        std_r = (sum((r - mean_r) ** 2 for r in rets) / len(rets)) ** 0.5
-        sharpe = (mean_r / std_r * (252 ** 0.5)) if std_r > 0 else None
-    else:
-        sharpe = None
-
-    return {
-        "total_return_pct": round(total_return, 2),
-        "max_drawdown_pct": round(max_dd, 2),
-        "sharpe": round(sharpe, 3) if sharpe is not None and not math.isnan(sharpe) else None,
-    }
-
-
-@router.post("/monte-carlo/trade-shuffle")
-async def mc_trade_shuffle(body: MonteCarloRequest):
+@router.post("/walk-forward")
+async def walk_forward(body: WalkForwardRequest):
     """
-    模式1：交易序列随机化
-    对历史回测的 trades 随机打乱顺序，模拟不同运气下的权益曲线分布。
+    Walk-forward 前向验证：按年分段，每段用固定参数独立回测（从初始本金起算），
+    验证参数在样本外（各年份）是否稳健。防过拟合的黄金标准。
+    返回各段净利/回撤/笔数，以及「多少段赚钱」的稳健性判定。
     """
-    import random
-    import math
-
     feeder = DataFeeder('okx')
     df = feeder.get_local_data("BTC/USDT:USDT", body.timeframe)
     if df.empty:
@@ -717,267 +693,54 @@ async def mc_trade_shuffle(body: MonteCarloRequest):
     if df.empty:
         raise HTTPException(400, "无本地K线数据，请先运行数据更新")
 
-    res, err = run_dynamic_code(body.code, df.copy(), body.parameters, timeframe=body.timeframe)
-    if err:
-        raise HTTPException(400, f"策略执行失败: {err}")
-
-    trades = res.get("trades", [])
-    if len(trades) < 5:
-        raise HTTPException(400, f"交易笔数不足（{len(trades)} 笔），无法进行蒙特卡洛分析")
-
-    initial = body.parameters.get("initial_capital", 10000.0)
-    base_metrics = _metrics_from_equity(_equity_from_trades(trades, initial), initial)
-
-    rng = random.Random(42)
-    sim_returns = []
-    sim_drawdowns = []
-    sim_sharpes = []
-    equity_curves = []  # 最多返回 100 条曲线用于绘图
-
-    for i in range(body.n_simulations):
-        shuffled = trades[:]
-        rng.shuffle(shuffled)
-        eq = _equity_from_trades(shuffled, initial)
-        m = _metrics_from_equity(eq, initial)
-        sim_returns.append(m["total_return_pct"])
-        sim_drawdowns.append(m["max_drawdown_pct"])
-        if m["sharpe"] is not None:
-            sim_sharpes.append(m["sharpe"])
-        if i < 100:
-            equity_curves.append(eq)
-
-    def _pct(lst, p):
-        s = sorted(lst)
-        idx = int(len(s) * p / 100)
-        return round(s[min(idx, len(s) - 1)], 2)
-
-    def _mean(lst):
-        return round(sum(lst) / len(lst), 2) if lst else None
-
-    return {
-        "mode": "trade_shuffle",
-        "n_trades": len(trades),
-        "n_simulations": body.n_simulations,
-        "base": base_metrics,
-        "equity_curves": equity_curves,
-        "stats": {
-            "total_return": {
-                "p5":  _pct(sim_returns, 5),
-                "p25": _pct(sim_returns, 25),
-                "p50": _pct(sim_returns, 50),
-                "p75": _pct(sim_returns, 75),
-                "p95": _pct(sim_returns, 95),
-                "mean": _mean(sim_returns),
-            },
-            "max_drawdown": {
-                "p5":  _pct(sim_drawdowns, 5),
-                "p25": _pct(sim_drawdowns, 25),
-                "p50": _pct(sim_drawdowns, 50),
-                "p75": _pct(sim_drawdowns, 75),
-                "p95": _pct(sim_drawdowns, 95),
-                "mean": _mean(sim_drawdowns),
-            },
-            "sharpe": {
-                "p5":  _pct(sim_sharpes, 5) if sim_sharpes else None,
-                "p50": _pct(sim_sharpes, 50) if sim_sharpes else None,
-                "p95": _pct(sim_sharpes, 95) if sim_sharpes else None,
-                "mean": _mean(sim_sharpes),
-            },
-        },
-    }
-
-
-@router.post("/monte-carlo/param-perturbation")
-async def mc_param_perturbation(body: MonteCarloRequest):
-    """
-    模式2：参数扰动分析
-    在用户参数周围随机采样，评估策略对参数变化的敏感性。
-    """
-    import random
-    import math
-
-    feeder = DataFeeder('okx')
-    df = feeder.get_local_data("BTC/USDT:USDT", body.timeframe)
-    if df.empty:
-        df = feeder.get_local_data("BTC/USDT", body.timeframe)
-    if df.empty:
-        raise HTTPException(400, "无本地K线数据")
-
-    base_params = body.parameters.copy()
-    initial = base_params.get("initial_capital", 10000.0)
-
-    # 找出数值型参数（排除特殊字段）
-    skip_keys = {"initial_capital", "start_date", "end_date", "leverage", "fee_pct"}
-    numeric_params = {k: v for k, v in base_params.items()
-                      if k not in skip_keys and isinstance(v, (int, float)) and v != 0}
-
-    if not numeric_params:
-        raise HTTPException(400, "未找到可扰动的数值型参数（请确保策略参数包含数值型字段）")
-
-    rng = random.Random(42)
-    results = []
-
-    for i in range(body.n_simulations):
-        perturbed = base_params.copy()
-        perturbation_info = {}
-        for k, base_v in numeric_params.items():
-            ratio = rng.uniform(0.7, 1.3)
-            new_v = round(base_v * ratio, 6)
-            if isinstance(base_v, int):
-                new_v = max(1, int(new_v))
-            perturbed[k] = new_v
-            perturbation_info[k] = round(ratio, 3)
-
-        res, err = run_dynamic_code(body.code, df.copy(), perturbed, timeframe=body.timeframe)
-        if err:
-            continue
-
-        trades = res.get("trades", [])
-        eq = _equity_from_trades(trades, initial)
-        m = _metrics_from_equity(eq, initial)
-        results.append({
-            "params": {k: perturbed[k] for k in numeric_params},
-            "perturbation": perturbation_info,
-            "total_return_pct": m["total_return_pct"],
-            "max_drawdown_pct": m["max_drawdown_pct"],
-            "sharpe": m["sharpe"],
-            "n_trades": len(trades),
-        })
-
-    if not results:
-        raise HTTPException(500, "所有参数扰动模拟均失败，请检查策略代码")
-
-    returns = [r["total_return_pct"] for r in results]
-    drawdowns = [r["max_drawdown_pct"] for r in results]
-    profitable = sum(1 for r in returns if r > 0)
-
-    def _pct(lst, p):
-        s = sorted(lst)
-        idx = int(len(s) * p / 100)
-        return round(s[min(idx, len(s) - 1)], 2)
-
-    return {
-        "mode": "param_perturbation",
-        "n_simulations": len(results),
-        "base_params": {k: base_params[k] for k in numeric_params},
-        "results": results,
-        "stats": {
-            "profitable_ratio": round(profitable / len(results) * 100, 1),
-            "total_return": {
-                "p5":  _pct(returns, 5),
-                "p25": _pct(returns, 25),
-                "p50": _pct(returns, 50),
-                "p75": _pct(returns, 75),
-                "p95": _pct(returns, 95),
-            },
-            "max_drawdown": {
-                "p5":  _pct(drawdowns, 5),
-                "p50": _pct(drawdowns, 50),
-                "p95": _pct(drawdowns, 95),
-            },
-        },
-    }
-
-
-@router.post("/monte-carlo/price-bootstrap")
-async def mc_price_bootstrap(body: MonteCarloRequest):
-    """
-    模式3：价格路径 Bootstrap
-    从历史收益率序列中有放回抽样，生成随机价格路径并在其上运行策略。
-    """
-    import random
-    import math
-
-    feeder = DataFeeder('okx')
-    df = feeder.get_local_data("BTC/USDT:USDT", body.timeframe)
-    if df.empty:
-        df = feeder.get_local_data("BTC/USDT", body.timeframe)
-    if df.empty:
-        raise HTTPException(400, "无本地K线数据")
-
-    if 'timestamp' in df.columns:
-        df = df.set_index('timestamp')
-
     import pandas as pd
-    import numpy as np
+    df = df.copy()
+    ts = pd.to_datetime(df['timestamp'])
+    years = sorted(set(ts.dt.year))
+    initial = float(body.parameters.get("initial_capital", body.parameters.get("init_cash", 27000.0)))
 
-    closes = df['close'].values.astype(float)
-    if len(closes) < 100:
-        raise HTTPException(400, "K线数量不足（至少需要 100 根）")
-
-    log_rets = np.diff(np.log(closes))
-    n_bars = len(closes)
-    initial = body.parameters.get("initial_capital", 10000.0)
-
-    rng_np = np.random.default_rng(42)
-    results = []
-    equity_curves = []
-
-    n_success = 0
-    n_attempt = 0
-    max_attempts = body.n_simulations * 3
-
-    while n_success < body.n_simulations and n_attempt < max_attempts:
-        n_attempt += 1
-        sampled_rets = rng_np.choice(log_rets, size=n_bars - 1, replace=True)
-        sim_closes = closes[0] * np.exp(np.concatenate([[0], np.cumsum(sampled_rets)]))
-
-        sim_df = df.copy()
-        scale = sim_closes / closes
-        sim_df['close'] = sim_closes
-        sim_df['open']  = df['open'].values * scale
-        sim_df['high']  = df['high'].values * scale
-        sim_df['low']   = df['low'].values * scale
-
-        sim_df = sim_df.reset_index()
-
-        res, err = run_dynamic_code(body.code, sim_df, body.parameters, timeframe=body.timeframe)
-        if err:
+    segments = []
+    for y in years:
+        start = f"{y}-01-01"
+        end = f"{y + 1}-01-01"
+        sub = df[ts < pd.Timestamp(end)].copy()
+        if sub.empty:
             continue
-
+        params = dict(body.parameters)
+        params['start_date'] = start  # 该段之前不入场，只统计该段信号
+        res, err = run_dynamic_code(body.code, sub, params, timeframe=body.timeframe)
+        if err:
+            continue  # 单段数据不足/失败跳过，不影响其他段
         trades = res.get("trades", [])
-        eq = _equity_from_trades(trades, initial)
-        m = _metrics_from_equity(eq, initial)
-        results.append({
-            "total_return_pct": m["total_return_pct"],
-            "max_drawdown_pct": m["max_drawdown_pct"],
-            "sharpe": m["sharpe"],
+        metrics = res.get("metrics", {})
+        net = sum(float(t.get("PnL", 0) or 0) for t in trades)
+        dd = abs(float(metrics.get("max_drawdown_pct", 0) or 0))
+        segments.append({
+            "year": y,
             "n_trades": len(trades),
+            "net_profit": round(net, 2),
+            "max_drawdown_pct": round(dd, 2),
+            "profitable": net > 0,
         })
-        if len(equity_curves) < 80:
-            equity_curves.append(eq)
-        n_success += 1
 
-    if not results:
-        raise HTTPException(500, "价格路径模拟全部失败，请检查策略代码")
+    if not segments:
+        raise HTTPException(400, "分段回测无有效结果")
 
-    returns = [r["total_return_pct"] for r in results]
-    drawdowns = [r["max_drawdown_pct"] for r in results]
-    profitable = sum(1 for r in returns if r > 0)
-
-    def _pct(lst, p):
-        s = sorted(lst)
-        idx = int(len(s) * p / 100)
-        return round(s[min(idx, len(s) - 1)], 2)
+    win = sum(1 for s in segments if s["profitable"])
+    total = len(segments)
+    win_rate = win / total if total else 0.0
 
     return {
-        "mode": "price_bootstrap",
-        "n_simulations": len(results),
-        "equity_curves": equity_curves,
-        "results": results,
-        "stats": {
-            "profitable_ratio": round(profitable / len(results) * 100, 1),
-            "total_return": {
-                "p5":  _pct(returns, 5),
-                "p25": _pct(returns, 25),
-                "p50": _pct(returns, 50),
-                "p75": _pct(returns, 75),
-                "p95": _pct(returns, 95),
-            },
-            "max_drawdown": {
-                "p5":  _pct(drawdowns, 5),
-                "p50": _pct(drawdowns, 50),
-                "p95": _pct(drawdowns, 95),
-            },
+        "mode": "walk_forward",
+        "segment": body.segment,
+        "timeframe": body.timeframe,
+        "initial_capital": initial,
+        "segments": segments,
+        "summary": {
+            "total_segments": total,
+            "win_segments": win,
+            "loss_segments": total - win,
+            "win_rate": round(win_rate * 100, 1),
+            "robust": win_rate >= 0.7,
         },
     }

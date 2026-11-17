@@ -12,7 +12,7 @@ class DataFeeder:
             'options': {'defaultType': 'swap'},  # 永续合约
         })
         # Local storage directory for K-lines
-        self.data_dir = 'data'
+        self.data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')  # 绝对路径，与启动目录无关
         if not os.path.exists(self.data_dir):
             os.makedirs(self.data_dir)
 
@@ -127,19 +127,37 @@ class DataFeeder:
         本地缓存 data/BTC_USDT_SWAP_funding_binance.csv，每次调用从缓存末尾增量补到当前。"""
         import time
         path = os.path.join(self.data_dir, "BTC_USDT_SWAP_funding_binance.csv")
-        bn = ccxt.binanceusdm({"enableRateLimit": True})
         cached = pd.read_csv(path, parse_dates=["timestamp"]) if os.path.exists(path) else pd.DataFrame(columns=["timestamp", "funding_rate"])
-        since = int(cached["timestamp"].iloc[-1].value // 10**6) + 1 if len(cached) else bn.parse8601("2019-09-01T00:00:00Z")
+        since = int(cached["timestamp"].iloc[-1].value // 10**6) + 1 if len(cached) else self.exchange.parse8601("2019-09-01T00:00:00Z")
         rows = []
-        while True:
-            batch = bn.fetch_funding_rate_history("BTC/USDT:USDT", since=since, limit=1000)
-            if not batch:
-                break
-            rows += [(r["timestamp"], r["fundingRate"]) for r in batch]
-            if len(batch) < 1000:
-                break
-            since = batch[-1]["timestamp"] + 1
-            time.sleep(0.3)
+        try:
+            # 优先用 Binance 完整历史
+            bn = ccxt.binanceusdm({"enableRateLimit": True})
+            s = since
+            while True:
+                batch = bn.fetch_funding_rate_history("BTC/USDT:USDT", since=s, limit=1000)
+                if not batch:
+                    break
+                rows += [(r["timestamp"], r["fundingRate"]) for r in batch]
+                if len(batch) < 1000:
+                    break
+                s = batch[-1]["timestamp"] + 1
+                time.sleep(0.3)
+        except Exception as e:
+            # Binance 不可达（如海外节点被限制）时，改用 OKX 公共接口补齐增量（OKX 只提供最近约 3 个月）
+            print(f"[Funding] Binance 拉取失败，回退 OKX：{e}")
+            rows = []
+            s = since
+            while True:
+                batch = self.exchange.fetch_funding_rate_history("BTC/USDT:USDT", since=s, limit=100)
+                if not batch:
+                    break
+                rows += [(r["timestamp"], r["fundingRate"]) for r in batch]
+                nxt = batch[-1]["timestamp"] + 1
+                if len(batch) < 100 or nxt <= s:
+                    break
+                s = nxt
+                time.sleep(0.3)
         if rows:
             new = pd.DataFrame(rows, columns=["timestamp", "funding_rate"])
             new["timestamp"] = pd.to_datetime(new["timestamp"], unit="ms")
@@ -206,6 +224,11 @@ class DataFeeder:
                 except Exception as e:
                     print(f"[Data Syncer] ERR syncing {tf}: {e}")
             
+            try:
+                self.get_funding_history()
+                print("[Data Syncer] OK funding history synchronized.")
+            except Exception as e:
+                print(f"[Data Syncer] ERR syncing funding history: {e}")
             print("[Data Syncer] Next sync in 1 hour...")
             time.sleep(3600)
 

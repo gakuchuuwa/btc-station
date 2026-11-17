@@ -16,17 +16,17 @@ OPENAI_BASE = "https://api.openai.com/v1"
 # ── System prompts ─────────────────────────────────────────────────────────────
 
 _CODING_SYSTEM = """\
-You are an expert quantitative trading strategy developer specialising in Freqtrade IStrategy.
+You are an expert quantitative trading strategy developer specialising in VectorBT strategies for BTC Station (a function `execute(df, parameters)` that returns a vectorbt Portfolio and an indicators dict).
 Help the user write, debug, and improve their Python strategy code.
 Rules:
 - Always respond in the same language the user writes in (Chinese or English).
 - When showing code, wrap it in ```python ... ``` blocks.
 - Keep explanations concise but accurate.
-- Never hallucinate Freqtrade API methods — only use methods documented in Freqtrade 2024+.
+- Never hallucinate VectorBT/pandas API methods. Only use pandas, numpy, vectorbt, pandas_ta, math (other imports are rejected by the sandbox).
 """
 
 _REPORT_SYSTEM = """\
-You are a professional quantitative analyst reviewing a Freqtrade backtest report.
+You are a professional quantitative analyst reviewing a BTC Station VectorBT backtest report.
 Analyse the provided metrics and produce a structured risk/reward summary.
 Rules:
 - Always respond in Chinese.
@@ -106,7 +106,7 @@ async def analyze_backtest(
     metrics_text = "\n".join(
         f"- {k}: {v}" for k, v in metrics.items() if v is not None
     )
-    user_msg = f"请分析以下 Freqtrade 回测结果并生成专业报告：\n\n{metrics_text}"
+    user_msg = f"请分析以下 BTC Station 回测结果并生成专业报告：\n\n{metrics_text}"
 
     messages = [
         {"role": "system", "content": _REPORT_SYSTEM},

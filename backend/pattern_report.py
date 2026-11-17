@@ -23,7 +23,9 @@ COL_ALIASES = {
     "信号":      ["信号", "Signal"],
     "日期和时间":  ["日期和时间", "Date and time", "Date/Time"],
     "净损益 USDT": ["净损益 USDT", "净利润 USDT", "净盈亏 USDT", "Net P&L USDT", "Net Profit USDT", "P&L USDT"],
-    "净损益 %":   ["净损益 %", "净利润 %", "净盈亏 %", "Net P&L %", "Net Profit %", "P&L %"],
+    # 2026-09-04：TradingView 新版中文导出把「净损益 %」改名为「回报 %」（英文 Return %）
+    "净损益 %":   ["净损益 %", "净利润 %", "净盈亏 %", "回报 %", "回报率 %",
+                  "Net P&L %", "Net Profit %", "P&L %", "Return %"],
 }
 
 # Sheet 名中英别名（TradingView 英文导出 / BTC Station 中文导出）
@@ -283,26 +285,17 @@ async def analyze_pattern_report(file: UploadFile = File(...)) -> Dict[str, Any]
     )
     entries["进场信号"] = entries[col_signal].astype(str)
 
-    # Scale-in 加仓单：信号列形如"Scale-in Long/Short 1"无 P 编号，加仓无法独立成立。
-    # 多头加仓：策略设计上由 P1 信号在持仓中触发（仓位为 P1 的一半），全部计入 P1多。
-    # 空头加仓：由空头底仓追踪激活触发、与底仓共享同一次出场（close_all），
-    # 按"相同出场时间"映射回底仓形态（P4空/P5空/P6空）。
-    scale_str = entries[col_signal].astype(str)
-    scale_long_mask  = scale_str.str.contains("Scale-in", na=False) & (entries["方向"] == "long")
-    scale_short_mask = scale_str.str.contains("Scale-in", na=False) & (entries["方向"] == "short")
-    entries.loc[scale_long_mask, "形态"] = "P1多"
-    if scale_short_mask.any() and col_dt is not None:
-        exit_time_by_trade = dict(zip(exits[col_trade], exits[col_dt]))
-        base_by_exit = {}
-        base_shorts = entries[entries["形态"].notna() & (entries["方向"] == "short")]
-        for _, r in base_shorts.iterrows():
-            t = exit_time_by_trade.get(r[col_trade])
-            if t is not None:
-                base_by_exit[t] = r["形态"]
-        entries.loc[scale_short_mask, "形态"] = entries.loc[scale_short_mask, col_trade].map(
-            lambda tn: base_by_exit.get(exit_time_by_trade.get(tn))
-        )
-    # 映射不到的空头加仓（无日期列等情况）走下方 no_pattern 兜底，保留原信号名分组
+    # Scale-in 加仓单一律归入 P7 形态——所有底仓形态的加仓在策略里已统一为同一套算法、
+    # 同一个仓位倍数，故归因上也是同一个形态（2026-09-04 用户定）。
+    #   新版策略注释已带编号（"Scale-in Long-P7"）→ 上面的正则直接提取，无需处理。
+    #   旧版注释无编号（"Scale-in Long 1"）→ 形态为空，在此按方向补成 P7多 / P7空。
+    scale_mask = (
+        entries[col_signal].astype(str).str.contains("Scale-in", na=False)
+        & entries["形态"].isna()
+    )
+    entries.loc[scale_mask, "形态"] = entries.loc[scale_mask, "方向"].map(
+        lambda d: "P7" + _DIR_SUFFIX.get(d, "")
+    )
 
     # 仍无形态的（如"开盘价"未平仓收尾单）保留原信号名作为分组标签
     no_pattern_mask = entries["形态"].isna()
