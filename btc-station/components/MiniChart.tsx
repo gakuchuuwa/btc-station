@@ -67,6 +67,8 @@ export default function MiniChart({ candles, markers, strategyLines, height }: {
       chartInstanceRef.current = null
       candleSeriesRef.current = null
       markerPluginRef.current = null
+      // 指标线随图表一起销毁，必须清空引用，否则重建后 removeSeries 会拿到失效句柄
+      linesRef.current = []
     }
   }, [])
 
@@ -105,7 +107,11 @@ export default function MiniChart({ candles, markers, strategyLines, height }: {
   // 3b. 【独立】策略指标线更新
   useEffect(() => {
     if (!chartInstanceRef.current) return
-    linesRef.current.forEach(s => chartInstanceRef.current?.removeSeries(s))
+    // 逐条 try：某条 series 已失效（图表重建、已被移除）时跳过，不能让异常中断整个清理
+    linesRef.current.forEach(s => {
+      if (!s) return
+      try { chartInstanceRef.current?.removeSeries(s) } catch {}
+    })
     linesRef.current = []
 
     if (!strategyLines || strategyLines.length === 0) return

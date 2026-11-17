@@ -315,7 +315,18 @@ export default function MonteCarloPage() {
       ]
       let pctCol = pctColCandidates.find(c => colNames.includes(c))
 
+      // 查找"出场时间"列，用于合并同一次持仓的多条记录
+      const dateColCandidates = ['日期和时间', 'Date/Time', 'Date Time', 'Date', 'date', '时间']
+      let dateCol = dateColCandidates.find(c => colNames.includes(c))
+      if (!dateCol) {
+        dateCol = colNames.find(c => {
+          const lower = c.toLowerCase()
+          return c.includes('日期') || c.includes('时间') || lower.includes('date') || lower.includes('time')
+        })
+      }
+
       let trades: Trade[] = []
+      let rawRowCount = 0   // 合并前的原始行数，用于提示用户
       
       const parseVal = (v: any) => {
         if (typeof v === 'number') return v
@@ -346,15 +357,38 @@ export default function MonteCarloPage() {
             const v = propRow ? parseVal(propRow.value ?? propRow.Value) : 0
             if (v > 0) btInit = v
           }
+          // 同一出场时刻的多条记录合并成「一次持仓」。
+          // TradingView 把加仓单单独记一行，但它和底仓属于同一次持仓的两条腿：
+          // 同时开、同时平，盈亏高度共动（实测相关系数 0.986）。
+          // 若当成两个独立样本做随机抽样，等于把 45 次真实持仓伪装成 66 笔，
+          // 人为放大样本量、稀释风险估计，蒙特卡洛的回撤分布会偏乐观。
+          rawRowCount = exitRows.length
+          const groups: { pnl: number; pct: number }[] = []
+          if (dateCol) {
+            const order: string[] = []
+            const buckets = new Map<string, { pnl: number; pct: number }>()
+            for (const r of exitRows) {
+              const key = String(r[dateCol!] ?? '')
+              if (!buckets.has(key)) { buckets.set(key, { pnl: 0, pct: 0 }); order.push(key) }
+              const b = buckets.get(key)!
+              b.pnl += parseVal(r[profitCol!])
+              if (pctCol) b.pct += parseVal(r[pctCol])
+            }
+            for (const k of order) groups.push(buckets.get(k)!)
+          } else {
+            for (const r of exitRows) {
+              groups.push({ pnl: parseVal(r[profitCol!]), pct: pctCol ? parseVal(r[pctCol]) : 0 })
+            }
+          }
+
           let cum = 0
-          trades = exitRows.map((r, i) => {
-            const pnl = parseVal(r[profitCol!])
+          trades = groups.map((g, i) => {
             const equityBefore = btInit + cum
-            cum += pnl
+            cum += g.pnl
             return {
-              id: i + 1, profitUSDT: pnl,
-              profitPct: pctCol ? parseVal(r[pctCol]) : 0,
-              rEquity: equityBefore > 0 ? pnl / equityBefore : undefined,
+              id: i + 1, profitUSDT: g.pnl,
+              profitPct: g.pct,
+              rEquity: equityBefore > 0 ? g.pnl / equityBefore : undefined,
             }
           })
         }
@@ -391,7 +425,10 @@ export default function MonteCarloPage() {
         return
       }
 
-      loadTrades(trades, file.name)
+      const label = (rawRowCount > 0 && rawRowCount !== trades.length)
+        ? `${file.name}（${rawRowCount} 条记录 → ${trades.length} 次持仓）`
+        : file.name
+      loadTrades(trades, label)
     }
     reader.readAsArrayBuffer(file)
   }

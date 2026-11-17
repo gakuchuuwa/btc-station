@@ -50,6 +50,13 @@ export async function deleteStrategy(id: string): Promise<void> {
   if (!r.ok) throw new Error(await r.text());
 }
 
+export async function getMyStrategy(id: string): Promise<{ id: string; name: string; code: string }> {
+  const h = await authHeaders();
+  const r = await fetch(`${BASE}/strategies/${id}`, { headers: h });
+  if (!r.ok) throw new Error(r.status === 401 ? "请先登录" : "策略加载失败");
+  return r.json();
+}
+
 export async function listMyStrategies(): Promise<StrategyMeta[]> {
   const h = await authHeaders();
   const r = await fetch(`${BASE}/strategies`, { headers: h });
@@ -176,3 +183,46 @@ export async function startLive(_cfg: LiveStartConfig): Promise<{ task_id: strin
 export async function stopLive(): Promise<void> {}
 export async function getLiveStatus(): Promise<{ running: boolean; dry_run?: boolean; strategy_class?: string; timeframe?: string; stake_amount?: number; pid?: number; log_tail?: string[] }> { return { running: false } }
 export async function getLiveMetrics(): Promise<{ running: boolean; dry_run: boolean; strategy_class?: string; timeframe?: string; stake_amount?: number; profit?: { profit_all_coin: number; profit_all_percent: number; profit_closed_coin: number; profit_closed_percent: number; trade_count: number; closed_trade_count: number; winning_trades: number; losing_trades: number; best_pair: string; best_rate: number }; open_trades?: { trade_id: number; pair: string; open_rate: number; current_rate: number; profit_pct: number; profit_abs: number; amount: number; open_date: string }[] }> { return { running: false, dry_run: true } }
+
+// ── Walk-forward 前向验证 ────────────────────────────────────────────────────
+
+export interface WalkForwardSegment {
+  year: number;
+  n_trades: number;
+  net_profit: number;
+  max_drawdown_pct: number;
+  profitable: boolean;
+}
+
+export interface WalkForwardResult {
+  mode: string;
+  segment: string;
+  timeframe: string;
+  initial_capital: number;
+  segments: WalkForwardSegment[];
+  summary: {
+    total_segments: number;
+    win_segments: number;
+    loss_segments: number;
+    win_rate: number;
+    robust: boolean;
+  };
+}
+
+export async function runWalkForward(
+  code: string,
+  parameters: Record<string, unknown>,
+  timeframe = "4h",
+): Promise<WalkForwardResult> {
+  const h = await authHeaders();
+  const r = await fetch(`${BASE}/walk-forward`, {
+    method: "POST",
+    headers: h,
+    body: JSON.stringify({ code, parameters, timeframe }),
+  });
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({ detail: r.statusText }));
+    throw new Error(err.detail ?? "Walk-forward 验证失败");
+  }
+  return r.json();
+}

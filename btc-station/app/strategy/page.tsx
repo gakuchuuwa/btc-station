@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import dynamic from 'next/dynamic'
 import MiniChart, { type Candle, type ChartMarker, type StrategyLine } from '@/components/MiniChart'
 import StrategyTesterPanel, { type BacktestSummary, type TradeRecord, type EpochRecord, type ParamRow } from '@/components/StrategyTesterPanel'
-import { saveStrategy, listMyStrategies, deleteStrategy, type StrategyMeta } from '@/lib/freqtrade-api'
+import { saveStrategy, listMyStrategies, deleteStrategy, getMyStrategy, runWalkForward, type StrategyMeta } from '@/lib/freqtrade-api'
 import { loadChartCandles } from '@/lib/chart-klines'
 import { DEFAULT_INITIAL_CAPITAL } from '@/lib/backtest/constants'
 import { buildBacktestParameters } from '@/lib/backtest/params'
@@ -131,6 +131,7 @@ export default function StrategyPage() {
   const [optimizeEpochs, setOptimizeEpochs] = useState<EpochRecord[]>([])
   const [optimizeError, setOptimizeError] = useState('')
   const [optimizeProgress, setOptimizeProgress] = useState<{ iter: number; total: number }>({ iter: 0, total: 0 })
+  const [optimizeCsvToken, setOptimizeCsvToken] = useState<string | null>(null)
 
   // Load saved code
   useEffect(() => {
@@ -261,17 +262,14 @@ export default function StrategyPage() {
   const handleLoadMyStrategy = useCallback(async (s: StrategyMeta) => {
     setLoadingStrategies(true)
     try {
-      const res = await fetch(`/py-api/api/strategies/${s.id}`, { headers: { 'Content-Type': 'application/json' } })
-      if (res.ok) {
-        const d = await res.json()
-        setCode(d.code)
-        localStorage.setItem(LS_CODE_KEY, d.code)
-      }
+      const d = await getMyStrategy(s.id)
+      setCode(d.code)
+      localStorage.setItem(LS_CODE_KEY, d.code)
       setStrategyName(s.name)
       localStorage.setItem(LS_NAME_KEY, s.name)
       setSavedId(s.id)
       setActiveTemplateId(null)
-    } catch { /* ignore */ }
+    } catch (err: unknown) { alert(`加载失败：${(err as Error).message}`) }
     finally { setLoadingStrategies(false) }
   }, [])
 
@@ -469,10 +467,29 @@ export default function StrategyPage() {
     } finally { setRunning(false) }
   }, [code, tf, strategyName, candles, running, processResult, btStartDate, btEndDate, initialCapital, normalizeCandles])
 
+  // Walk-forward 前向验证：按年分段验证参数样本外是否稳健
+  const handleWalkForward = useCallback(async () => {
+    if (!code.trim() || running) return
+    setRunning(true)
+    setLogs([`▶ Walk-forward 前向验证 · ${tf}`])
+    try {
+      const btParams = buildBacktestParameters(
+        { capital: initialCapital, startDate: btStartDate, endDate: btEndDate },
+      )
+      const wf = await runWalkForward(code, btParams, tf)
+      setLogs(p => [...p, `Walk-forward：${wf.summary.total_segments} 段 ${wf.summary.win_segments} 赚 ${wf.summary.loss_segments} 亏（${wf.summary.win_rate}% 段赚钱）${wf.summary.robust ? '✓ 参数稳健' : '⚠️ 可能过拟合'}`])
+      for (const s of wf.segments) {
+        setLogs(p => [...p, `  ${s.year}: ${s.n_trades} 笔 ${s.net_profit >= 0 ? '+' : ''}${s.net_profit.toFixed(0)}  回撤 ${s.max_drawdown_pct}%  ${s.profitable ? '✓' : '✗'}`])
+      }
+    } catch (e: unknown) {
+      setLogs(p => [...p, `✗ ${(e as Error).message}`])
+    } finally { setRunning(false) }
+  }, [code, tf, running, btStartDate, btEndDate, initialCapital])
+
   // Optimize
-  const handleOptimizeStart = useCallback(async (paramRows: ParamRow[], startDate: string, method: 'grid' | 'annealing' = 'grid', target: string = 'calmar') => {
+  const handleOptimizeStart = useCallback(async (paramRows: ParamRow[], startDate: string, method: 'grid' | 'annealing' = 'grid', target: string = 'return_dd_ratio') => {
     if (!code.trim()) return
-    setOptimizeStatus('running'); setOptimizeEpochs([]); setOptimizeError('')
+    setOptimizeStatus('running'); setOptimizeEpochs([]); setOptimizeError(''); setOptimizeCsvToken(null)
     setOptimizeProgress({ iter: 0, total: 0 })
     try {
       const grid: Record<string, { start: number; stop: number; step: number }> = {}
@@ -515,7 +532,10 @@ export default function StrategyPage() {
                 epoch: payload.iter,
                 total_epochs: payload.total,
                 profit_pct: Number(r.net_profit_pct) ?? 0,
-                drawdown_pct: Number(r.max_drawdown_pct) ?? 0,
+                // 回撤取「已平仓资金回撤」(与 TV「最大回撤(收盘价到收盘价)」对齐)。
+                // 浮动口径 max_drawdown_pct 会放大 1.7~3.2 倍，用它过滤会误杀好参数。
+                drawdown_pct: Number(r.closed_max_drawdown_pct ?? r.max_drawdown_pct) ?? 0,
+                equity_drawdown_pct: Number(r.max_drawdown_pct) ?? 0,
                 trades: Number(r.total_trades) ?? 0,
                 win_rate_pct: Number(r.win_rate_pct) ?? 0,
                 params: r.parameters as Record<string, string>,
@@ -532,11 +552,15 @@ export default function StrategyPage() {
               .map((r: Record<string, unknown>, i: number) => ({
                 epoch: i + 1, total_epochs: payload.total_combinations,
                 profit_pct: Number(r.net_profit_pct) ?? 0,
-                drawdown_pct: Number(r.max_drawdown_pct) ?? 0,
+                // 回撤取「已平仓资金回撤」(与 TV「最大回撤(收盘价到收盘价)」对齐)。
+                // 浮动口径 max_drawdown_pct 会放大 1.7~3.2 倍，用它过滤会误杀好参数。
+                drawdown_pct: Number(r.closed_max_drawdown_pct ?? r.max_drawdown_pct) ?? 0,
+                equity_drawdown_pct: Number(r.max_drawdown_pct) ?? 0,
                 trades: Number(r.total_trades) ?? 0,
                 win_rate_pct: Number(r.win_rate_pct) ?? 0,
                 params: r.parameters as Record<string, string>,
               }))
+            setOptimizeCsvToken(payload.csv_token ?? null)
             setOptimizeEpochs(finalEpochs); setOptimizeStatus('completed')
             try { localStorage.setItem('optimize_epochs', JSON.stringify(finalEpochs)); localStorage.setItem('optimize_strategy_name', strategyName); localStorage.setItem('optimize_timeframe', tf) } catch {}
           }
@@ -546,8 +570,8 @@ export default function StrategyPage() {
   }, [code, tf, strategyName])
 
   const handleOptimizeCsvDownload = useCallback(async () => {
-    try { const r = await fetch('/py-api/api/optimize/export-csv'); if (!r.ok) throw new Error('CSV 导出失败'); const blob = await r.blob(); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'optimization.csv'; a.click(); URL.revokeObjectURL(url) } catch (e) { alert((e as Error).message) }
-  }, [])
+    try { const r = await fetch(optimizeCsvToken ? `/py-api/api/optimize/export-csv?token=${optimizeCsvToken}` : '/py-api/api/optimize/export-csv'); if (!r.ok) throw new Error('CSV 导出失败'); const blob = await r.blob(); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'optimization.csv'; a.click(); URL.revokeObjectURL(url) } catch (e) { alert((e as Error).message) }
+  }, [optimizeCsvToken])
 
   const handleApplyBestParams = useCallback((params: Record<string, string>) => {
     setLogs([`▶ 应用最优参数: ${Object.entries(params).map(([k,v]) => `${k}=${v}`).join(', ')}`])
@@ -633,6 +657,16 @@ export default function StrategyPage() {
               <button key={t} onClick={() => setTf(t)} style={S.tfBtn(tf===t)}>{TF_LABELS[t]}</button>
             ))}
           </div>
+          {/* 已加载 K 线根数与起始日期 */}
+          {candles.length > 0 && (
+            <span style={{ ...S.ohlcItem, marginLeft:12, paddingLeft:12, borderLeft:'1px solid #363a45' }}>
+              <b style={S.ohlcVal}>{candles.length.toLocaleString()}</b> 根 · 起
+              {' '}<b style={S.ohlcVal}>
+                {new Date(candles[0].time * 1000).toISOString().slice(0, 10)}
+              </b>
+              {candlesLoading && <span style={{ color:'#00d4ff' }}> ·加载中</span>}
+            </span>
+          )}
           {/* 回测状态 */}
           <div style={{ marginLeft:'auto', display:'flex', alignItems:'center', gap:8 }}>
             {running && (
@@ -828,6 +862,16 @@ export default function StrategyPage() {
             >
               <svg width="9" height="9" viewBox="0 0 10 10" fill="currentColor"><polygon points="2,1 9,5 2,9"/></svg>
               {running ? '运行中…' : '运行回测'}
+            </button>
+            {/* Walk-forward 前向验证 */}
+            <button
+              onClick={handleWalkForward}
+              disabled={running}
+              style={{ width:'100%', padding:'8px', background:'transparent', border:'1px solid #363a45', borderRadius:6, color:'#787b86', fontFamily:"'JetBrains Mono',monospace", fontSize:11, cursor: running ? 'not-allowed' : 'pointer', opacity: running ? 0.6 : 1, display:'flex', alignItems:'center', justifyContent:'center', gap:6, transition:'.2s' }}
+              onMouseEnter={e => { if (!running) { e.currentTarget.style.borderColor='#00d4ff'; e.currentTarget.style.color='#d1d4dc' } }}
+              onMouseLeave={e => { e.currentTarget.style.borderColor='#363a45'; e.currentTarget.style.color='#787b86' } }
+            >
+              Walk-forward 验证
             </button>
             
             {/* 专属福利提示 */}

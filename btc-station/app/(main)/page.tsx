@@ -276,10 +276,15 @@ function MainCompass({ summary, market, macro, isUp }: { summary: BtcSummary | n
   const signalAngles = signals.map((_, i) => -135 + (i / (signals.length - 1)) * 270)
 
   // 角度（度）转弧度后计算坐标
+  // 注意：Math.cos/sin 在服务端 Node 与浏览器引擎间存在末位浮点差异，
+  // 直接输出原始浮点会触发 hydration mismatch，必须固定到 2 位小数
   const polar = (angleDeg: number, r: number) => {
     // 0° 指向正上方；顺时针为正
     const rad = ((angleDeg - 90) * Math.PI) / 180
-    return { x: CX + r * Math.cos(rad), y: CY + r * Math.sin(rad) }
+    return {
+      x: Number((CX + r * Math.cos(rad)).toFixed(2)),
+      y: Number((CY + r * Math.sin(rad)).toFixed(2)),
+    }
   }
 
   // 大指针端点

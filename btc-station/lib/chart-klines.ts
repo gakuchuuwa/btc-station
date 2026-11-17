@@ -24,6 +24,26 @@ async function fetchKlinePage(
   return res.json()
 }
 
+/** 服务端一次性返回该周期的全部历史（已落盘缓存，命中时毫秒级） */
+async function fetchFullHistory(
+  interval: string,
+  market: 'spot' | 'swap',
+): Promise<ChartCandle[]> {
+  // 优先走后端已预热的内存缓存（与回测同源、毫秒级）；失败再回退 Next 服务端翻页缓存
+  for (const url of [
+    `/py-api/api/candles/${encodeURIComponent(interval)}?market=${market}`,
+    `/api/chart/full?interval=${interval}&market=${market}`,
+  ]) {
+    try {
+      const res = await fetch(url)
+      if (!res.ok) continue
+      const body = (await res.json()) as { candles?: ChartCandle[] }
+      if (body.candles?.length) return body.candles
+    } catch { /* 试下一个来源 */ }
+  }
+  throw new Error('全量K线不可用')
+}
+
 /** 先返回第一页，后台继续翻页；onProgress 用于渐进渲染 */
 export async function loadChartCandles(
   interval: string,
@@ -35,6 +55,15 @@ export async function loadChartCandles(
 ): Promise<ChartCandle[]> {
   const market = options?.market ?? 'swap'
   const maxBars = options?.maxBars ?? 20000
+
+  // 优先走服务端全量缓存；失败再回退到前端逐页翻
+  try {
+    const full = await fetchFullHistory(interval, market)
+    options?.onProgress?.(full)
+    return full
+  } catch {
+    // 落到下面的逐页加载
+  }
 
   const first = await fetchKlinePage(interval, market)
   if (first.candles.length === 0) {

@@ -113,7 +113,10 @@ export interface EpochRecord {
   epoch: number;
   total_epochs: number;
   profit_pct: number;
+  /** 已平仓资金回撤 %（与 TradingView「最大回撤(收盘价到收盘价)」对齐，过滤/评分以此为准） */
   drawdown_pct: number;
+  /** 浮动权益回撤 %（含未平仓浮盈浮亏，仅供参考；数值约为资金回撤的 1.7~3.2 倍） */
+  equity_drawdown_pct?: number;
   trades: number;
   win_rate_pct: number;
   params: Record<string, string>;
@@ -201,8 +204,6 @@ const EXECUTION_PARAM_NAMES = new Set([
   "fees",
   "use_real_capital",
   "real_capital",
-  "enable_max_qty",
-  "max_qty",
   "qty_step",
   "min_qty",
   "slippage_ticks",
@@ -645,7 +646,9 @@ function OptimizeTab({
   // S4 时间范围:固定 7 档(年数),保证形态发育所需的足够预热历史
   const [yearsBack, setYearsBack] = useState<number>(6);
   const [method, setMethod] = useState<'grid' | 'annealing'>('grid');
-  const [target, setTarget] = useState<string>('calmar');
+  // 默认用「收益回撤比」：分母是与 TV 对齐的已平仓回撤。
+  // Calmar 的分母是 VectorBT 浮动权益回撤，对杠杆策略会被放大 1.7~3.3 倍。
+  const [target, setTarget] = useState<string>('return_dd_ratio');
 
   // 策略变化时:先尝试从 localStorage 读取上次配置,合并到 detectedParams
   useEffect(() => {
@@ -823,7 +826,8 @@ function OptimizeTab({
               onChange={e => setTarget(e.target.value)}
               style={{ width: "100%", background: "#1a1a1a", border: "1px solid #333", color: "#eee", fontSize: 11, padding: "6px 8px" }}
             >
-              <option value="calmar">Calmar 比率 (推荐) — 年化收益 ÷ 最大回撤</option>
+              <option value="return_dd_ratio">收益回撤比 (推荐) — 总收益 ÷ 真实回撤(与TV对齐)</option>
+              <option value="calmar">Calmar 比率 — 年化收益 ÷ 浮动权益回撤</option>
               <option value="sortino">Sortino 比率 — 只惩罚下行波动</option>
               <option value="profit_factor">Profit Factor — 总盈利 ÷ 总亏损</option>
             </select>
