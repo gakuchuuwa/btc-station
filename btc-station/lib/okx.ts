@@ -23,19 +23,19 @@ export interface TickerData {
 }
 
 export interface FundingRate {
-  current: number | null
-  nextSettleAt: number | null
+  current: number
+  nextSettleAt: number
 }
 
 export interface OpenInterest {
-  btc: number | null
-  usdValue: number | null
+  contracts: number
+  usdValue: number
 }
 
 export interface PerpetualInfo {
   fundingRate: FundingRate
   openInterest: OpenInterest
-  longShortRatio: number | null
+  longShortRatio: number
 }
 
 export interface KlineBar {
@@ -133,76 +133,34 @@ export async function fetchOkxKlinesChart(
   return { candles, hasMore: rows.length === limit }
 }
 
-let dailyHistoryCache: { data: KlineBar[]; ts: number } | null = null
-
-/** 获取足够计算 5 年季节性和周期指标的 BTC 日线，最多翻 7 页（约 5.7 年）。 */
-export async function fetchOkxDailyHistory(): Promise<KlineBar[]> {
-  if (dailyHistoryCache && Date.now() - dailyHistoryCache.ts < 30 * 60_000) {
-    return dailyHistoryCache.data
-  }
-
-  const byTime = new Map<number, KlineBar>()
-  let before: number | undefined
-
-  for (let page = 0; page < 7; page++) {
-    const result = await fetchOkxKlinesChart('1d', 300, before, 'spot')
-    if (result.candles.length === 0) break
-
-    for (const candle of result.candles) byTime.set(candle.time, candle)
-    const oldest = Math.min(...result.candles.map(candle => candle.time))
-    if (before !== undefined && oldest >= before) break
-    if (!result.hasMore || result.candles.length < 300) break
-    before = oldest
-  }
-
-  const cutoff = Math.floor(Date.UTC(new Date().getUTCFullYear() - 6, 0, 1) / 1000)
-  const data = Array.from(byTime.values())
-    .filter(candle => candle.time >= cutoff)
-    .sort((a, b) => a.time - b.time)
-  dailyHistoryCache = { data, ts: Date.now() }
-  return data
-}
-
-/** 解析公共 API 的可选数值；缺失或无效时返回 null，不合成默认行情。 */
-function toFiniteNumber(value: unknown): number | null {
-  if (value == null || value === '') return null
-  const number = typeof value === 'number' ? value : Number(value)
-  return Number.isFinite(number) ? number : null
-}
-
 /** 永续合约专用：资金费率 + 未平仓量 + 多空比 */
 export async function fetchPerpetualInfo(): Promise<PerpetualInfo> {
   const [frRes, oiRes, lsRes] = await Promise.all([
-    fetch(`${OKX_BASE}/api/v5/public/funding-rate?instId=BTC-USDT-SWAP`, { next: { revalidate: 30 } }).catch(() => null),
-    fetch(`${OKX_BASE}/api/v5/public/open-interest?instId=BTC-USDT-SWAP`, { next: { revalidate: 30 } }).catch(() => null),
-    fetch(`${OKX_BASE}/api/v5/rubik/stat/contracts/long-short-account-ratio?ccy=BTC&period=1H`, { next: { revalidate: 30 } }).catch(() => null),
+    fetch(`${OKX_BASE}/api/v5/public/funding-rate?instId=BTC-USDT-SWAP`, { next: { revalidate: 30 } }),
+    fetch(`${OKX_BASE}/api/v5/public/open-interest?instId=BTC-USDT-SWAP`, { next: { revalidate: 30 } }),
+    fetch(`${OKX_BASE}/api/v5/rubik/stat/contracts/long-short-account-ratio?ccy=BTC&period=1H`, { next: { revalidate: 30 } }),
   ])
 
-  const [frJson, oiJson, lsJson] = await Promise.all([
-    frRes?.ok ? frRes.json().catch(() => null) : null,
-    oiRes?.ok ? oiRes.json().catch(() => null) : null,
-    lsRes?.ok ? lsRes.json().catch(() => null) : null,
-  ])
+  const frJson = frRes.ok ? await frRes.json() : null
+  const oiJson = oiRes.ok ? await oiRes.json() : null
+  const lsJson = lsRes.ok ? await lsRes.json() : null
 
   const fr = frJson?.data?.[0]
   const oi = oiJson?.data?.[0]
   const ls = lsJson?.data?.[0]
-  const current = toFiniteNumber(fr?.fundingRate)
-  const nextSettleAt = toFiniteNumber(fr?.nextFundingTime)
-  const btc = toFiniteNumber(oi?.oiCcy)
-  const usdValue = toFiniteNumber(oi?.oiUsd)
-  // OKX Rubik returns [timestamp, ratio] rows, unlike the object-shaped endpoints above.
-  const rawRatio = toFiniteNumber(Array.isArray(ls) ? ls[1] : ls?.longShortRatio)
-  const longShortRatio = rawRatio != null && rawRatio > 0 ? rawRatio : null
 
-  if (current == null && btc == null && usdValue == null && longShortRatio == null) {
-    throw new Error('OKX 永续公开指标暂不可用')
-  }
+  const btcPrice = 90000 // 近似值用于 USD 换算，实际由前端用 ticker 价格覆盖
 
   return {
-    fundingRate: { current, nextSettleAt },
-    openInterest: { btc, usdValue },
-    longShortRatio,
+    fundingRate: {
+      current: fr ? parseFloat(fr.fundingRate) : 0,
+      nextSettleAt: fr ? parseInt(fr.nextFundingTime) : 0,
+    },
+    openInterest: {
+      contracts: oi ? parseFloat(oi.oi) : 0,
+      usdValue: oi ? parseFloat(oi.oiCcy) * btcPrice : 0,
+    },
+    longShortRatio: ls ? parseFloat(ls.longShortRatio) : 1,
   }
 }
 

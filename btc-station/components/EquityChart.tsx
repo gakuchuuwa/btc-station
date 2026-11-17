@@ -179,7 +179,7 @@ function expandBalanceSteps(balance: EquityPoint[], equity: EquityPoint[]): Equi
   return out
 }
 
-/** 输入数据未包含 balance 时，从 trades 按出场时间重建阶梯资金曲线。 */
+/** 后端未返回 balance 时，从 trades 按出场时间重建阶梯资金曲线 */
 export function buildBalanceFromTrades(
   trades: TradeEquityInput[],
   initialCapital: number,

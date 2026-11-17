@@ -1,0 +1,576 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BTC Station — 比特币量化研究平台</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#131722;--bg2:#1e222d;--bg3:#2a2e39;--bg4:#131722;
+  --border:#363a45;--border2:rgba(0,212,255,.18);
+  --text:#d1d4dc;--text2:#787b86;--text3:#363a45;
+  --cyan:#00d4ff;--btc:#f7931a;--bull:#26a69a;--bear:#ef5350;
+  --amber:#f0b90b;--purple:#9c6cfe;
+  --nav:48px;--topbar:40px;--tools:52px;
+  --mono:'JetBrains Mono',monospace;--sans:'Space Grotesk',system-ui,sans-serif;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:13px;overflow-x:hidden}
+
+/* NAV */
+.nav{position:fixed;top:0;left:0;right:0;height:var(--nav);background:rgba(19,23,34,.96);backdrop-filter:blur(12px);border-bottom:1px solid var(--border);z-index:200;display:flex;align-items:center;padding:0 20px;gap:0}
+.nav-logo{display:flex;align-items:center;gap:8px;font-size:16px;font-weight:700;color:var(--text);letter-spacing:-.02em;text-decoration:none;margin-right:24px}
+.nav-logo-coin{width:26px;height:26px;background:var(--btc);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:800;color:#fff;font-family:var(--mono);box-shadow:0 0 12px rgba(247,147,26,.4)}
+.nav-links{display:flex;gap:2px}
+.nav-link{padding:5px 12px;border-radius:4px;font-size:12px;color:var(--text2);cursor:pointer;transition:.15s;font-weight:500;text-decoration:none}
+.nav-link:hover{color:var(--text);background:var(--bg3)}
+.nav-link.active{color:var(--cyan);background:rgba(0,212,255,.08)}
+.nav-right{margin-left:auto;display:flex;align-items:center;gap:16px}
+.nav-price{display:flex;align-items:center;gap:8px;padding-left:16px;border-left:1px solid var(--border);font-family:var(--mono);font-size:12px}
+.np-sym{color:var(--btc);font-weight:600}
+.np-val{color:var(--text);font-weight:600;letter-spacing:-.02em}
+.np-chg{font-size:11px}
+.np-chg.up{color:var(--bull)} .np-chg.dn{color:var(--bear)}
+.live-dot{width:6px;height:6px;background:var(--bull);border-radius:50%;animation:pulse 2s ease-in-out infinite;display:inline-block}
+
+/* SECTION BASE — TV full-screen layout */
+section{height:100vh;padding-top:var(--nav);display:flex;flex-direction:column;position:relative;overflow:hidden}
+.ws{flex:1;display:flex;flex-direction:column;min-height:0}
+
+/* TV TOPBAR */
+.topbar{height:var(--topbar);flex-shrink:0;border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 12px;gap:0;background:var(--bg2)}
+.tb-sym{display:flex;align-items:center;gap:8px;padding:0 12px 0 0;margin-right:4px;border-right:1px solid var(--border);flex-shrink:0}
+.tb-sym>*{white-space:nowrap}
+.tb-sym-name{font-weight:700;font-size:14px;letter-spacing:-.02em;white-space:nowrap}
+.tb-sym-price{font-family:var(--mono);font-size:15px;font-weight:600;margin-left:4px;white-space:nowrap}
+.tb-sym-chg{font-family:var(--mono);font-size:11px;font-weight:500;white-space:nowrap}
+.tb-sym-chg.up{color:var(--bull)} .tb-sym-chg.dn{color:var(--bear)}
+.tb-ohlc{display:flex;gap:12px;padding:0 12px;margin-right:4px;border-right:1px solid var(--border);flex-shrink:0}
+.tb-ohlc span{font-family:var(--mono);font-size:11px;color:var(--text2);white-space:nowrap}
+.tb-ohlc b{color:var(--text);font-weight:500}
+.tb-tfs{display:flex;gap:1px;margin-left:4px}
+.tf{padding:3px 8px;border-radius:3px;font-family:var(--mono);font-size:11px;color:var(--text2);cursor:pointer;transition:.12s;border:none;background:transparent}
+.tf:hover{color:var(--text);background:var(--bg3)}
+.tf.on{color:var(--cyan);background:rgba(0,212,255,.1);font-weight:600}
+.tb-sep{width:1px;height:20px;background:var(--border);margin:0 8px}
+.tb-indicator{padding:3px 10px;border-radius:3px;font-size:11px;color:var(--text2);cursor:pointer;border:1px solid var(--border);background:transparent;transition:.12s}
+.tb-indicator:hover{color:var(--text);border-color:var(--text2)}
+.tb-right{margin-left:auto;display:flex;align-items:center;gap:8px}
+.liveTag{display:flex;align-items:center;gap:5px;font-family:var(--mono);font-size:10px;color:var(--text2)}
+
+/* TV BODY: chart (62%) + panel (38%) */
+.ws-body{flex:1;display:flex;flex-direction:column;min-height:0}
+.ws-chart{flex:62;min-height:0;display:flex;border-bottom:1px solid var(--border)}
+.ws-panel{flex:38;min-height:0;display:flex;flex-direction:column;background:var(--bg2)}
+
+/* LEFT TOOLS */
+.tv-tools{width:var(--tools);flex-shrink:0;border-right:1px solid var(--border);display:flex;flex-direction:column;align-items:center;padding:6px 0;gap:2px;background:var(--bg2)}
+.tool{width:32px;height:32px;display:flex;align-items:center;justify-content:center;border-radius:4px;cursor:pointer;color:var(--text2);transition:.12s;border:none;background:transparent}
+.tool:hover{color:var(--text);background:var(--bg3)}
+.tool.on{color:var(--cyan);background:rgba(0,212,255,.08)}
+.tool-sep{width:24px;height:1px;background:var(--border);margin:2px 0}
+
+/* CANVAS AREA */
+.canvas-wrap{flex:1;min-width:0;position:relative;background:var(--bg)}
+.canvas-wrap canvas{display:block;width:100%!important;height:100%!important}
+
+/* PANEL TABS */
+.panel-tabs{height:32px;flex-shrink:0;display:flex;align-items:center;border-bottom:1px solid var(--border);padding:0 12px;gap:2px}
+.ptab{padding:4px 12px;font-size:11px;color:var(--text2);cursor:pointer;border-bottom:2px solid transparent;transition:.15s;white-space:nowrap}
+.ptab:hover{color:var(--text)}
+.ptab.on{color:var(--cyan);border-bottom-color:var(--cyan)}
+.panel-body{flex:1;min-height:0;overflow:auto;padding:12px 16px}
+.panel-body::-webkit-scrollbar{width:4px}
+.panel-body::-webkit-scrollbar-track{background:transparent}
+.panel-body::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+
+/* METRICS */
+.metrics{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-bottom:12px}
+.metric{background:var(--bg3);border-radius:6px;padding:12px 10px;text-align:center;border:1px solid rgba(255,255,255,.04)}
+.m-lbl{font-size:10px;color:var(--text2);text-transform:uppercase;letter-spacing:.06em;font-family:var(--mono);margin-bottom:6px}
+.m-val{font-family:var(--mono);font-size:20px;font-weight:600;letter-spacing:-.03em}
+.m-val.up{color:var(--bull)} .m-val.dn{color:var(--bear)} .m-val.neu{color:var(--cyan)} .m-val.amb{color:var(--amber)}
+.m-sub{font-size:10px;color:var(--text2);font-family:var(--mono);margin-top:3px}
+
+/* CODE EDITOR */
+.editor-pane{width:50%;border-right:1px solid var(--border);display:flex;flex-direction:column;background:#0d1117}
+.ed-head{height:36px;flex-shrink:0;background:#161b22;border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 12px;gap:8px}
+.ed-dot{width:10px;height:10px;border-radius:50%}
+.ed-dot.r{background:#ff5f57}.ed-dot.y{background:#febc2e}.ed-dot.g{background:#28c840}
+.ed-fname{font-family:var(--mono);font-size:11px;color:var(--text2);margin-left:6px}
+.ed-body{flex:1;min-height:0;overflow:auto;font-family:var(--mono);font-size:12px;line-height:1.65}
+.ed-body::-webkit-scrollbar{width:4px}
+.ed-body::-webkit-scrollbar-thumb{background:var(--border)}
+.ed-inner{display:flex}
+.ed-nums{padding:8px 10px 8px 0;color:var(--text3);text-align:right;min-width:44px;user-select:none;font-size:12px;line-height:1.65;border-right:1px solid rgba(255,255,255,.04)}
+.ed-code{padding:8px 16px;flex:1;white-space:pre;color:#abb2bf}
+/* syntax */
+.kw{color:#c792ea}.fn{color:#82aaff}.st{color:#98c379}.cm{color:#5c6370;font-style:italic}.nu{color:#f78c6c}.cl{color:#e5c07b}.op{color:var(--cyan)}.bl{color:var(--btc)}
+.cursor{display:inline-block;width:2px;height:13px;background:var(--cyan);vertical-align:middle;animation:blink 1s step-end infinite;margin-left:1px}
+/* strategy right panel */
+.minichart-pane{flex:1;position:relative;background:var(--bg)}
+.strat-side{width:240px;flex-shrink:0;border-left:1px solid var(--border);background:var(--bg2);display:flex;flex-direction:column;padding:12px}
+.ss-title{font-size:12px;font-weight:600;color:var(--text);margin-bottom:4px}
+.ss-meta{font-size:10px;color:var(--text2);font-family:var(--mono);margin-bottom:12px}
+.ss-param{display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.04)}
+.ss-plabel{font-family:var(--mono);font-size:11px;color:var(--text2)}
+.ss-pinput{background:rgba(0,212,255,.06);border:1px solid var(--border2);border-radius:3px;color:var(--cyan);font-family:var(--mono);font-size:12px;padding:2px 8px;width:68px;text-align:right;outline:none}
+.ss-pinput:focus{border-color:var(--cyan)}
+.run-btn{margin-top:auto;width:100%;padding:9px;background:linear-gradient(135deg,rgba(0,212,255,.12),rgba(0,212,255,.04));border:1px solid var(--border2);border-radius:6px;color:var(--cyan);font-family:var(--mono);font-size:12px;font-weight:600;cursor:pointer;transition:.2s;display:flex;align-items:center;justify-content:center;gap:7px;letter-spacing:.04em}
+.run-btn:hover{background:rgba(0,212,255,.18);box-shadow:0 0 16px rgba(0,212,255,.15)}
+.tmpl-list{display:flex;flex-direction:column;gap:3px;margin-top:6px}
+.tmpl-item{padding:5px 9px;border-radius:4px;font-size:11px;color:var(--text2);cursor:pointer;transition:.12s;font-family:var(--mono)}
+.tmpl-item:hover{background:var(--bg3);color:var(--text)}
+.tmpl-item.on{background:rgba(0,212,255,.08);color:var(--cyan);border-left:2px solid var(--cyan);padding-left:7px}
+
+/* EQUITY + SCATTER */
+.svg-wrap{width:100%;overflow:hidden;border-radius:4px}
+table{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:11px}
+th{padding:6px 8px;color:var(--text2);font-size:10px;text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--bg2);font-weight:500;text-align:left}
+td{padding:6px 8px;border-bottom:1px solid rgba(255,255,255,.03);color:var(--text)}
+tr:hover td{background:rgba(255,255,255,.02)}
+td.up{color:var(--bull)} td.dn{color:var(--bear)}
+
+/* OPTIMIZE LAYOUT */
+.opt-layout{display:grid;grid-template-columns:260px 1fr;gap:12px;height:100%;min-height:0}
+.opt-config{background:var(--bg3);border-radius:6px;padding:14px;overflow-y:auto}
+.opt-config::-webkit-scrollbar{width:4px} .opt-config::-webkit-scrollbar-thumb{background:var(--border)}
+.oc-title{font-size:12px;font-weight:600;color:var(--text);margin-bottom:12px}
+.oc-group{margin-bottom:14px}
+.oc-label{display:flex;justify-content:space-between;margin-bottom:6px}
+.oc-lname{font-family:var(--mono);font-size:11px;color:var(--text2)}
+.oc-lrange{font-family:var(--mono);font-size:11px;color:var(--cyan)}
+.oc-row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px}
+.oc-input{background:var(--bg2);border:1px solid var(--border);border-radius:3px;padding:5px 8px;color:var(--cyan);font-family:var(--mono);font-size:11px;text-align:center;width:100%;outline:none}
+.oc-input:focus{border-color:var(--cyan)}
+.oc-hint{font-size:9px;color:var(--text3);text-align:center;margin-top:2px;font-family:var(--mono)}
+.oc-stat{background:rgba(0,212,255,.04);border:1px solid var(--border2);border-radius:4px;padding:10px 12px;margin:10px 0}
+.oc-stat-n{font-family:var(--mono);font-size:20px;font-weight:700;color:var(--cyan)}
+.oc-stat-l{font-size:10px;color:var(--text2);font-family:var(--mono)}
+.opt-btn{width:100%;padding:9px;background:linear-gradient(135deg,rgba(247,147,26,.12),rgba(247,147,26,.04));border:1px solid rgba(247,147,26,.3);border-radius:5px;color:var(--btc);font-family:var(--mono);font-size:11px;font-weight:600;cursor:pointer;transition:.2s}
+.opt-btn:hover{background:rgba(247,147,26,.2);box-shadow:0 0 14px rgba(247,147,26,.15)}
+
+/* REPORT */
+.report-layout{display:grid;grid-template-columns:220px 1fr;gap:12px;height:100%;min-height:0}
+.score-card{background:var(--bg3);border-radius:6px;padding:16px;text-align:center}
+.gauge-wrap{position:relative;width:130px;height:130px;margin:0 auto 12px}
+.gauge-num{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center}
+.gauge-big{font-family:var(--mono);font-size:32px;font-weight:700;color:var(--bull);letter-spacing:-.04em;line-height:1}
+.gauge-lbl{font-size:10px;color:var(--text2);margin-top:3px}
+.mini-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:12px}
+.mini-card{background:rgba(255,255,255,.04);border-radius:4px;padding:8px 10px;text-align:center}
+.mini-val{font-family:var(--mono);font-size:16px;font-weight:600;color:var(--text)}
+.mini-val.hi{color:var(--bull)} .mini-val.lo{color:var(--amber)}
+.mini-lbl{font-size:10px;color:var(--text2);margin-top:2px}
+/* top10 */
+.t10-row{display:grid;grid-template-columns:24px 1fr 72px 72px 72px 1fr;gap:10px;align-items:center;padding:7px 10px;border-radius:4px;transition:.12s}
+.t10-row:hover{background:rgba(255,255,255,.03)}
+.t10-row.hdr{font-size:9px;color:var(--text2);text-transform:uppercase;letter-spacing:.06em;font-family:var(--mono);border-bottom:1px solid var(--border);margin-bottom:3px}
+.rank{width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:600;font-family:var(--mono)}
+.r1{background:var(--amber);color:#000}.r2{background:#94a3b8;color:#000}.r3{background:#cd7f32;color:#fff}.rn{background:rgba(255,255,255,.08);color:var(--text2);font-size:9px}
+.p-cell{font-family:var(--mono);font-size:11px;color:var(--text2)}
+.rob-bar{height:6px;background:rgba(0,212,255,.08);border-radius:3px;overflow:hidden}
+.rob-fill{height:100%;border-radius:3px;background:linear-gradient(90deg,var(--bull),var(--cyan));transition:width 1.2s ease-out}
+/* score breakdown */
+.score-bk{margin-bottom:10px}
+.sb-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px}
+.sb-name{font-size:11px;color:var(--text2);font-family:var(--mono)}
+.sb-val{font-size:11px;color:var(--text);font-family:var(--mono)}
+
+/* ANIMATIONS */
+@keyframes blink{0%,100%{opacity:1}50%{opacity:0}}
+@keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(38,166,154,0)}50%{box-shadow:0 0 10px 3px rgba(38,166,154,.3)}}
+@keyframes fadeUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
+.fade-in{opacity:0;transform:translateY(14px);transition:opacity .55s ease,transform .55s ease}
+.fade-in.show{opacity:1;transform:translateY(0)}
+
+/* TWEAKS */
+.tweaks-panel{position:fixed;bottom:24px;right:24px;background:var(--bg2);border:1px solid var(--border2);border-radius:10px;padding:16px;width:220px;z-index:500;display:none;box-shadow:0 8px 32px rgba(0,0,0,.5)}
+.tweaks-panel.open{display:block}
+.tw-title{font-size:12px;font-weight:600;color:var(--cyan);margin-bottom:12px;display:flex;justify-content:space-between;align-items:center}
+.tw-close{cursor:pointer;color:var(--text2);font-size:16px;line-height:1}
+.tw-lbl{font-size:10px;color:var(--text2);text-transform:uppercase;letter-spacing:.06em;font-family:var(--mono);margin-bottom:6px;margin-top:10px}
+.tw-btns{display:flex;gap:4px;flex-wrap:wrap}
+.tw-btn{padding:4px 10px;border-radius:4px;border:1px solid var(--border);background:transparent;color:var(--text2);font-size:11px;cursor:pointer;transition:.12s;font-family:var(--mono)}
+.tw-btn:hover{color:var(--text);border-color:var(--text2)}
+.tw-btn.on{border-color:var(--cyan);color:var(--cyan);background:rgba(0,212,255,.08)}
+</style>
+</head>
+<body>
+
+<!-- NAV -->
+<nav class="nav">
+  <a href="#s1" class="nav-logo">
+    <div class="nav-logo-coin">₿</div>
+    BTC Station
+  </a>
+  <div class="nav-links">
+    <a class="nav-link active" href="#s1">图表</a>
+    <a class="nav-link" href="#s2">策略</a>
+    <a class="nav-link" href="#s3">回测</a>
+    <a class="nav-link" href="#s4">调参</a>
+    <a class="nav-link" href="#s5">报告</a>
+  </div>
+  <div class="nav-right">
+    <div class="nav-price">
+      <span class="np-sym">BTC/USDT</span>
+      <span class="np-val" id="navPrice">$103,247.80</span>
+      <span class="np-chg up" id="navChg">+2.34%</span>
+    </div>
+  </div>
+</nav>
+
+<!-- ══════════ S1: CHART ══════════ -->
+<section id="s1" data-screen-label="01 图表">
+<div class="ws">
+  <div class="topbar">
+    <div class="tb-sym">
+      <span class="tb-sym-name" style="color:var(--btc)">BTC/USDT</span>
+      <span style="font-size:10px;color:var(--text2);font-family:var(--mono)">永续</span>
+      <span class="tb-sym-price" id="s1Price">103,247.80</span>
+      <span class="tb-sym-chg up" id="s1Chg">+2,354.30 +2.34%</span>
+    </div>
+    <div class="tb-ohlc">
+      <span>开 <b id="s1O">102,100</b></span>
+      <span>高 <b style="color:var(--bull)" id="s1H">104,890</b></span>
+      <span>低 <b style="color:var(--bear)" id="s1L">100,120</b></span>
+      <span>量 <b>42,381</b></span>
+    </div>
+    <div class="tb-tfs">
+      <button class="tf">1m</button><button class="tf">5m</button><button class="tf">15m</button>
+      <button class="tf">1h</button><button class="tf on">4h</button><button class="tf">1D</button><button class="tf">1W</button>
+    </div>
+    <div class="tb-sep"></div>
+    <div class="tb-tfs">
+      <button class="tf">1D</button><button class="tf">7D</button><button class="tf on">1M</button><button class="tf">3M</button><button class="tf">1Y</button>
+    </div>
+    <div class="tb-sep"></div>
+    <button class="tb-indicator">ƒx 策略库</button>
+    <button class="tb-indicator" style="color:var(--cyan);border-color:var(--border2)">指标</button>
+    <div class="tb-right">
+      <div class="liveTag"><span class="live-dot"></span>实时</div>
+    </div>
+  </div>
+  <div class="ws-body" style="flex-direction:row">
+    <div class="tv-tools" id="tools1">
+      <button class="tool on" title="光标">
+        <svg width="15" height="15" viewBox="0 0 15 15" fill="currentColor"><path d="M2 1l11 7-5 1.5L6 14z"/></svg>
+      </button>
+      <button class="tool" title="十字线">
+        <svg width="15" height="15" viewBox="0 0 15 15" stroke="currentColor" fill="none" stroke-width="1.5"><line x1="7.5" y1="1" x2="7.5" y2="14"/><line x1="1" y1="7.5" x2="14" y2="7.5"/></svg>
+      </button>
+      <div class="tool-sep"></div>
+      <button class="tool" title="趋势线">
+        <svg width="15" height="15" viewBox="0 0 15 15" stroke="currentColor" fill="none" stroke-width="1.5"><line x1="2" y1="13" x2="13" y2="2"/><circle cx="2" cy="13" r="1.5" fill="currentColor"/><circle cx="13" cy="2" r="1.5" fill="currentColor"/></svg>
+      </button>
+      <button class="tool" title="水平线">
+        <svg width="15" height="15" viewBox="0 0 15 15" stroke="currentColor" fill="none" stroke-width="1.5"><line x1="1" y1="7.5" x2="14" y2="7.5"/><circle cx="3" cy="7.5" r="1.5" fill="currentColor"/></svg>
+      </button>
+      <button class="tool" title="矩形">
+        <svg width="15" height="15" viewBox="0 0 15 15" stroke="currentColor" fill="none" stroke-width="1.5"><rect x="2" y="3" width="11" height="9" rx="1"/></svg>
+      </button>
+      <button class="tool" title="斐波那契">
+        <svg width="15" height="15" viewBox="0 0 15 15" stroke="currentColor" fill="none" stroke-width="1.5"><line x1="2" y1="4" x2="13" y2="4"/><line x1="2" y1="8" x2="13" y2="8"/><line x1="2" y1="12" x2="13" y2="12"/></svg>
+      </button>
+      <div class="tool-sep"></div>
+      <button class="tool" title="文字">
+        <svg width="15" height="15" viewBox="0 0 15 15" fill="currentColor"><text x="2" y="12" font-size="11" font-weight="700" font-family="serif">T</text></svg>
+      </button>
+      <button class="tool" title="磁铁">
+        <svg width="15" height="15" viewBox="0 0 15 15" stroke="currentColor" fill="none" stroke-width="1.5"><path d="M4 2v5a3.5 3.5 0 007 0V2"/><line x1="4" y1="13" x2="4" y2="11"/><line x1="11" y1="13" x2="11" y2="11"/></svg>
+      </button>
+    </div>
+    <div class="canvas-wrap" style="flex:1"><canvas id="c1"></canvas></div>
+  </div>
+</div>
+</section>
+
+<!-- ══════════ S2: STRATEGY ══════════ -->
+<section id="s2" data-screen-label="02 策略">
+<div class="ws">
+  <div class="topbar">
+    <div class="tb-sym">
+      <span class="tb-sym-name">策略编辑器</span>
+    </div>
+    <div class="tb-tfs" style="gap:4px">
+      <button class="tf on" style="color:var(--btc)">MA 双均线</button>
+      <button class="tf">RSI</button><button class="tf">MACD</button>
+      <button class="tf">布林带</button><button class="tf">海龟</button>
+      <button class="tf">DCA</button><button class="tf">ATR</button>
+    </div>
+    <div class="tb-sep"></div>
+    <div class="tb-tfs">
+      <button class="tf">1h</button><button class="tf on">4h</button><button class="tf">1D</button>
+    </div>
+    <div class="tb-right">
+      <button class="run-btn" style="width:auto;padding:5px 16px;margin:0;font-size:11px" onclick="runSim()">
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><polygon points="2,1 9,5 2,9"/></svg>
+        运行回测
+      </button>
+    </div>
+  </div>
+  <div class="ws-body">
+    <div class="ws-chart">
+      <div class="editor-pane">
+        <div class="ed-head">
+          <div class="ed-dot r"></div><div class="ed-dot y"></div><div class="ed-dot g"></div>
+          <div class="ed-fname">strategy_ma_cross.py</div>
+          <div style="margin-left:auto;font-family:var(--mono);font-size:10px;color:var(--bull)">● Python 3.11</div>
+        </div>
+        <div class="ed-body">
+          <div class="ed-inner">
+            <div class="ed-nums" id="edNums"></div>
+            <div class="ed-code" id="edCode"></div>
+          </div>
+        </div>
+      </div>
+      <div class="minichart-pane"><canvas id="c2"></canvas></div>
+      <div class="strat-side">
+        <div class="ss-title">MA 双均线交叉</div>
+        <div class="ss-meta">trend · BTC/USDT · 4h</div>
+        <div class="ss-param"><span class="ss-plabel">short_window</span><input class="ss-pinput" value="12"></div>
+        <div class="ss-param"><span class="ss-plabel">long_window</span><input class="ss-pinput" value="26"></div>
+        <div class="ss-param"><span class="ss-plabel">initial_capital</span><input class="ss-pinput" value="10000"></div>
+        <div class="ss-param"><span class="ss-plabel">timeframe</span><input class="ss-pinput" value="4h" style="text-align:center"></div>
+        <div style="height:10px"></div>
+        <div style="font-size:10px;color:var(--text2);margin-bottom:6px">可用模板</div>
+        <div class="tmpl-list">
+          <div class="tmpl-item on">MA 双均线交叉</div>
+          <div class="tmpl-item">RSI 超买超卖</div>
+          <div class="tmpl-item">MACD 金叉死叉</div>
+          <div class="tmpl-item">布林带突破</div>
+          <div class="tmpl-item">海龟 6-Pattern</div>
+          <div class="tmpl-item">DCA 定投</div>
+        </div>
+        <button class="run-btn" onclick="runSim()">
+          <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><polygon points="2,1 9,5 2,9"/></svg>
+          运行回测
+        </button>
+      </div>
+    </div>
+    <div class="ws-panel">
+      <div class="panel-tabs">
+        <div class="ptab on">运行日志</div>
+        <div class="ptab">资金曲线</div>
+        <div class="ptab">交易明细</div>
+      </div>
+      <div class="panel-body" style="font-family:var(--mono);font-size:11px;color:var(--text2)" id="runLog">
+        <div style="color:var(--text3)">等待运行…</div>
+      </div>
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- ══════════ S3: BACKTEST ══════════ -->
+<section id="s3" data-screen-label="03 回测">
+<div class="ws">
+  <div class="topbar">
+    <div class="tb-sym">
+      <span class="tb-sym-name">回测结果</span>
+      <span style="font-family:var(--mono);font-size:11px;color:var(--text2)">MA双均线 · 4h · 16,500K</span>
+    </div>
+    <div class="tb-ohlc">
+      <span>初始资金 <b>$10,000</b></span>
+      <span>周期 <b>2024-01 → 2026-05</span>
+      <span>交易数 <b style="color:var(--cyan)">192</b></span>
+    </div>
+    <div class="tb-right">
+      <div style="font-family:var(--mono);font-size:10px;padding:3px 10px;background:rgba(38,166,154,.12);color:var(--bull);border-radius:3px;border:1px solid rgba(38,166,154,.3)">✓ 回测完成</div>
+    </div>
+  </div>
+  <div class="ws-body">
+    <div class="ws-chart" style="flex:42">
+      <div class="canvas-wrap"><canvas id="c3"></canvas></div>
+    </div>
+    <div class="ws-panel" style="flex:58">
+      <div class="panel-tabs">
+        <div class="ptab on">概览</div>
+        <div class="ptab">资金曲线</div>
+        <div class="ptab">交易明细</div>
+        <div class="ptab">参数优化</div>
+      </div>
+      <div class="panel-body" id="btPanel">
+        <div class="metrics">
+          <div class="metric"><div class="m-lbl">净收益率</div><div class="m-val up" id="b1">+0%</div><div class="m-sub">$10k→$59.7k</div></div>
+          <div class="metric"><div class="m-lbl">最大回撤</div><div class="m-val dn" id="b2">-0%</div><div class="m-sub">峰值亏损</div></div>
+          <div class="metric"><div class="m-lbl">胜率</div><div class="m-val neu" id="b3">0%</div><div class="m-sub">192笔交易</div></div>
+          <div class="metric"><div class="m-lbl">Sharpe</div><div class="m-val amb" id="b4">0.00</div><div class="m-sub">风险调整</div></div>
+          <div class="metric"><div class="m-lbl">Sortino</div><div class="m-val amb" id="b5">0.00</div><div class="m-sub">下行波动</div></div>
+          <div class="metric"><div class="m-lbl">盈利因子</div><div class="m-val neu" id="b6">0.00</div><div class="m-sub">盈/亏比</div></div>
+        </div>
+        <div style="display:grid;grid-template-columns:1.6fr 1fr;gap:10px">
+          <div>
+            <div style="font-size:10px;color:var(--text2);text-transform:uppercase;letter-spacing:.06em;font-family:var(--mono);margin-bottom:6px">资金曲线</div>
+            <svg id="equity" viewBox="0 0 700 160" preserveAspectRatio="none" class="svg-wrap" height="160"></svg>
+          </div>
+          <div>
+            <div style="font-size:10px;color:var(--text2);text-transform:uppercase;letter-spacing:.06em;font-family:var(--mono);margin-bottom:6px">交易明细</div>
+            <div style="max-height:160px;overflow:auto">
+              <table><thead><tr><th>#</th><th>日期</th><th>方向</th><th>入场</th><th>出场</th><th>盈亏%</th></tr></thead>
+              <tbody id="tradesTbody"></tbody></table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- ══════════ S4: OPTIMIZE ══════════ -->
+<section id="s4" data-screen-label="04 调参">
+<div class="ws">
+  <div class="topbar">
+    <div class="tb-sym">
+      <span class="tb-sym-name">参数优化</span>
+      <span style="font-family:var(--mono);font-size:11px;color:var(--text2)">网格搜索 · MA双均线 · 4h</span>
+    </div>
+    <div class="tb-ohlc">
+      <span>组合上限 <b>2,000</b></span>
+      <span>已完成 <b style="color:var(--cyan)">100</b></span>
+      <span>最优收益 <b style="color:var(--bull)">+621.4%</b></span>
+    </div>
+    <div class="tb-right">
+      <button class="opt-btn" style="width:auto;padding:4px 14px;font-size:11px">网格搜索 ▶</button>
+    </div>
+  </div>
+  <div class="ws-body">
+    <div class="ws-chart">
+      <div class="canvas-wrap" style="background:var(--bg)">
+        <svg id="scatter" style="width:100%;height:100%"></svg>
+      </div>
+    </div>
+    <div class="ws-panel">
+      <div class="panel-tabs">
+        <div class="ptab on">散点图</div>
+        <div class="ptab">Top 10 排名</div>
+        <div class="ptab">参数配置</div>
+      </div>
+      <div class="panel-body">
+        <div class="opt-layout" id="optPanel">
+          <div class="opt-config">
+            <div class="oc-title">参数搜索范围</div>
+            <div class="oc-group">
+              <div class="oc-label"><span class="oc-lname">short_window</span><span class="oc-lrange">5 → 50</span></div>
+              <div class="oc-row">
+                <div><input class="oc-input" value="5"><div class="oc-hint">起始</div></div>
+                <div><input class="oc-input" value="50"><div class="oc-hint">终止</div></div>
+                <div><input class="oc-input" value="5"><div class="oc-hint">步长</div></div>
+              </div>
+            </div>
+            <div class="oc-group">
+              <div class="oc-label"><span class="oc-lname">long_window</span><span class="oc-lrange">50 → 300</span></div>
+              <div class="oc-row">
+                <div><input class="oc-input" value="50"><div class="oc-hint">起始</div></div>
+                <div><input class="oc-input" value="300"><div class="oc-hint">终止</div></div>
+                <div><input class="oc-input" value="25"><div class="oc-hint">步长</div></div>
+              </div>
+            </div>
+            <div class="oc-stat"><div class="oc-stat-l">预计组合数</div><div class="oc-stat-n">100</div><div class="oc-stat-l" style="margin-top:3px">预计 ~8s</div></div>
+            <button class="opt-btn">网格搜索 · 全速</button>
+          </div>
+          <div id="top10wrap" style="overflow:auto">
+            <div class="t10-row hdr"><div></div><div>参数</div><div>收益率</div><div>回撤</div><div>Sharpe</div><div>稳健性</div></div>
+            <div id="top10list"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- ══════════ S5: REPORT ══════════ -->
+<section id="s5" data-screen-label="05 报告">
+<div class="ws">
+  <div class="topbar">
+    <div class="tb-sym">
+      <span class="tb-sym-name">稳健性报告</span>
+      <span style="font-family:var(--mono);font-size:11px;color:var(--text2)">单步邻居法 · 帕累托前沿</span>
+    </div>
+    <div class="tb-ohlc">
+      <span>总组合 <b>200</b></span>
+      <span>通过过滤 <b style="color:var(--bull)">147</b></span>
+      <span>帕累托 <b style="color:var(--amber)">38</b></span>
+      <span>维度 <b style="color:var(--cyan)">2D</b></span>
+    </div>
+  </div>
+  <div class="ws-body">
+    <div class="ws-chart" style="flex:50">
+      <div class="canvas-wrap" style="background:var(--bg)">
+        <svg id="paretoChart" style="width:100%;height:100%"></svg>
+      </div>
+    </div>
+    <div class="ws-panel" style="flex:50">
+      <div class="panel-tabs">
+        <div class="ptab on">Top 10 推荐</div>
+        <div class="ptab">评分权重</div>
+        <div class="ptab">全量数据</div>
+      </div>
+      <div class="panel-body">
+        <div class="report-layout">
+          <div class="score-card">
+            <div class="gauge-wrap">
+              <svg viewBox="0 0 130 130" width="130" height="130">
+                <circle cx="65" cy="65" r="54" fill="none" stroke="rgba(255,255,255,.06)" stroke-width="9"/>
+                <circle cx="65" cy="65" r="54" fill="none" stroke="url(#gg)" stroke-width="9"
+                  stroke-dasharray="339" stroke-dashoffset="339" stroke-linecap="round"
+                  transform="rotate(-90 65 65)" id="gCircle"/>
+                <defs>
+                  <linearGradient id="gg" x1="0%" y1="0%" x2="100%" y2="0%">
+                    <stop offset="0%" stop-color="#26a69a"/>
+                    <stop offset="100%" stop-color="#00d4ff"/>
+                  </linearGradient>
+                </defs>
+              </svg>
+              <div class="gauge-num"><div class="gauge-big" id="gScore">0</div><div class="gauge-lbl">稳健性</div></div>
+            </div>
+            <div class="mini-grid">
+              <div class="mini-card"><div class="mini-val">200</div><div class="mini-lbl">总组合</div></div>
+              <div class="mini-card"><div class="mini-val hi">147</div><div class="mini-lbl">通过</div></div>
+              <div class="mini-card"><div class="mini-val lo">38</div><div class="mini-lbl">帕累托</div></div>
+              <div class="mini-card"><div class="mini-val" style="color:var(--cyan)">2D</div><div class="mini-lbl">参数维度</div></div>
+            </div>
+            <div style="margin-top:12px">
+              <div style="font-size:10px;color:var(--text2);text-transform:uppercase;letter-spacing:.06em;font-family:var(--mono);margin-bottom:8px">评分权重</div>
+              <div id="scoreBk"></div>
+            </div>
+          </div>
+          <div>
+            <div class="t10-row hdr"><div></div><div>参数组合</div><div>收益率</div><div>回撤</div><div>Sharpe</div><div>稳健性</div></div>
+            <div id="reportTop10"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- TWEAKS -->
+<div class="tweaks-panel" id="tweaksPanel">
+  <div class="tw-title">Tweaks <span class="tw-close" onclick="closeTweaks()">✕</span></div>
+  <div class="tw-lbl">颜色主题</div>
+  <div class="tw-btns">
+    <button class="tw-btn on" onclick="setTheme('tv')" id="t-tv">TV暗色</button>
+    <button class="tw-btn" onclick="setTheme('deep')" id="t-deep">极深</button>
+    <button class="tw-btn" onclick="setTheme('navy')" id="t-navy">深蓝</button>
+  </div>
+  <div class="tw-lbl">K线样式</div>
+  <div class="tw-btns">
+    <button class="tw-btn on" onclick="setCandle('candle')" id="t-candle">蜡烛</button>
+    <button class="tw-btn" onclick="setCandle('area')" id="t-area">面积</button>
+  </div>
+  <div class="tw-lbl">均线显示</div>
+  <div class="tw-btns">
+    <button class="tw-btn on" onclick="toggleMA()" id="t-ma">显示 MA</button>
+  </div>
+</div>
+
+<script src="btc-charts.js"></script>
+</body>
+</html>

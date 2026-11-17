@@ -10,10 +10,10 @@ import { formatUsd, formatPercent } from '@/lib/format'
 
 const NAV = [
   { label: '市场前瞻', href: '/' },
-  { label: 'K 线图表', href: '/chart' },
-  { label: '本地策略', href: '/strategies' },
+  { label: '策略研发', href: '/strategy' },
   { label: '蒙特卡洛', href: '/monte-carlo' },
-  { label: '稳健性报告', href: '/report' },
+  { label: '参数优化', href: '/report' },
+  { label: '形态归因', href: '/pattern-report' },
 ]
 
 interface TickerInfo {
@@ -59,7 +59,7 @@ export default function Header() {
   // Auth
   useEffect(() => {
     if (!isSupabaseConfigured) return
-    supabase.auth.getUser().then(({ data }: { data: { user: User | null } }) => setUser(data.user)).catch(() => setUser(null))
+    supabase.auth.getUser().then(({ data }: { data: { user: User | null } }) => setUser(data.user))
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event: AuthChangeEvent, session: Session | null) => {
       setUser(session?.user ?? null)
     })
@@ -76,9 +76,8 @@ export default function Header() {
   }, [])
 
   async function handleSignOut() {
-    try { await supabase.auth.signOut() } catch { /* account service may be offline */ }
+    await supabase.auth.signOut()
     setShowMenu(false)
-    setUser(null)
     router.push('/')
     router.refresh()
   }
@@ -167,6 +166,7 @@ export default function Header() {
                     <div style={{ fontSize: 11, color: 'var(--text-mute)', marginTop: 2 }}>{user.email}</div>
                   </div>
                   <Link href="/account" onClick={() => setShowMenu(false)} style={menuItemStyle}>账户设置</Link>
+                  <Link href="/strategies" onClick={() => setShowMenu(false)} style={menuItemStyle}>我的策略</Link>
                   <div style={{ height: 1, background: 'var(--border)', margin: '4px 0' }} />
                   <button onClick={handleSignOut} style={{ ...menuItemStyle, width: '100%', textAlign: 'left', color: 'var(--down)' }}>
                     退出登录
@@ -174,12 +174,12 @@ export default function Header() {
                 </div>
               )}
             </div>
-          ) : isSupabaseConfigured ? (
+          ) : (
             <>
               <Link href="/login" className="btn btn-ghost">登录</Link>
               <Link href="/signup" className="btn btn-primary">注册</Link>
             </>
-          ) : null}
+          )}
         </div>
       </div>
     </header>

@@ -18,7 +18,7 @@ export default function TermsPage() {
       <div style={sectionStyle}>
         <h2 style={h2Style}>1. 服务描述</h2>
         <p style={pStyle}>
-          BTC Station（以下简称"本服务"）是一个专注于比特币的量化交易分析工具，提供实时行情、K 线图表、技术指标、本地策略回测、蒙特卡洛模拟及 CSV 稳健性分析等功能。本服务仅为信息展示和分析工具，不构成任何形式的投资建议或推荐。
+          BTC Station（以下简称"本服务"）是一个专注于比特币的量化交易分析工具，提供实时行情、K 线图表、技术指标、策略回测及参数优化等功能。本服务仅为信息展示和分析工具，不构成任何形式的投资建议或推荐。
         </p>
       </div>
 
@@ -46,7 +46,7 @@ export default function TermsPage() {
       <div style={sectionStyle}>
         <h2 style={h2Style}>5. 数据来源</h2>
         <p style={pStyle}>
-          本服务的行情与 K 线数据来源于 OKX 公共 API，恐惧与贪婪指数、链上数据及新闻来自相关公开数据源。我们尽力确保数据的准确性和及时性，但不对数据的完整性、准确性或实时性做出任何保证。
+          本服务的行情数据来源于 OKX 交易所公共 API，新闻数据来源于 CoinDesk 等公开渠道。我们尽力确保数据的准确性和及时性，但不对数据的完整性、准确性或实时性做出任何保证。
         </p>
       </div>
 

@@ -33,7 +33,7 @@ export default function Sidebar() {
             <span className="l"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 3v18h18"/><path d="M7 14l4-4 4 4 6-6"/></svg>打开完整图表</span>
             <span>→</span>
           </Link>
-          <Link href="/strategies" className="btn-row ghost">
+          <Link href="/strategy" className="btn-row ghost">
             <span className="l"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="12 2 15 9 22 9 16.5 13.5 18 21 12 17 6 21 7.5 13.5 2 9 9 9"/></svg>测试一个策略</span>
             <span className="arr">→</span>
           </Link>

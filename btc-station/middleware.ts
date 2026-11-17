@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerClient, type CookieMethodsServer } from '@supabase/ssr'
 
-const PROTECTED_ROUTES = ['/account']
+const PROTECTED_ROUTES = ['/account', '/strategies', '/backtest']
 
 export async function middleware(req: NextRequest) {
   const res = NextResponse.next()

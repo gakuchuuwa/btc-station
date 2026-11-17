@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useMemo, useRef, useCallback } from 'react'
 import {
-  parseCSV, processRawData, applyFilters, scoreRows, computePareto, computeRobustness,
+  parseCSV, processRawData, applyFilters, scoreRows, computePareto, computeRobustness, epochsToRawRows,
   DEFAULT_FILTERS, DEFAULT_WEIGHTS,
   type RawRow, type Filters, type ScoreWeights,
 } from '@/lib/robustness'
@@ -341,7 +341,7 @@ export default function ReportPage() {
   const [robustnessWeight, setRobustnessWeight] = useState(0.40)
   const [robustness, setRobustness] = useState<Record<number, { robustnessScore: number; totalNeighbors: number; stableNeighbors: number; passedNeighbors: number }>>({})
   const [robProg, setRobProg] = useState(0)
-  const [source, setSource] = useState<'none' | 'csv'>('none')
+  const [source, setSource] = useState<'none' | 'localStorage' | 'csv'>('none')
   const [stratName, setStratName] = useState('')
   const [showFilters, setShowFilters] = useState(true)  // 默认展开,用户能直接看到/调过滤+权重
   const [activeTab, setActiveTab] = useState<'top10' | 'scatter' | 'all' | 'surface'>('top10')
@@ -353,25 +353,44 @@ export default function ReportPage() {
   const abortRef = useRef<(() => void) | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
-  // Restore only this page's local session data. Legacy server-optimizer results are ignored.
+  // Auto-load from storage
   useEffect(() => {
+    // Priority 1: New data from Python Hyperopt via localStorage
     try {
-      const session = sessionStorage.getItem('report_page_state')
-      if (!session) return
-      const st = JSON.parse(session)
-      if (st.source === 'csv' && Array.isArray(st.rawData) && st.rawData.length > 0) {
-        setRawData(st.rawData)
-        setSource('csv')
-        if (st.stratName) setStratName(st.stratName)
-        if (st.filters) setFilters(st.filters)
-        if (st.weights) setWeights(st.weights)
-        if (st.robustnessWeight) setRobustnessWeight(st.robustnessWeight)
-        if (st.robustness) setRobustness(st.robustness)
-        if (st.showFilters !== undefined) setShowFilters(st.showFilters)
-        if (st.activeTab) setActiveTab(st.activeTab)
-        if (st.top10Sort) setTop10Sort(st.top10Sort)
+      const saved = localStorage.getItem('optimize_epochs')
+      if (saved) {
+        const epochs = JSON.parse(saved)
+        if (Array.isArray(epochs) && epochs.length > 0) {
+          setRawData(epochsToRawRows(epochs))
+          setSource('localStorage')
+          setStratName(localStorage.getItem('optimize_strategy_name') || '策略')
+          
+          localStorage.removeItem('optimize_epochs')
+          localStorage.removeItem('optimize_strategy_name')
+          return
+        }
       }
-    } catch { /* ignore invalid or unavailable browser storage */ }
+    } catch {}
+
+    // Priority 2: Session storage from this page (filters, csv uploads, etc.)
+    const session = sessionStorage.getItem('report_page_state')
+    if (session) {
+      try {
+        const st = JSON.parse(session)
+        if (st.rawData && st.rawData.length > 0) {
+          setRawData(st.rawData)
+          if (st.source) setSource(st.source)
+          if (st.stratName) setStratName(st.stratName)
+          if (st.filters) setFilters(st.filters)
+          if (st.weights) setWeights(st.weights)
+          if (st.robustnessWeight) setRobustnessWeight(st.robustnessWeight)
+          if (st.robustness) setRobustness(st.robustness)
+          if (st.showFilters !== undefined) setShowFilters(st.showFilters)
+          if (st.activeTab) setActiveTab(st.activeTab)
+          if (st.top10Sort) setTop10Sort(st.top10Sort)
+        }
+      } catch (e) {}
+    }
   }, [])
 
   // Save session state
@@ -635,7 +654,7 @@ export default function ReportPage() {
 
       {/* ── TV 风格 Topbar ── */}
       <div style={{ flexShrink: 0, height: 50, display: 'flex', alignItems: 'center', padding: '0 20px', background: '#1e222d', borderBottom: '1px solid #363a45', gap: 16 }}>
-        <span style={{ fontWeight: 700, fontSize: 15, color: '#d1d4dc' }}>稳健性分析</span>
+        <span style={{ fontWeight: 700, fontSize: 15, color: '#d1d4dc' }}>优化报告</span>
         <span
           title="评分逻辑:Calmar 35% + Sortino 30% + Profit Factor 25% + NetReturn 10% + Sharpe 0%。过滤:盈亏比 ≥1.5、Sortino ≥1.0、PF ≥1.5、回撤 ≤40%。点击「过滤设置」可调整。"
           style={{
@@ -643,27 +662,28 @@ export default function ReportPage() {
             background: 'rgba(247,147,26,.12)', color: '#f7931a',
             border: '1px solid rgba(247,147,26,.3)', cursor: 'help',
           }}
-        >🧪 本地 CSV 稳健性分析</span>
+        >🎯 BTC 趋势策略模式</span>
         {source !== 'none' && (
           <>
             {/* 显眼数据源徽章 */}
             <span style={{
               padding: '4px 10px', borderRadius: 4, fontSize: 11, fontFamily: "'JetBrains Mono',monospace",
-              background: 'rgba(240,185,11,.12)',
-              color: '#f0b90b',
-              border: '1px solid rgba(240,185,11,.3)',
+              background: source === 'localStorage' ? 'rgba(0,212,255,.12)' : 'rgba(240,185,11,.12)',
+              color: source === 'localStorage' ? '#00d4ff' : '#f0b90b',
+              border: `1px solid ${source === 'localStorage' ? 'rgba(0,212,255,.3)' : 'rgba(240,185,11,.3)'}`,
               display: 'inline-flex', alignItems: 'center', gap: 6,
             }}>
               <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'currentColor' }} />
-              数据源：上传的 CSV 文件
+              {source === 'localStorage' ? '数据源:站内上次优化结果' : '数据源:上传的 CSV 文件'}
             </span>
             <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 12, color: '#787b86', display: 'flex', alignItems: 'center' }}>
               {stratName} <span style={{ margin: '0 6px' }}>·</span> {rawData.length} 个组合
             </span>
-            {/* 清除当前分析数据 */}
+            {/* 清除按钮:既清屏也清 localStorage,防止下次刷新又自动加载 */}
             <button
               onClick={() => {
-                if (!confirm('清除当前分析数据？')) return;
+                if (!confirm('清除当前分析数据?如果是站内优化结果,会同时清除浏览器缓存,下次刷新不再自动加载。')) return;
+                try { localStorage.removeItem('optimize_epochs') } catch {}
                 setRawData([]); setSource('none'); setStratName(''); setRobustness({}); setRobProg(0);
               }}
               title="清空当前数据,可上传新 CSV"
@@ -735,9 +755,19 @@ export default function ReportPage() {
         <div style={{ padding: '80px 40px', textAlign: 'center', maxWidth: 600, margin: '0 auto' }}>
           <div style={{ fontSize: 40, marginBottom: 16 }}>🔬</div>
           <div style={{ fontSize: 16, fontWeight: 700, color: '#d1d4dc', marginBottom: 8 }}>暂无分析数据</div>
-          <div style={{ fontSize: 13, color: '#787b86', lineHeight: 1.8, marginBottom: 24 }}>
-            选择包含参数组合与回测指标的 CSV 文件后，即可在浏览器本地进行筛选、评分和邻域稳健性分析。此页分析导入的结果，不会自动生成参数优化数据。
+          <div style={{ fontSize: 13, color: '#787b86', lineHeight: 1.8, marginBottom: 32 }}>完成以下步骤后，报告将自动加载：</div>
+          <div className="step-flow">
+            {[{ step: '1', text: '策略页写代码' }, { step: '2', text: '运行参数优化' }, { step: '3', text: '返回此页查看报告' }].map((s, i) => (
+              <div key={i} style={{ display: 'flex', alignItems: 'center' }}>
+                <div className="step-node">
+                  <div className="step-circle">{s.step}</div>
+                  <div style={{ fontSize: 12, color: '#787b86' }}>{s.text}</div>
+                </div>
+                {i < 2 && <div className="step-line" />}
+              </div>
+            ))}
           </div>
+          <div style={{ fontSize: 12, color: '#363a45', margin: '24px 0 16px' }}>或者</div>
           <button onClick={() => fileRef.current?.click()} style={{ padding: '10px 28px', borderRadius: 8, fontSize: 14, fontWeight: 700, border: 'none', background: '#26a69a', color: '#fff', cursor: 'pointer', boxShadow: '0 2px 12px rgba(38,166,154,0.3)' }}>
             上传 CSV 文件
           </button>

@@ -3,7 +3,7 @@ import Header from '@/components/Header'
 
 export const metadata: Metadata = {
   title: '蒙特卡洛风控 | BTC Station',
-  description: '在浏览器中运行蒙特卡洛抽样，探索 BTC 策略收益、回撤与风险的可能分布。',
+  description: '10000次重抽样蒙特卡洛压力测试，评估量化策略的破产概率与真实回撤分布。',
 }
 
 export default function MonteCarloLayout({ children }: { children: React.ReactNode }) {
