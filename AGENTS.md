@@ -58,13 +58,14 @@ fetch('/py-api/api/xxx')
 
 **根本原因**：Windows NTFS 不支持冒号 `:` 作为文件名字符。当 `data_feeder.py` 以 `BTC/USDT:USDT` 为 symbol 写文件时，系统把 `BTC_USDT:USDT_4h.csv` 解析为 `BTC_USDT` 文件的**备用数据流（Alternate Data Stream, ADS）**，只写入了极少量数据（300行）。后续 `get_local_data` 读取 ADS 流，拿到的是这 300 行，而非完整 15998 行。
 
-**修复**：`data_feeder.py` 的 `get_local_data` 和 `fetch_ohlcv` 里已做 `symbol.split(':')[0]` 剥离永续后缀，使所有调用统一指向 `BTC_USDT_4h.csv`。
+**修复**：`data_feeder.py` 用 `_filename()` 统一文件命名——含 `:` 后缀的永续 symbol 用 `_SWAP` 标记（`BTC/USDT:USDT` → `BTC_USDT_SWAP_4h.csv`），现货不带后缀（`BTC/USDT` → `BTC_USDT_4h.csv`）。永续和现货数据分开存储，永续不再误读现货。
 
 **验证命令**：
 ```python
 from data_feeder import DataFeeder
 fd = DataFeeder('okx')
-print(len(fd.get_local_data('BTC/USDT:USDT', '4h')))  # 应输出 ~15998，否则说明修复失效
+print(len(fd.get_local_data('BTC/USDT:USDT', '4h')))  # 永续：~14223 根
+print(len(fd.get_local_data('BTC/USDT', '4h')))        # 现货：~16321 根
 ```
 
 **日后如果回测笔数异常少，第一步就跑上面这个验证。**

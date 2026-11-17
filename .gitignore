@@ -5,6 +5,7 @@ backend/*.pyc
 backend/.env
 backend/custom_strategy.py
 backend/data/*.csv
+!backend/data/BTC_USDT_SWAP_funding_binance.csv
 backend/promo_out/
 
 # === Node.js ===
@@ -31,3 +32,11 @@ Thumbs.db
 
 # YoYo AI version control directory
 .yoyo/
+
+# === 临时/备份/构建缓存 ===
+*.tsbuildinfo
+*.bak
+*.bak_*
+scratch/
+backend/scratch/
+claudedocs/
