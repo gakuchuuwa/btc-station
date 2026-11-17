@@ -2,8 +2,8 @@ import type { Metadata } from 'next'
 import Header from '@/components/Header'
 
 export const metadata: Metadata = {
-  title: 'BTC Station | 比特币宏观周期与链上数据看板',
-  description: '汇聚全球顶尖机构的比特币数据，涵盖周期罗盘、流动性指标、季节性规律与 AI 新闻速递。',
+  title: 'BTC Station | 比特币行情与周期看板',
+  description: '基于 OKX、Alternative.me 与 mempool.space 公共数据展示 BTC 行情、周期指标、市场情绪及链上信息。',
 }
 import Footer from '@/components/Footer'
 

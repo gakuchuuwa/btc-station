@@ -119,7 +119,7 @@ export default function PriceCard({ summary, klines, isUp, tf, onTfChange }: Pro
           <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--text-mute)', display: 'flex', alignItems: 'center', gap: 5 }}>
             <span className="live-dot" />实时
           </span>
-          <Link href="/strategy" className="btn btn-primary" style={{ height: 24, fontSize: 11, padding: '0 10px' }}>
+          <Link href="/strategies" className="btn btn-primary" style={{ height: 24, fontSize: 11, padding: '0 10px' }}>
             ▶ 运行策略
           </Link>
         </div>

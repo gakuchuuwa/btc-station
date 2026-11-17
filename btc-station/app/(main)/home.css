@@ -176,7 +176,7 @@
 .home-page .wg-sub{font-size:10px;color:var(--mu);margin-top:3px;line-height:1.4}
 .home-page .wg-sub b{color:var(--tx);font-family:var(--mono);font-weight:500}
 
-/* split bar (爆仓) */
+/* long/short ratio bar */
 .home-page .wg-split-stat{display:flex;align-items:baseline;gap:6px;margin-bottom:8px}
 .home-page .wg-split-big{font-size:18px;font-weight:700;font-family:var(--mono);color:var(--tx);letter-spacing:-.02em;line-height:1}
 .home-page .wg-split-pct{font-size:10px;color:var(--dn);font-family:var(--mono)}
@@ -233,14 +233,6 @@
 .home-page .wg-sp-x{color:var(--mu);font-size:9.5px}
 .home-page .wg-sp-px{color:var(--tx);font-weight:500;text-align:right}
 .home-page .wg-sp-spr{font-weight:700;text-align:right;font-size:10px}
-
-/* correlation gauge */
-.home-page .wg-corr{display:flex;flex-direction:column;justify-content:center;height:100%;gap:8px}
-.home-page .wg-corr-big{font-size:22px;font-weight:700;font-family:var(--mono);color:var(--tx);letter-spacing:-.03em;line-height:1}
-.home-page .wg-corr-bar-wrap{position:relative;height:6px;margin:6px 0 4px}
-.home-page .wg-corr-bar{position:absolute;inset:0;background:linear-gradient(90deg,var(--dn) 0%,rgba(255,255,255,.06) 50%,var(--up) 100%);border-radius:3px;opacity:.4}
-.home-page .wg-corr-marker{position:absolute;top:-2px;bottom:-2px;width:3px;background:var(--tx);border-radius:1px;box-shadow:0 0 5px rgba(255,255,255,.5);transition:left .6s ease}
-.home-page .wg-corr-scale{display:flex;justify-content:space-between;font-size:8.5px;color:var(--di);font-family:var(--mono)}
 
 /* distance bar */
 .home-page .wg-dist{display:flex;flex-direction:column;justify-content:center;gap:7px;height:100%}
@@ -521,9 +513,6 @@
 .home-page .wg-sp-row { font-size: 12.5px; padding: 4px 0; }
 .home-page .wg-sp-x { font-size: 11px; }
 .home-page .wg-sp-spr { font-size: 11.5px; }
-
-.home-page .wg-corr-big { font-size: 26px; }
-.home-page .wg-corr-scale { font-size: 10px; }
 
 .home-page .wg-sig-ico { font-size: 22px; }
 .home-page .wg-sig-light { width: 56px; height: 56px; }

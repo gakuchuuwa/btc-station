@@ -1,2 +1,2 @@
-/** 回测初始本金默认值（仅作 UI 初始值；实际以请求参数与后端 metrics 为准） */
+/** 回测初始本金的 UI 默认值；实际结果由本地回测引擎计算。 */
 export const DEFAULT_INITIAL_CAPITAL = 10_000

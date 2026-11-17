@@ -3,7 +3,7 @@ import type { Metadata } from 'next'
 
 export const metadata: Metadata = {
   title: '关于 — BTC Station',
-  description: 'BTC Station 是一款由独立开发者构建的量化回测与分析工作台，致力于让量化研究平民化。',
+  description: 'BTC Station 是一款比特币行情、图表与本地量化研究工作台。',
 }
 
 const sectionStyle: React.CSSProperties = { marginBottom: 28 }
@@ -19,14 +19,14 @@ export default function AboutPage() {
       <div style={sectionStyle}>
         <h2 style={h2Style}>项目初衷</h2>
         <p style={pStyle}>
-          BTC Station (quant-lab.org) 是一款由独立开发者构建的量化分析工作台。我们的愿景是“让量化分析平民化”——无需配置复杂的本地环境，任何人都可以随时随地打开网页，在线编写策略、极速回测、寻找最佳参数组合，并进行专业的稳健性评估。
+          BTC Station (quant-lab.org) 是一款比特币行情与量化研究工作台，重点提供公开市场数据、多周期 K 线图表、浏览器内示例策略回测、蒙特卡洛模拟，以及基于 CSV 的稳健性分析。核心研究功能在本地运行，不依赖专用 Python 回测服务。
         </p>
       </div>
 
       <div style={sectionStyle}>
         <h2 style={h2Style}>核心功能</h2>
         <p style={pStyle}>
-          我们为研究者提供一条真实、透明、可复查的专业量化研究流水线。通过基于 VectorBT 的云端架构，用户可以在极短时间内完成复杂的参数网格扫描与蒙特卡洛压力测试。我们致力于提供纯粹的技术工具，帮助用户客观评估策略表现，识别常见的“过拟合”陷阱。
+          行情、K 线和公开衍生品数据来自 OKX，情绪与链上信息来自公开 API。策略信号和回测由浏览器中的 TypeScript 引擎计算；参数邻域与 CSV 报告分析也在本地完成。历史结果依赖所选样本、费用和滑点假设，不保证未来表现。
         </p>
       </div>
 

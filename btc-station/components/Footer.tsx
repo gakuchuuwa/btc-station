@@ -22,13 +22,15 @@ export default function Footer() {
             <ul>
               <li><Link href="/">行情</Link></li>
               <li><Link href="/chart">图表</Link></li>
-              <li><Link href="/strategy">策略</Link></li>
-              <li><Link href="/report">报告</Link></li>
+              <li><Link href="/strategies">本地策略</Link></li>
+              <li><Link href="/hyperopt">本地参数搜索</Link></li>
+              <li><Link href="/monte-carlo">蒙特卡洛</Link></li>
+              <li><Link href="/report">稳健性分析</Link></li>
             </ul>
           </div>
           <div className="foot-col">
             <div className="section-label">数据源</div>
-            <ul><li>OKX 公共 API</li><li>CoinGecko</li><li>CoinDesk RSS</li></ul>
+            <ul><li>OKX 公共 API</li><li>mempool.space</li><li>Alternative.me</li><li>Google News RSS</li></ul>
           </div>
           <div className="foot-col">
             <div className="section-label">法律</div>

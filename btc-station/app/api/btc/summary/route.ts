@@ -11,10 +11,12 @@ export async function GET() {
       return NextResponse.json(cache.data)
     }
 
-    const [ticker, marketCap] = await Promise.all([
-      fetchOkxTicker(),
-      fetchMarketCap(),
+    const [tickerResult, marketCap] = await Promise.all([
+      fetchOkxTicker().catch(() => null),
+      fetchMarketCap().catch(() => 0),
     ])
+    if (!tickerResult) throw new Error('OKX 行情暂不可用')
+    const ticker = tickerResult
 
     const change24h =
       ticker.open24h > 0

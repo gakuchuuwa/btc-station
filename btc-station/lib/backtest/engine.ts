@@ -1,5 +1,5 @@
-import { KlineBar } from '../okx';
-import { Signal, StrategyParams } from '../strategies/types';
+import type { KlineBar } from '../okx'
+import type { Signal } from '../strategies/types'
 
 export interface BacktestConfig {
   market: 'spot' | 'futures';
@@ -77,169 +77,194 @@ export async function runBacktest(
   signals: Signal[],
   config: BacktestConfig
 ): Promise<BacktestResult> {
-  let cash = config.initial_capital;
-  let position = 0; // Asset amount
-  let entry_price = 0;
-  let entry_time = 0;
-  let entry_index = 0;
-  let margin_allocated = 0;
-  
-  const trades: Trade[] = [];
-  const equity_curve: EquityPoint[] = [];
+  if (!Array.isArray(candles) || candles.length === 0) throw new Error('没有可用于回测的 K 线数据')
+  if (!Array.isArray(signals) || signals.length !== candles.length) throw new Error('策略信号数量与 K 线数量不匹配')
+  if (signals.some(signal => signal !== -1 && signal !== 0 && signal !== 1)) throw new Error('策略信号只能是 -1、0 或 1')
+  if (!config || (config.market !== 'spot' && config.market !== 'futures')) throw new Error('市场类型无效')
+  if (!['all_in', 'fixed_pct', 'fixed_amount'].includes(config.position_sizing)) throw new Error('仓位计算方式无效')
+  if (!Number.isFinite(config.initial_capital) || config.initial_capital <= 0) throw new Error('初始资金必须大于 0')
+  if (config.market === 'futures' && (!Number.isFinite(config.leverage) || config.leverage <= 0)) throw new Error('杠杆必须大于 0')
+  if (config.position_sizing !== 'all_in' && (!Number.isFinite(config.position_value) || config.position_value <= 0)) {
+    throw new Error('仓位金额必须大于 0')
+  }
+  if (config.position_sizing === 'fixed_pct' && config.position_value > 100) throw new Error('固定仓位比例不能超过 100%')
+  if (!Number.isFinite(config.fee_pct) || config.fee_pct < 0 || config.fee_pct >= 100 ||
+      !Number.isFinite(config.slippage_pct) || config.slippage_pct < 0 || config.slippage_pct >= 100) {
+    throw new Error('手续费和滑点必须是 0% 至 100% 之间的有效数值')
+  }
+  if (config.funding_rate_pct != null && !Number.isFinite(config.funding_rate_pct)) throw new Error('资金费率必须是有效数值')
+  if (candles.some((candle, i) =>
+    ![candle.time, candle.open, candle.high, candle.low, candle.close].every(Number.isFinite) ||
+    candle.close <= 0 || candle.open <= 0 || candle.high <= 0 || candle.low <= 0 ||
+    candle.high < Math.max(candle.open, candle.close) || candle.low > Math.min(candle.open, candle.close) ||
+    candle.high < candle.low ||
+    (i > 0 && candle.time <= candles[i - 1].time)
+  )) {
+    throw new Error('K 线数据无效或未按时间升序排列')
+  }
 
-  const isFutures = config.market === 'futures';
-  const leverage = isFutures ? config.leverage : 1;
-  const maintenanceMarginRate = 0.005; // 0.5% MMR for BTC
-  const fundingRate8h = (config.funding_rate_pct || 0.01) / 100;
+  let cash = config.initial_capital
+  let position = 0
+  let entryPrice = 0
+  let entryTime = 0
+  let entryIndex = 0
+  let marginAllocated = 0
+  let entryFee = 0
+
+  const trades: Trade[] = []
+  const equity_curve: EquityPoint[] = []
+  const isFutures = config.market === 'futures'
+  const leverage = isFutures ? config.leverage : 1
+  const feeRate = config.fee_pct / 100
+  const slippageRate = config.slippage_pct / 100
+  const maintenanceMarginRate = 0.005
+  const fundingRate8h = (config.funding_rate_pct ?? 0.01) / 100
 
   for (let i = 0; i < candles.length; i++) {
-    const candle = candles[i];
-    const signal = signals[i];
+    const candle = candles[i]
+    const signal = signals[i]
+    let wasLiquidated = false
 
-    // --- CHECK LIQUIDATION BEFORE PROCESSING NEW SIGNALS ---
+    // Long futures only: estimate liquidation using candle low and the configured leverage.
     if (position > 0 && isFutures) {
-      // Liquidation Price calculation for Long
-      const liqPrice = entry_price * (1 - 1 / leverage + maintenanceMarginRate);
-      
-      if (candle.low <= liqPrice) {
-        // Liquidated!
-        const exit_price = Math.min(candle.open, liqPrice); // Fill at worst case liq price
-        
-        // When liquidated, you lose all allocated margin
-        const pnl = -margin_allocated; 
-        const fee = (position * exit_price) * (config.fee_pct / 100);
-        
-        // Approximate funding fee (deducted continuously)
-        const durationHours = (candle.time - entry_time) / 3600;
-        const funding_fee = (durationHours / 8) * fundingRate8h * (position * entry_price);
+      const liquidationPrice = entryPrice * (1 - 1 / leverage + maintenanceMarginRate)
+      if (candle.low <= liquidationPrice) {
+        wasLiquidated = true
+        const exitPrice = Math.min(candle.open, liquidationPrice)
+        const exitFee = position * exitPrice * feeRate
+        const durationHours = Math.max(0, (candle.time - entryTime) / 3600)
+        const fundingFee = (durationHours / 8) * fundingRate8h * (position * entryPrice)
+        const grossPnl = position * (exitPrice - entryPrice)
+        const pnl = grossPnl - entryFee - exitFee - fundingFee
 
         trades.push({
-          entry_time,
+          entry_time: entryTime,
           exit_time: candle.time,
-          entry_price,
-          exit_price,
+          entry_price: entryPrice,
+          exit_price: exitPrice,
           size: position,
           leverage,
-          margin: margin_allocated,
+          margin: marginAllocated,
           pnl,
-          pnl_pct: -100, // Lost 100% of margin
-          fee,
-          funding_fee,
-          duration_bars: i - entry_index,
-          reason: 'liquidation'
-        });
+          pnl_pct: marginAllocated > 0 ? pnl / marginAllocated * 100 : 0,
+          fee: entryFee + exitFee,
+          funding_fee: fundingFee,
+          duration_bars: i - entryIndex,
+          reason: 'liquidation',
+        })
 
-        position = 0;
-        margin_allocated = 0;
-        entry_price = 0;
-        entry_time = 0;
+        // Realize the position's loss at the estimated liquidation fill; the entry fee was paid on entry.
+        cash += marginAllocated + grossPnl - exitFee - fundingFee
+        position = 0
+        marginAllocated = 0
+        entryFee = 0
+        entryPrice = 0
+        entryTime = 0
       }
     }
 
-    // --- PROCESS SIGNALS ---
-    // Buy (Long)
-    if (signal === 1 && position === 0) {
-      const marginToUse = calculatePositionMargin(cash, config);
+    // Entry signals are evaluated at the bar close. A liquidated position cannot re-enter
+    // on the same candle, which would otherwise use information from the candle low.
+    if (!wasLiquidated && signal === 1 && position === 0) {
+      const requestedMargin = calculatePositionMargin(cash, config)
+      const maxAffordableMargin = cash / (1 + leverage * feeRate)
+      const marginToUse = Math.min(requestedMargin, maxAffordableMargin)
       if (marginToUse > 0) {
-        const notionalValue = marginToUse * leverage;
-        const fillPrice = candle.close * (1 + config.slippage_pct / 100);
-        const fee = notionalValue * (config.fee_pct / 100);
-        
-        // We deduct the entry fee from cash immediately
-        cash -= fee;
-        
-        const size = notionalValue / fillPrice;
-
-        position = size;
-        entry_price = fillPrice;
-        entry_time = candle.time;
-        entry_index = i;
-        margin_allocated = marginToUse;
-        cash -= margin_allocated;
+        const notionalValue = marginToUse * leverage
+        const fillPrice = candle.close * (1 + slippageRate)
+        entryFee = notionalValue * feeRate
+        cash -= entryFee
+        position = notionalValue / fillPrice
+        entryPrice = fillPrice
+        entryTime = candle.time
+        entryIndex = i
+        marginAllocated = marginToUse
+        cash -= marginAllocated
       }
     }
 
-    // Sell (Close Long)
-    if (signal === -1 && position > 0) {
-      const fillPrice = candle.close * (1 - config.slippage_pct / 100);
-      const notionalExitValue = position * fillPrice;
-      const fee = notionalExitValue * (config.fee_pct / 100);
-      
-      const durationHours = (candle.time - entry_time) / 3600;
-      const funding_fee = isFutures ? ((durationHours / 8) * fundingRate8h * (position * entry_price)) : 0;
+    if (!wasLiquidated && signal === -1 && position > 0) {
+      const fillPrice = candle.close * (1 - slippageRate)
+      const exitNotional = position * fillPrice
+      const exitFee = exitNotional * feeRate
+      const durationHours = Math.max(0, (candle.time - entryTime) / 3600)
+      const fundingFee = isFutures
+        ? (durationHours / 8) * fundingRate8h * (position * entryPrice)
+        : 0
+      const grossPnl = exitNotional - position * entryPrice
+      const pnl = grossPnl - fundingFee - entryFee - exitFee
 
-      const pnl = notionalExitValue - (position * entry_price) - funding_fee;
-      
       trades.push({
-        entry_time,
+        entry_time: entryTime,
         exit_time: candle.time,
-        entry_price,
+        entry_price: entryPrice,
         exit_price: fillPrice,
         size: position,
         leverage,
-        margin: margin_allocated,
+        margin: marginAllocated,
         pnl,
-        pnl_pct: (pnl / margin_allocated) * 100,
-        fee,
-        funding_fee,
-        duration_bars: i - entry_index,
-        reason: 'signal'
-      });
+        pnl_pct: marginAllocated > 0 ? pnl / marginAllocated * 100 : 0,
+        fee: entryFee + exitFee,
+        funding_fee: fundingFee,
+        duration_bars: i - entryIndex,
+        reason: 'signal',
+      })
 
-      // Return margin + pnl - exit_fee to cash
-      cash += (margin_allocated + pnl - fee);
-      position = 0;
-      margin_allocated = 0;
+      // Entry fee is already reflected in cash; realize gross PnL and remaining costs.
+      cash += marginAllocated + grossPnl - fundingFee - exitFee
+      position = 0
+      marginAllocated = 0
+      entryFee = 0
+      entryPrice = 0
+      entryTime = 0
     }
 
-    // --- UPDATE EQUITY CURVE ---
-    let current_equity = cash;
+    let currentEquity = cash
     if (position > 0) {
-      const notionalNow = position * candle.close;
-      const unrealizedPnl = notionalNow - (position * entry_price);
-      current_equity += (margin_allocated + unrealizedPnl);
+      currentEquity += marginAllocated + position * (candle.close - entryPrice)
     }
-    equity_curve.push({ time: candle.time, equity: current_equity });
+    equity_curve.push({ time: candle.time, equity: currentEquity })
   }
 
-  // Force close at the end if holding
+  // Close any remaining position at the final bar so the result is fully realized.
   if (position > 0) {
-    const candle = candles[candles.length - 1];
-    const fillPrice = candle.close * (1 - config.slippage_pct / 100);
-    const notionalExitValue = position * fillPrice;
-    const fee = notionalExitValue * (config.fee_pct / 100);
-    
-    const durationHours = (candle.time - entry_time) / 3600;
-    const funding_fee = isFutures ? ((durationHours / 8) * fundingRate8h * (position * entry_price)) : 0;
-
-    const pnl = notionalExitValue - (position * entry_price) - funding_fee;
+    const candle = candles[candles.length - 1]
+    const fillPrice = candle.close * (1 - slippageRate)
+    const exitNotional = position * fillPrice
+    const exitFee = exitNotional * feeRate
+    const durationHours = Math.max(0, (candle.time - entryTime) / 3600)
+    const fundingFee = isFutures
+      ? (durationHours / 8) * fundingRate8h * (position * entryPrice)
+      : 0
+    const grossPnl = exitNotional - position * entryPrice
+    const pnl = grossPnl - fundingFee - entryFee - exitFee
 
     trades.push({
-      entry_time,
+      entry_time: entryTime,
       exit_time: candle.time,
-      entry_price,
+      entry_price: entryPrice,
       exit_price: fillPrice,
       size: position,
       leverage,
-      margin: margin_allocated,
+      margin: marginAllocated,
       pnl,
-      pnl_pct: (pnl / margin_allocated) * 100,
-      fee,
-      funding_fee,
-      duration_bars: candles.length - 1 - entry_index,
-      reason: 'manual'
-    });
+      pnl_pct: marginAllocated > 0 ? pnl / marginAllocated * 100 : 0,
+      fee: entryFee + exitFee,
+      funding_fee: fundingFee,
+      duration_bars: candles.length - 1 - entryIndex,
+      reason: 'manual',
+    })
 
-    cash += (margin_allocated + pnl - fee);
-    position = 0;
-    equity_curve[equity_curve.length - 1].equity = cash;
+    cash += marginAllocated + grossPnl - fundingFee - exitFee
+    position = 0
+    equity_curve[equity_curve.length - 1].equity = cash
   }
 
   return {
     trades,
     equity_curve,
-    metrics: calculateMetrics(trades, equity_curve, candles, config)
-  };
+    metrics: calculateMetrics(trades, equity_curve, candles, config),
+  }
 }
 
 function calculateMetrics(
@@ -299,7 +324,12 @@ function calculateMetrics(
     const variance = returns.reduce((sum, r) => sum + Math.pow(r - mean_return, 2), 0) / returns.length;
     const std_dev = Math.sqrt(variance);
     if (std_dev > 0) {
-      sharpe_ratio = (mean_return / std_dev) * Math.sqrt(365);
+      const intervals = candles.slice(1).map((candle, i) => candle.time - candles[i].time).filter(seconds => seconds > 0)
+      const averageIntervalSeconds = intervals.length
+        ? intervals.reduce((sum, seconds) => sum + seconds, 0) / intervals.length
+        : 86_400
+      const periodsPerYear = (365.25 * 86_400) / averageIntervalSeconds
+      sharpe_ratio = (mean_return / std_dev) * Math.sqrt(periodsPerYear);
     }
   }
 

@@ -258,7 +258,7 @@ export default function StrategyDetailPage() {
             <div className="flex flex-col items-center justify-center h-full text-[var(--text-mute)] py-12">
               <div className="text-3xl mb-3">🧪</div>
               <p>调整参数并点击"运行回测"查看结果</p>
-              <p className="text-xs mt-2 opacity-60">本策略基于现货数据回测，永续合约精确模拟将在 Pro 版上线</p>
+              <p className="text-xs mt-2 opacity-60">本地引擎当前仅模拟现货做多；不含永续资金费率、强平或真实订单执行。</p>
             </div>
           )}
         </div>

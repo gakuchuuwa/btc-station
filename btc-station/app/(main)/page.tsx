@@ -11,8 +11,7 @@ import type { BtcSummary, NewsItem } from '@/types/btc'
 
 interface MarketData {
   funding_rates: Record<string, number | null>
-  open_interest: { binance_usd?: number | null; okx_btc?: number | null }
-  // Binance Futures 大户多空账户比（替代原 24h 爆仓——allForceOrders 端点不开放）
+  open_interest: { okx_usd?: number | null; okx_btc?: number | null }
   long_short_ratio: { long_pct: number; short_pct: number; ratio: number } | null
   prices: Record<string, number | null>
   spread_pct: number | null
@@ -28,8 +27,6 @@ interface OnchainData {
 
 interface MacroData {
   fear_greed: { value: number; label: string; prev?: number } | null
-  dxy: number | null
-  btc_spx_corr_30d: number | null
   wma200: { value: number; current_price: number; distance_pct: number } | null
   pi_cycle: { sma111: number; sma350x2: number; distance_pct: number; triggered: boolean } | null
 }
@@ -42,7 +39,7 @@ interface SeasonalityData {
 // 图层定义（与 mockup LAYERS 对齐）
 // ════════════════════════════════════════════════════════════════════════════
 
-type LayerKey = 'news' | 'sentiment' | 'derivative' | 'onchain' | 'macro' | 'cycle'
+type LayerKey = 'news' | 'sentiment' | 'derivative' | 'onchain' | 'cycle'
 
 interface LayerDef {
   key: string  // 单字母 class（n/s/d/o/m/c）
@@ -53,16 +50,15 @@ interface LayerDef {
 const LAYERS: Record<LayerKey, LayerDef> = {
   news: { key: 'n', name: '实时资讯', desc: 'BTC 中文新闻 / 链上事件' },
   sentiment: { key: 's', name: '市场情绪', desc: '恐慌贪婪 / 共识信号' },
-  derivative: { key: 'd', name: '衍生品', desc: '爆仓 / OI / 资金费率' },
+  derivative: { key: 'd', name: '衍生品', desc: '多空比 / OI / 资金费率' },
   onchain: { key: 'o', name: '链上', desc: '算力 / 内存池 / 出块' },
-  macro: { key: 'm', name: '宏观', desc: 'DXY / 跨资产相关性' },
   cycle: { key: 'c', name: '周期', desc: '200WMA / Pi Cycle' },
 }
 
 type WidgetType =
-  | 'news_feed' | 'gauge_fng' | 'split_liq' | 'spark_oi' | 'fund_matrix'
+  | 'news_feed' | 'gauge_fng' | 'long_short_ratio' | 'spark_oi' | 'fund_matrix'
   | 'spread_table' | 'spark_hash' | 'mempool_bars' | 'signal_pi'
-  | 'distance' | 'spark_dxy' | 'correlation' | 'countdown'
+  | 'distance' | 'countdown'
 
 interface WidgetDef {
   id: string
@@ -74,8 +70,7 @@ interface WidgetDef {
   row?: 2 | 3 | 4
 }
 
-// 12 数据 widget（新闻被抽出来单独渲染在 grid 之后）
-// 总 cells = 4 + 4 + 4 + 2×9 = 30（整除 6 列 = 5 行整齐）
+// 10 个可用数据 widget（新闻被抽出来单独渲染在 grid 之后）
 const WIDGETS: WidgetDef[] = [
   // ── 双格高强调：情绪 & 顶部信号 ──
   { id: 'fng', layer: 'sentiment', name: '恐慌贪婪指数', src: 'Alt.me', type: 'gauge_fng', span: 2, row: 2 },
@@ -83,23 +78,36 @@ const WIDGETS: WidgetDef[] = [
   // ── 双倍宽：距离/趋势条 ──
   { id: 'wma200', layer: 'cycle', name: '200 周均线距离', src: '计算', type: 'distance', span: 4 },
   // ── 衍生品 4 个 ──
-  { id: 'liq', layer: 'derivative', name: '多空账户比', src: 'Binance 大户', type: 'split_liq', span: 2 },
+  { id: 'liq', layer: 'derivative', name: '多空账户比', src: 'OKX 免费公开数据', type: 'long_short_ratio', span: 2 },
   { id: 'oi', layer: 'derivative', name: '持仓量 OI', src: 'OKX', type: 'spark_oi', span: 2 },
-  { id: 'funding', layer: 'derivative', name: '资金费率矩阵', src: '多交易所', type: 'fund_matrix', span: 2 },
-  { id: 'spread', layer: 'derivative', name: '多交易所价差', src: 'CCXT', type: 'spread_table', span: 2 },
+  { id: 'funding', layer: 'derivative', name: '资金费率', src: 'OKX 永续', type: 'fund_matrix', span: 2 },
+  { id: 'spread', layer: 'derivative', name: '现货 / 永续价差', src: 'OKX', type: 'spread_table', span: 2 },
   // ── 链上 3 个 ──
   { id: 'hash', layer: 'onchain', name: '全网算力', src: 'mempool.space', type: 'spark_hash', span: 2 },
   { id: 'mempool', layer: 'onchain', name: '内存池堆积', src: 'mempool.space', type: 'mempool_bars', span: 2 },
   { id: 'block', layer: 'onchain', name: '平均区块间隔', src: 'mempool.space', type: 'countdown', span: 2 },
-  // ── 宏观 2 个 ──
-  { id: 'dxy', layer: 'macro', name: '美元指数 DXY', src: 'Yahoo', type: 'spark_dxy', span: 2 },
-  { id: 'corr', layer: 'macro', name: 'BTC/SPX 30D 相关性', src: '计算', type: 'correlation', span: 2 },
 ]
 
 // 独立的新闻 widget 定义（不在 grid 内，作为单独 section）
 const NEWS_WIDGET: WidgetDef = {
   id: 'news', layer: 'news', name: 'BTC 实时资讯（Google News 中文）',
   src: '中文 RSS', type: 'news_feed', span: 6, row: 3,
+}
+
+function hasWidgetData(widget: WidgetDef, market: MarketData | null, onchain: OnchainData | null, macro: MacroData | null) {
+  switch (widget.type) {
+    case 'gauge_fng': return macro?.fear_greed != null
+    case 'long_short_ratio': return market?.long_short_ratio != null
+    case 'spark_oi': return market?.open_interest?.okx_usd != null || market?.open_interest?.okx_btc != null
+    case 'fund_matrix': return Object.values(market?.funding_rates ?? {}).some(value => value != null && Number.isFinite(value))
+    case 'spread_table': return Object.values(market?.prices ?? {}).filter(value => value != null && Number.isFinite(value)).length >= 2
+    case 'spark_hash': return onchain?.hashrate_eh != null
+    case 'mempool_bars': return onchain?.mempool_count != null || onchain?.mempool_vsize_mb != null
+    case 'signal_pi': return macro?.pi_cycle != null
+    case 'distance': return macro?.wma200 != null
+    case 'countdown': return onchain?.avg_block_interval_sec != null
+    case 'news_feed': return false
+  }
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -142,8 +150,8 @@ const timeAgo = (iso: string | undefined) => {
 // ════════════════════════════════════════════════════════════════════════════
 // 比特币罗盘（Bitcoin Cycle Compass）
 // 中心：大数字现价 + 24h 涨跌
-// 外环：6 个周期/估值信号
-// 中心指针：综合得分（0=极度便宜 → 100=极度过热）
+// 外环：5 个周期/估值/情绪信号
+// 中心指针：仅根据已加载信号计分（0=偏低 → 100=偏热）
 // ════════════════════════════════════════════════════════════════════════════
 
 interface CompassSignal {
@@ -180,12 +188,9 @@ function buildCompassSignals(
       fundScore = Math.min(100, Math.max(0, ((avg + 0.0003) / 0.0008) * 100))
     }
   }
-  // 5. OI 杠杆水平：$10B = 30；$20B = 60；$30B+ = 90+
-  const oi = market?.open_interest?.binance_usd
+  // 5. OKX 永续未平仓名义价值（以 30B USD 映射到 100 分）
+  const oi = market?.open_interest?.okx_usd
   const oiScore = oi != null ? Math.min(100, Math.max(0, (oi / 1e9 / 30) * 100)) : 50
-  // 6. BTC-SPX 相关性：-1 → 0；0 → 50；+1 → 100
-  const corr = macro?.btc_spx_corr_30d
-  const corrScore = corr != null ? ((corr + 1) / 2) * 100 : 50
 
   return [
     {
@@ -225,13 +230,6 @@ function buildCompassSignals(
       display: oi != null ? `$${(oi / 1e9).toFixed(1)}B` : '—',
       loaded: oi != null,
     },
-    {
-      label: 'BTC/SPX',
-      desc: '跨资产联动',
-      score: corrScore,
-      display: corr != null ? `${corr >= 0 ? '+' : ''}${corr.toFixed(2)}` : '—',
-      loaded: corr != null,
-    },
   ]
 }
 
@@ -254,12 +252,16 @@ function scoreLabel(s: number): string {
 
 function MainCompass({ summary, market, macro, isUp }: { summary: BtcSummary | null; market: MarketData | null; macro: MacroData | null; isUp: boolean }) {
   const signals = buildCompassSignals(market, macro, summary)
-  // 综合得分：6 信号取均值
-  const avgScore = signals.reduce((s, x) => s + x.score, 0) / signals.length
+  const loadedSignals = signals.filter(signal => signal.loaded)
+  // 只对实际加载的数据评分，避免缺失数据被默认为中性后扭曲综合值。
+  const avgScore = loadedSignals.length
+    ? loadedSignals.reduce((sum, signal) => sum + signal.score, 0) / loadedSignals.length
+    : null
+  const displayScore = avgScore ?? 50 // 仅作为缺数据时的视觉颜色，不作为展示数值
+  const indicatorColor = scoreColor(displayScore)
 
-  // 大指针角度：-135° (指向 200WMA) → +135° (指向 BTC/SPX)
-  // 我们用 0~100 映射到 -135° ~ +135°（270° 范围）
-  const needleAngle = -135 + (avgScore / 100) * 270
+  // 0~100 分映射到 -135° ~ +135°；没有有效指标时不显示指针。
+  const needleAngle = -135 + (displayScore / 100) * 270
 
   // SVG 中心坐标 + 几何
   const SIZE = 360
@@ -271,9 +273,10 @@ function MainCompass({ summary, market, macro, isUp }: { summary: BtcSummary | n
   const R_TICK_OUT = 162
   const R_LABEL = 178   // 信号标签距中心
 
-  // 6 个信号均匀分布在 -135° ~ +135°（270°），间隔 54°
-  // 也可以全圆 360°，但 270° 留出底部空间显示中心指针
-  const signalAngles = signals.map((_, i) => -135 + (i / (signals.length - 1)) * 270)
+  // 只绘制有真实数据的信号；一个信号放在正上方，多个信号均匀分布。
+  const signalAngles = loadedSignals.map((_, i) =>
+    loadedSignals.length === 1 ? 0 : -135 + (i / (loadedSignals.length - 1)) * 270
+  )
 
   // 角度（度）转弧度后计算坐标
   // 注意：Math.cos/sin 在服务端 Node 与浏览器引擎间存在末位浮点差异，
@@ -326,24 +329,20 @@ function MainCompass({ summary, market, macro, isUp }: { summary: BtcSummary | n
           )
         })()}
 
-        {/* 6 个信号刻度 + 当前值标记 */}
-        {signals.map((sig, i) => {
+        {/* 仅显示已加载的真实信号 */}
+        {loadedSignals.map((sig, i) => {
           const ang = signalAngles[i]
           const tick1 = polar(ang, R_TICK_IN)
           const tick2 = polar(ang, R_TICK_OUT)
           const label = polar(ang, R_LABEL)
-          const col = sig.loaded ? scoreColor(sig.score) : 'var(--di)'
-          // 标签对齐
+          const col = scoreColor(sig.score)
           const anchor = ang < -90 ? 'end' : ang > 90 ? 'end' : Math.abs(ang) < 30 ? 'middle' : 'start'
           return (
             <g key={sig.label}>
               <line x1={tick1.x} y1={tick1.y} x2={tick2.x} y2={tick2.y} stroke={col} strokeWidth="2.5" strokeLinecap="round" />
-              {/* 信号位置上的小圆点（当前值） */}
-              {sig.loaded && (
-                <circle cx={tick2.x} cy={tick2.y} r="3.5" fill={col}>
-                  <animate attributeName="r" values="3.5;4.5;3.5" dur="2.4s" repeatCount="indefinite" />
-                </circle>
-              )}
+              <circle cx={tick2.x} cy={tick2.y} r="3.5" fill={col}>
+                <animate attributeName="r" values="3.5;4.5;3.5" dur="2.4s" repeatCount="indefinite" />
+              </circle>
               <text x={label.x} y={label.y} fontSize="10" fontFamily="var(--mono)" fontWeight="600" fill={col} textAnchor={anchor} dominantBaseline="middle">
                 {sig.label}
               </text>
@@ -361,23 +360,25 @@ function MainCompass({ summary, market, macro, isUp }: { summary: BtcSummary | n
           return <line key={i} x1={t1.x} y1={t1.y} x2={t2.x} y2={t2.y} stroke="rgba(255,255,255,0.18)" strokeWidth="1" />
         })}
 
-        {/* 中心指针（综合得分） */}
-        <g style={{ transformOrigin: `${CX}px ${CY}px`, transition: 'transform 1.2s cubic-bezier(.22,.61,.36,1)' }}>
-          <line
-            x1={CX} y1={CY}
-            x2={needleEnd.x} y2={needleEnd.y}
-            stroke={scoreColor(avgScore)} strokeWidth="2.4" strokeLinecap="round"
-          />
-          <polygon
-            points={`${needleEnd.x},${needleEnd.y - 5} ${needleEnd.x + 5},${needleEnd.y + 4} ${needleEnd.x - 5},${needleEnd.y + 4}`}
-            transform={`rotate(${needleAngle} ${needleEnd.x} ${needleEnd.y})`}
-            fill={scoreColor(avgScore)}
-          />
-        </g>
+        {/* 中心指针（没有有效信号时不显示） */}
+        {avgScore != null && (
+          <g style={{ transformOrigin: `${CX}px ${CY}px`, transition: 'transform 1.2s cubic-bezier(.22,.61,.36,1)' }}>
+            <line
+              x1={CX} y1={CY}
+              x2={needleEnd.x} y2={needleEnd.y}
+              stroke={indicatorColor} strokeWidth="2.4" strokeLinecap="round"
+            />
+            <polygon
+              points={`${needleEnd.x},${needleEnd.y - 5} ${needleEnd.x + 5},${needleEnd.y + 4} ${needleEnd.x - 5},${needleEnd.y + 4}`}
+              transform={`rotate(${needleAngle} ${needleEnd.x} ${needleEnd.y})`}
+              fill={indicatorColor}
+            />
+          </g>
+        )}
 
         {/* 中心圆 + 大数字 */}
         <circle cx={CX} cy={CY} r="62" fill="var(--bg)" stroke="var(--bd-hi)" strokeWidth="1" />
-        <circle cx={CX} cy={CY} r="4" fill={scoreColor(avgScore)} />
+        <circle cx={CX} cy={CY} r="4" fill={avgScore != null ? indicatorColor : 'var(--di)'} />
 
         {/* 中心文字 */}
         <text x={CX} y={CY - 26} fontSize="9" fontFamily="var(--mono)" fontWeight="600" fill="var(--mu)" textAnchor="middle" letterSpacing="2">
@@ -395,31 +396,35 @@ function MainCompass({ summary, market, macro, isUp }: { summary: BtcSummary | n
         ) : (
           <text x={CX} y={CY} fontSize="12" fontFamily="var(--mono)" fill="var(--mu)" textAnchor="middle">加载中…</text>
         )}
-        <text x={CX} y={CY + 32} fontSize="9" fontFamily="var(--mono)" fontWeight="600" fill={scoreColor(avgScore)} textAnchor="middle" letterSpacing="1">
-          {scoreLabel(avgScore)}
+        <text x={CX} y={CY + 32} fontSize="9" fontFamily="var(--mono)" fontWeight="600" fill={indicatorColor} textAnchor="middle" letterSpacing="1">
+          {avgScore != null ? scoreLabel(avgScore) : '信号待加载'}
         </text>
       </svg>
 
-      {/* 右侧：综合评分卡 */}
+      {/* 右侧：仅汇总实际可用的数据 */}
       <div className="compass-side">
         <div className="compass-side-h">综合罗盘评分</div>
-        <div className="compass-side-score" style={{ color: scoreColor(avgScore) }}>{avgScore.toFixed(0)}<span>/100</span></div>
-        <div className="compass-side-bar"><div style={{ width: `${avgScore}%`, background: scoreColor(avgScore) }} /></div>
-        <div className="compass-side-sub">{scoreLabel(avgScore)} · 6 个周期/估值/情绪信号综合</div>
+        <div className="compass-side-score" style={{ color: indicatorColor }}>
+          {avgScore != null ? avgScore.toFixed(0) : '—'}<span>{avgScore != null ? '/100' : ''}</span>
+        </div>
+        <div className="compass-side-bar"><div style={{ width: `${avgScore ?? 0}%`, background: indicatorColor }} /></div>
+        <div className="compass-side-sub">
+          {avgScore != null ? `${scoreLabel(avgScore)} · ${loadedSignals.length}/5 项有效信号` : '暂无可用的免费指标'}
+        </div>
         <div className="compass-side-list">
-          {signals.map((s) => (
+          {loadedSignals.length ? loadedSignals.map((s) => (
             <div key={s.label} className="compass-side-it">
               <span className="compass-side-it-l">
-                <span className="compass-side-it-dot" style={{ background: s.loaded ? scoreColor(s.score) : 'var(--di)' }} />
+                <span className="compass-side-it-dot" style={{ background: scoreColor(s.score) }} />
                 {s.label}
               </span>
-              <span className="compass-side-it-v" style={{ color: s.loaded ? 'var(--tx)' : 'var(--mu)' }}>{s.display}</span>
+              <span className="compass-side-it-v" style={{ color: 'var(--tx)' }}>{s.display}</span>
             </div>
-          ))}
+          )) : <div className="compass-side-sub">信号源暂不可用，未计入评分</div>}
         </div>
       </div>
 
-      {/* 最右侧：今日速览（24h 高低 / 成交量 / 市值 / 距 ATH）*/}
+      {/* 最右侧：今日速览（只显示当前公共行情源提供的指标）*/}
       <div className="compass-side compass-snapshot">
         <div className="compass-side-h">今日速览</div>
         <div className="snap-grid">
@@ -439,23 +444,12 @@ function MainCompass({ summary, market, macro, isUp }: { summary: BtcSummary | n
                   : `${Math.round(summary.volume24h).toLocaleString('en-US')} BTC`)
               : '—'}</div>
           </div>
-          <div className="snap-cell">
-            <div className="snap-l">市值</div>
-            <div className="snap-v">{summary?.marketCap ? `$${(summary.marketCap / 1e12).toFixed(2)}T` : '—'}</div>
-          </div>
-          <div className="snap-cell">
-            <div className="snap-l">距 ATH</div>
-            <div className="snap-v">
-              {summary?.price ? (() => {
-                // 假设 ATH = $108,135（2025-01 高点），用户可后续接 API
-                const ATH = 108135
-                const distPct = ((summary.price - ATH) / ATH) * 100
-                return <span style={{ color: distPct >= -5 ? 'var(--up)' : distPct >= -20 ? 'var(--gld)' : 'var(--dn)' }}>
-                  {distPct >= 0 ? '+' : ''}{distPct.toFixed(1)}%
-                </span>
-              })() : '—'}
+          {summary?.marketCap ? (
+            <div className="snap-cell">
+              <div className="snap-l">市值</div>
+              <div className="snap-v">${(summary.marketCap / 1e12).toFixed(2)}T</div>
             </div>
-          </div>
+          ) : null}
           <div className="snap-cell">
             <div className="snap-l">振幅</div>
             <div className="snap-v">
@@ -490,30 +484,6 @@ function MainCompass({ summary, market, macro, isUp }: { summary: BtcSummary | n
 // ════════════════════════════════════════════════════════════════════════════
 // Sparkline 工具组件
 // ════════════════════════════════════════════════════════════════════════════
-
-function Spark({ values, color }: { values: number[]; color: string }) {
-  if (values.length < 2) return <div className="wg-spark" />
-  const min = Math.min(...values)
-  const max = Math.max(...values)
-  const range = max - min || 1
-  const W = 100
-  const H = 42
-  const dx = W / (values.length - 1)
-  const points = values.map((v, i) => ({
-    x: i * dx,
-    y: H - ((v - min) / range) * H,
-  }))
-  const path = 'M ' + points.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' L ')
-  const area = `M 0,${H} ` + points.map((p) => `L ${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ') + ` L ${W},${H} Z`
-  return (
-    <div className="wg-spark">
-      <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none">
-        <path d={area} fill={color} fillOpacity="0.15" />
-        <path d={path} fill="none" stroke={color} strokeWidth="1.2" />
-      </svg>
-    </div>
-  )
-}
 
 // ════════════════════════════════════════════════════════════════════════════
 // Widget 通用容器：<div class="w spanN row2 ...">
@@ -568,7 +538,7 @@ const YEAR_TAGS: Record<string, string> = {
   '2026': '当前',
 }
 
-function SeasonalityChart({ data }: { data: SeasonalityData | null }) {
+function SeasonalityChart({ data, loaded }: { data: SeasonalityData | null; loaded: boolean }) {
   const W = 1100
   const H = 320
   const PAD = { t: 18, r: 56, b: 30, l: 0 }
@@ -633,7 +603,7 @@ function SeasonalityChart({ data }: { data: SeasonalityData | null }) {
   }, [data])
 
   if (!calc) {
-    return <div style={{ height: H, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--mu)', fontSize: 13 }}>季节性数据加载中…</div>
+    return <div style={{ height: H, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--mu)', fontSize: 13 }}>{loaded ? '暂无季节性数据' : '季节性数据加载中…'}</div>
   }
 
   return (
@@ -686,9 +656,9 @@ function SeasonalityChart({ data }: { data: SeasonalityData | null }) {
 }
 
 // 右侧数据单：每年颜色 dot + 当前 % + 区间（最低 ~ 最高）
-function SeasonalityLegend({ data }: { data: SeasonalityData | null }) {
-  if (!data || !data.years) {
-    return <div className="seasonality-legend"><div className="sl-empty">加载中…</div></div>
+function SeasonalityLegend({ data, loaded }: { data: SeasonalityData | null; loaded: boolean }) {
+  if (!data || !data.years || Object.keys(data.years).length === 0) {
+    return <div className="seasonality-legend"><div className="sl-empty">{loaded ? '暂无季节性数据' : '加载中…'}</div></div>
   }
   const years = Object.keys(data.years).sort().reverse()  // 当前年在最上
   return (
@@ -702,7 +672,7 @@ function SeasonalityLegend({ data }: { data: SeasonalityData | null }) {
         const max = Math.max(...pcts)
         const min = Math.min(...pcts)
         const color = SEASONALITY_COLORS[year] || 'var(--mu)'
-        const tag = YEAR_TAGS[year] || ''
+        const tag = year === String(new Date().getUTCFullYear()) ? '当前' : YEAR_TAGS[year] || ''
         const tagColor = current >= 50 ? 'var(--up)' : current <= -30 ? 'var(--dn)' : 'var(--mu)'
         const valueColor = current >= 0 ? 'var(--up)' : 'var(--dn)'
         return (
@@ -791,7 +761,7 @@ function W_GaugeFng({ fg, large }: { fg: MacroData['fear_greed'] | undefined; la
   )
 }
 
-function W_SplitLiq({ ratio }: { ratio: MarketData['long_short_ratio'] }) {
+function W_LongShortRatio({ ratio }: { ratio: MarketData['long_short_ratio'] }) {
   if (!ratio) return <Dash />
   const longPct = ratio.long_pct
   const shortPct = ratio.short_pct
@@ -819,14 +789,13 @@ function W_SplitLiq({ ratio }: { ratio: MarketData['long_short_ratio'] }) {
 function W_SparkOi({ oi }: { oi: number | null | undefined }) {
   if (oi == null) return <Dash />
   return (
-    <>
+    <div>
       <div className="wg-stat-row">
         <div className="wg-stat-big">{fmtCompact(oi)}</div>
-        <div className="wg-stat-delta up">永续</div>
+        <div className="wg-stat-delta up">OKX 永续</div>
       </div>
-      <Spark values={[oi * 0.97, oi * 0.985, oi * 0.99, oi * 0.995, oi]} color="var(--up)" />
-      <div className="wg-spark-foot"><span>OKX BTC 永续</span><span>USD</span></div>
-    </>
+      <div className="wg-spark-foot"><span>未平仓名义价值</span><span>USD</span></div>
+    </div>
   )
 }
 
@@ -883,38 +852,28 @@ function W_SpreadTable({ prices }: { prices: Record<string, number | null> | und
 function W_SparkHash({ hash }: { hash: number | null | undefined }) {
   if (hash == null) return <Dash />
   return (
-    <>
+    <div>
       <div className="wg-stat-row">
         <div className="wg-stat-big">{hash.toFixed(0)}</div>
         <div className="wg-stat-delta up">EH/s</div>
       </div>
-      <Spark values={[hash * 0.96, hash * 0.98, hash * 0.995, hash * 0.99, hash]} color="var(--up)" />
-      <div className="wg-spark-foot"><span>全网算力</span><span>30D 均值</span></div>
-    </>
+      <div className="wg-spark-foot"><span>全网当前算力</span><span>mempool.space</span></div>
+    </div>
   )
 }
 
 function W_MempoolBars({ mempool, vsize }: { mempool: number | null | undefined; vsize: number | null | undefined }) {
-  if (mempool == null) return <Dash />
-  const count = mempool
-  // mempool 拥堵 tier 分布（粗略估算）
-  const tiers = [
-    { label: '低 sat/vB', value: Math.round(count * 0.15), max: count, cls: 'lo' },
-    { label: '中 sat/vB', value: Math.round(count * 0.35), max: count, cls: 'md' },
-    { label: '高 sat/vB', value: Math.round(count * 0.30), max: count, cls: 'hi' },
-    { label: '紧急 sat/vB', value: Math.round(count * 0.20), max: count, cls: 'vh' },
-  ]
+  if (mempool == null && vsize == null) return <Dash />
   return (
-    <div className="wg-mp">
-      {tiers.map((t) => (
-        <div key={t.label} className="wg-mp-row">
-          <span className="wg-mp-tier">{t.label}</span>
-          <div className="wg-mp-bar">
-            <div className={`wg-mp-fill ${t.cls}`} style={{ width: `${(t.value / t.max) * 100}%` }} />
-          </div>
-          <span className="wg-mp-v">{fmt0(t.value)}</span>
-        </div>
-      ))}
+    <div style={{ display: 'flex', alignItems: 'center', gap: 28, padding: '12px 8px' }}>
+      <div>
+        <div style={{ color: 'var(--text)', fontSize: 22, fontFamily: 'var(--mono)' }}>{mempool == null ? '—' : fmt0(mempool)}</div>
+        <div style={{ color: 'var(--mu)', fontSize: 11 }}>待确认交易</div>
+      </div>
+      <div>
+        <div style={{ color: 'var(--text)', fontSize: 22, fontFamily: 'var(--mono)' }}>{vsize == null ? '—' : `${vsize.toFixed(1)} MB`}</div>
+        <div style={{ color: 'var(--mu)', fontSize: 11 }}>内存池虚拟大小</div>
+      </div>
     </div>
   )
 }
@@ -966,39 +925,6 @@ function W_Distance({ wma }: { wma: MacroData['wma200'] | undefined }) {
   )
 }
 
-function W_SparkDxy({ dxy }: { dxy: number | null | undefined }) {
-  if (dxy == null) return <Dash />
-  return (
-    <>
-      <div className="wg-stat-row">
-        <div className="wg-stat-big">{dxy.toFixed(2)}</div>
-        <div className="wg-stat-delta up">DXY</div>
-      </div>
-      <Spark values={[dxy * 0.995, dxy * 1.002, dxy * 0.998, dxy * 0.997, dxy]} color="var(--acc)" />
-      <div className="wg-spark-foot"><span>美元指数</span><span>Yahoo</span></div>
-    </>
-  )
-}
-
-function W_Correlation({ corr }: { corr: number | null | undefined }) {
-  if (corr == null) return <Dash />
-  // -1 → 0%；0 → 50%；+1 → 100%
-  const markerAt = ((corr + 1) / 2) * 100
-  const color = Math.abs(corr) > 0.5 ? (corr > 0 ? 'var(--up)' : 'var(--dn)') : 'var(--mu)'
-  return (
-    <div className="wg-corr">
-      <div className="wg-corr-big" style={{ color }}>{corr >= 0 ? '+' : ''}{corr.toFixed(2)}</div>
-      <div className="wg-corr-bar-wrap">
-        <div className="wg-corr-bar" />
-        <div className="wg-corr-marker" style={{ left: `${markerAt}%` }} />
-      </div>
-      <div className="wg-corr-scale">
-        <span>-1.0</span><span>0</span><span>+1.0</span>
-      </div>
-    </div>
-  )
-}
-
 function W_Countdown({ interval, diff }: { interval: number | null | undefined; diff: OnchainData['difficulty_adjustment'] }) {
   if (interval == null) return <Dash />
   // 实际平均区块间隔（分钟）。BTC 目标 10 分钟。
@@ -1039,75 +965,72 @@ export default function HomePage() {
   const [macro, setMacro] = useState<MacroData | null>(null)
   const [seasonality, setSeasonality] = useState<SeasonalityData | null>(null)
 
-  const [fetchError, setFetchError] = useState<string | null>(null)
+  const [dashboardLoaded, setDashboardLoaded] = useState(false)
 
-  // 安全请求包装
+  // Safe fetch wrapper: free-data outages leave widgets blank, not in an error loop.
   const safeFetch = async <T,>(url: string): Promise<T | null> => {
     try { const r = await fetch(url); return r.ok ? await r.json() : null } catch { return null }
   }
 
-  // 数据拉取 (保持独立供 setInterval 调用)
-  const fetchSummary = useCallback(async () => { const r = await safeFetch<BtcSummary>('/api/btc/summary'); if (r) setSummary(r) }, [])
-  const fetchNews = useCallback(async () => { const r = await safeFetch<NewsItem[]>('/api/news'); if (r) setNews(r) }, [])
-  const fetchMarket = useCallback(async () => { const r = await safeFetch<MarketData>('/py-api/api/dashboard/market'); if (r) setMarket(r) }, [])
-  const fetchOnchain = useCallback(async () => { const r = await safeFetch<OnchainData>('/py-api/api/dashboard/onchain'); if (r) setOnchain(r) }, [])
-  const fetchMacro = useCallback(async () => { const r = await safeFetch<MacroData>('/py-api/api/dashboard/macro'); if (r) setMacro(r) }, [])
-  const fetchSeasonality = useCallback(async () => { const r = await safeFetch<SeasonalityData>('/py-api/api/dashboard/seasonality'); if (r) setSeasonality(r) }, [])
+  const fetchSummary = useCallback(async () => {
+    const result = await safeFetch<BtcSummary>('/api/btc/summary')
+    if (result) setSummary(result)
+  }, [])
+  const fetchNews = useCallback(async () => {
+    const result = await safeFetch<NewsItem[]>('/api/news')
+    if (result) setNews(result)
+  }, [])
+  const fetchDashboard = useCallback(async () => {
+    try {
+      const response = await fetch('/api/dashboard')
+      if (!response.ok) return
+      const data = await response.json()
+      setMarket(data.market ?? null)
+      setOnchain(data.onchain ?? null)
+      setMacro(data.macro ?? null)
+      setSeasonality(data.seasonality ?? { years: {} })
+    } catch {
+      // No Python backend is involved. Missing public data is represented by a dash.
+    } finally {
+      setDashboardLoaded(true)
+    }
+  }, [])
 
   useEffect(() => {
-    // 首次并发获取并捕获整体故障
-    Promise.all([
-      safeFetch<BtcSummary>('/api/btc/summary'),
-      safeFetch<NewsItem[]>('/api/news'),
-      safeFetch<MarketData>('/py-api/api/dashboard/market'),
-      safeFetch<OnchainData>('/py-api/api/dashboard/onchain'),
-      safeFetch<MacroData>('/py-api/api/dashboard/macro'),
-      safeFetch<SeasonalityData>('/py-api/api/dashboard/seasonality')
-    ]).then(([rSum, rNews, rMkt, rOnc, rMac, rSea]) => {
-      // 若核心后端接口全部无数据，则提示后端未启动
-      if (!rMkt && !rOnc && !rMac && !rSea) {
-        setFetchError('后端服务无响应。请稍后再试。')
-      }
-      if (rSum) setSummary(rSum)
-      if (rNews) setNews(rNews)
-      if (rMkt) setMarket(rMkt)
-      if (rOnc) setOnchain(rOnc)
-      if (rMac) setMacro(rMac)
-      if (rSea) setSeasonality(rSea)
-    })
-
-    const t1 = setInterval(fetchSummary, 30_000)
-    const t2 = setInterval(fetchMarket, 30_000)
-    const t3 = setInterval(fetchOnchain, 300_000)
-    const t4 = setInterval(fetchMacro, 300_000)  // 5 分钟
-    const t5 = setInterval(fetchNews, 300_000)
-    const t6 = setInterval(fetchSeasonality, 3600_000)
-    return () => { [t1, t2, t3, t4, t5, t6].forEach(clearInterval) }
-  }, [fetchSummary, fetchMarket, fetchOnchain, fetchMacro, fetchNews, fetchSeasonality])
+    void fetchSummary()
+    void fetchNews()
+    void fetchDashboard()
+    const summaryTimer = setInterval(fetchSummary, 30_000)
+    const dashboardTimer = setInterval(fetchDashboard, 300_000)
+    const newsTimer = setInterval(fetchNews, 300_000)
+    return () => {
+      clearInterval(summaryTimer)
+      clearInterval(dashboardTimer)
+      clearInterval(newsTimer)
+    }
+  }, [fetchSummary, fetchNews, fetchDashboard])
 
   const isUp = (summary?.change24h ?? 0) >= 0
+  const compassSignalCount = buildCompassSignals(market, macro, summary).filter(signal => signal.loaded).length
 
-  // 跟踪后端响应：API 拿到了但内部字段为 null 时，widget 应显示 "—" 而不是 "加载中"
-  const macroLoaded = macro !== null
-  const marketLoaded = market !== null
-  const onchainLoaded = onchain !== null
+  const visibleWidgets = dashboardLoaded
+    ? WIDGETS.filter(widget => hasWidgetData(widget, market, onchain, macro))
+    : WIDGETS
 
   const renderWidget = (w: WidgetDef) => {
     let body: React.ReactNode = null
     switch (w.type) {
       case 'news_feed':    body = <W_NewsFeed news={news} />; break
-      case 'gauge_fng':    body = macroLoaded ? <W_GaugeFng fg={macro?.fear_greed ?? undefined} /> : <Empty error={fetchError} />; break
-      case 'split_liq':    body = marketLoaded ? <W_SplitLiq ratio={market?.long_short_ratio ?? null} /> : <Empty error={fetchError} />; break
-      case 'spark_oi':     body = marketLoaded ? <W_SparkOi oi={market?.open_interest?.binance_usd ?? null} /> : <Empty error={fetchError} />; break
-      case 'fund_matrix':  body = marketLoaded ? <W_FundMatrix rates={market?.funding_rates} /> : <Empty error={fetchError} />; break
-      case 'spread_table': body = marketLoaded ? <W_SpreadTable prices={market?.prices} /> : <Empty error={fetchError} />; break
-      case 'spark_hash':   body = onchainLoaded ? <W_SparkHash hash={onchain?.hashrate_eh} /> : <Empty error={fetchError} />; break
-      case 'mempool_bars': body = onchainLoaded ? <W_MempoolBars mempool={onchain?.mempool_count} vsize={onchain?.mempool_vsize_mb} /> : <Empty error={fetchError} />; break
-      case 'signal_pi':    body = macroLoaded ? <W_SignalPi pi={macro?.pi_cycle ?? undefined} /> : <Empty error={fetchError} />; break
-      case 'distance':     body = macroLoaded ? <W_Distance wma={macro?.wma200 ?? undefined} /> : <Empty error={fetchError} />; break
-      case 'spark_dxy':    body = macroLoaded ? <W_SparkDxy dxy={macro?.dxy} /> : <Empty error={fetchError} />; break
-      case 'correlation':  body = macroLoaded ? <W_Correlation corr={macro?.btc_spx_corr_30d} /> : <Empty error={fetchError} />; break
-      case 'countdown':    body = onchainLoaded ? <W_Countdown interval={onchain?.avg_block_interval_sec} diff={onchain?.difficulty_adjustment ?? null} /> : <Empty error={fetchError} />; break
+      case 'gauge_fng':    body = dashboardLoaded ? <W_GaugeFng fg={macro?.fear_greed ?? undefined} /> : <Empty />; break
+      case 'long_short_ratio': body = dashboardLoaded ? <W_LongShortRatio ratio={market?.long_short_ratio ?? null} /> : <Empty />; break
+      case 'spark_oi':     body = dashboardLoaded ? <W_SparkOi oi={market?.open_interest?.okx_usd ?? null} /> : <Empty />; break
+      case 'fund_matrix':  body = dashboardLoaded ? <W_FundMatrix rates={market?.funding_rates} /> : <Empty />; break
+      case 'spread_table': body = dashboardLoaded ? <W_SpreadTable prices={market?.prices} /> : <Empty />; break
+      case 'spark_hash':   body = dashboardLoaded ? <W_SparkHash hash={onchain?.hashrate_eh} /> : <Empty />; break
+      case 'mempool_bars': body = dashboardLoaded ? <W_MempoolBars mempool={onchain?.mempool_count} vsize={onchain?.mempool_vsize_mb} /> : <Empty />; break
+      case 'signal_pi':    body = dashboardLoaded ? <W_SignalPi pi={macro?.pi_cycle ?? undefined} /> : <Empty />; break
+      case 'distance':     body = dashboardLoaded ? <W_Distance wma={macro?.wma200 ?? undefined} /> : <Empty />; break
+      case 'countdown':    body = dashboardLoaded ? <W_Countdown interval={onchain?.avg_block_interval_sec} diff={onchain?.difficulty_adjustment ?? null} /> : <Empty />; break
     }
     return <W key={w.id} widget={w}>{body}</W>
   }
@@ -1120,7 +1043,7 @@ export default function HomePage() {
           <div className="ctb">
             <div className="ctb-sym">
               <span className="ctb-name">BTC 周期罗盘</span>
-              <span className="ctb-tag">6 信号综合</span>
+              <span className="ctb-tag">有效信号 {compassSignalCount}/5</span>
               {summary && (
                 <>
                   <span className="ctb-price">{fmt0(summary.price)}</span>
@@ -1137,43 +1060,47 @@ export default function HomePage() {
 
           <MainCompass summary={summary} market={market} macro={macro} isUp={isUp} />
 
-          {/* 第二层：12 数据 widget */}
-          <div className="grid-wrap">
-            <div className="grid">{WIDGETS.map(renderWidget)}</div>
-          </div>
+          {/* 只展示有真实数据的免费指标；不可用的卡片自动隐藏 */}
+          {(!dashboardLoaded || visibleWidgets.length > 0) && (
+            <div className="grid-wrap">
+              <div className="grid">{visibleWidgets.map(renderWidget)}</div>
+            </div>
+          )}
 
-          {/* 第三层：季节性叠加图（5 年同期对比）*/}
-          <div className="seasonality-section">
-            <div className="seasonality-h">
-              <div className="seasonality-t">
-                <span className="w-d c" />
-                <span className="w-name">BTC 季节性 · 5 年同期叠加</span>
+          {/* 有历史数据时才展示季节性图 */}
+          {(!dashboardLoaded || (seasonality && Object.keys(seasonality.years).length > 0)) && (
+            <div className="seasonality-section">
+              <div className="seasonality-h">
+                <div className="seasonality-t">
+                  <span className="w-d c" />
+                  <span className="w-name">BTC 季节性 · 5 年同期叠加</span>
+                </div>
+                <span className="w-src">OKX BTC 日线 · 每年首个交易日归零</span>
               </div>
-              <span className="w-src">Binance 日线 · 每年 1/1 归零</span>
+              <div className="seasonality-body">
+                <div className="seasonality-chart"><SeasonalityChart data={seasonality} loaded={dashboardLoaded} /></div>
+                <SeasonalityLegend data={seasonality} loaded={dashboardLoaded} />
+              </div>
             </div>
-            <div className="seasonality-body">
-              <div className="seasonality-chart"><SeasonalityChart data={seasonality} /></div>
-              <SeasonalityLegend data={seasonality} />
-            </div>
-          </div>
+          )}
 
-          {/* 第四层：新闻区（独立 section）*/}
-          <div className="grid-wrap">
-            <div className="grid">
-              {renderWidget(NEWS_WIDGET)}
+          {/* 新闻源有内容时才展示 */}
+          {news.length > 0 && (
+            <div className="grid-wrap">
+              <div className="grid">{renderWidget(NEWS_WIDGET)}</div>
             </div>
-          </div>
+          )}
 
           <div className="toolstrip">
-            <Link className="ts-item acc" href="/strategy">
+            <Link className="ts-item acc" href="/strategies">
               <div className="ts-ico acc">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
                   <polyline points="16 18 22 12 16 6" /><polyline points="8 6 2 12 8 18" />
                 </svg>
               </div>
               <div className="ts-text">
-                <div className="ts-t">策略研发 <span className="ts-pill">PYTHON</span></div>
-                <div className="ts-s">写策略 · 一键回测 · 8 个模板</div>
+                <div className="ts-t">本地策略回测</div>
+                <div className="ts-s">浏览器内运行 TypeScript 策略</div>
               </div>
               <span className="ts-arr">›</span>
             </Link>
@@ -1199,20 +1126,20 @@ export default function HomePage() {
                 </svg>
               </div>
               <div className="ts-text">
-                <div className="ts-t">参数优化 <span className="ts-pill pro">PRO</span></div>
-                <div className="ts-s">网格搜索 · 模拟退火 · 邻居法</div>
+                <div className="ts-t">稳健性分析</div>
+                <div className="ts-s">导入回测 CSV · Pareto 与邻域分析</div>
               </div>
               <span className="ts-arr">›</span>
             </Link>
-            <Link className="ts-item bt" href="/pattern-report">
+            <Link className="ts-item bt" href="/chart">
               <div className="ts-ico bt">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
                   <path d="M3 3v18h18" /><path d="M18.7 8l-5.1 5.2-2.8-2.7L7 14.3" />
                 </svg>
               </div>
               <div className="ts-text">
-                <div className="ts-t">形态归因</div>
-                <div className="ts-s">六形态 · 信号溯源 · 利润分解</div>
+                <div className="ts-t">完整 K 线图</div>
+                <div className="ts-s">OKX 行情 · 技术指标 · 画线工具</div>
               </div>
               <span className="ts-arr">›</span>
             </Link>

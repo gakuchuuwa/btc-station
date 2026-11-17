@@ -1,4 +1,4 @@
-/** 通过 Next.js /api/chart/klines 从 OKX 拉取 K 线（不依赖 Railway 后端 CSV） */
+/** 通过本站 Next.js API 从 OKX 公共接口拉取 K 线；无需 Python 服务。 */
 
 export interface ChartCandle {
   time: number
@@ -29,19 +29,15 @@ async function fetchFullHistory(
   interval: string,
   market: 'spot' | 'swap',
 ): Promise<ChartCandle[]> {
-  // 优先走后端已预热的内存缓存（与回测同源、毫秒级）；失败再回退 Next 服务端翻页缓存
-  for (const url of [
-    `/py-api/api/candles/${encodeURIComponent(interval)}?market=${market}`,
-    `/api/chart/full?interval=${interval}&market=${market}`,
-  ]) {
-    try {
-      const res = await fetch(url)
-      if (!res.ok) continue
+  // 使用本站 Next.js 服务端分页与缓存，不访问已下线的 Python API。
+  try {
+    const res = await fetch(`/api/chart/full?interval=${interval}&market=${market}`)
+    if (res.ok) {
       const body = (await res.json()) as { candles?: ChartCandle[] }
       if (body.candles?.length) return body.candles
-    } catch { /* 试下一个来源 */ }
-  }
-  throw new Error('全量K线不可用')
+    }
+  } catch { /* 由分页接口继续兜底 */ }
+  throw new Error('全量 K 线暂不可用')
 }
 
 /** 先返回第一页，后台继续翻页；onProgress 用于渐进渲染 */

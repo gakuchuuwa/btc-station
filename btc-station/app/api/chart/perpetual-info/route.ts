@@ -16,7 +16,7 @@ export async function GET() {
     console.error('[/api/chart/perpetual-info]', err)
     if (cache) return NextResponse.json(cache.data)
     return NextResponse.json(
-      { fundingRate: { current: 0, nextSettleAt: 0 }, openInterest: { contracts: 0, usdValue: 0 }, longShortRatio: 1 },
+      { fundingRate: { current: null, nextSettleAt: null }, openInterest: { btc: null, usdValue: null }, longShortRatio: null },
       { status: 503 }
     )
   }

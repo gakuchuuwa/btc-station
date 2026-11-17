@@ -6,9 +6,7 @@ import {
   CandlestickSeries,
   HistogramSeries,
   LineSeries,
-  createSeriesMarkers,
   type IChartApi,
-  type ISeriesApi,
   type CandlestickData,
   type HistogramData,
   type LineData,
@@ -16,9 +14,6 @@ import {
 } from 'lightweight-charts'
 import { formatUsd, formatPercent } from '@/lib/format'
 import type { Market } from '@/lib/okx'
-import StrategyTesterPanel from '@/components/StrategyTesterPanel'
-import { DEFAULT_INITIAL_CAPITAL } from '@/lib/backtest/constants'
-import { buildBacktestParameters } from '@/lib/backtest/params'
 
 // ============================
 // 指标计算（客户端 JS）
@@ -174,9 +169,9 @@ interface TextDrawing extends DrawingBase { type: 'text'; pos: { time: number; p
 type Drawing = TrendlineDrawing | HorizontalDrawing | RectangleDrawing | FibonacciDrawing | TextDrawing
 
 interface PerpInfo {
-  fundingRate: { current: number; nextSettleAt: number }
-  openInterest: { contracts: number; usdValue: number }
-  longShortRatio: number
+  fundingRate: { current: number | null; nextSettleAt: number | null }
+  openInterest: { btc: number | null; usdValue: number | null }
+  longShortRatio: number | null
 }
 
 // ============================
@@ -403,14 +398,6 @@ function DrawingLayer({
 // ============================
 // 单个图表组件
 // ============================
-export interface ChartMarker {
-  time: number    // unix seconds
-  position: 'aboveBar' | 'belowBar'
-  color: string
-  shape: 'arrowUp' | 'arrowDown'
-  text?: string
-}
-
 interface ChartPanelProps {
   candles: Candle[]
   tf: string
@@ -424,14 +411,11 @@ interface ChartPanelProps {
   loadMoreCandles: () => void
   isMain?: boolean
   ticker: { lastPrice: number; change24h: number }
-  markers?: ChartMarker[]
-  testerVisible?: boolean
 }
 
 function ChartPanel({
   candles, tf, market, indicatorParams, drawings, activeTool,
   onDrawingComplete, onDeleteDrawing, hasMore, loadMoreCandles, isMain = true, ticker,
-  markers = [], testerVisible = false,
 }: ChartPanelProps) {
   const mainContainerRef = useRef<HTMLDivElement>(null)
   const volumeContainerRef = useRef<HTMLDivElement>(null)
@@ -449,9 +433,6 @@ function ChartPanel({
   const stochChartRef = useRef<IChartApi | null>(null)
   const atrChartRef = useRef<IChartApi | null>(null)
   const obvChartRef = useRef<IChartApi | null>(null)
-  // lightweight-charts v5: markers are managed via createSeriesMarkers(), not series.setMarkers()
-  const markersInstanceRef = useRef<ReturnType<typeof createSeriesMarkers> | null>(null)
-  const candleSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
 
 
   const [crosshairData, setCrosshairData] = useState<{
@@ -512,14 +493,6 @@ function ChartPanel({
       wickUpColor: CHART_COLORS.up, wickDownColor: CHART_COLORS.down,
     })
     candleSeries.setData(sorted.map(c => ({ time: c.time as Time, open: c.open, high: c.high, low: c.low, close: c.close })))
-    candleSeriesRef.current = candleSeries
-
-    // markers 在单独的 useEffect 中更新（在此处理会导致图表重建 → 视角重置）
-    if (markersInstanceRef.current) {
-      try { markersInstanceRef.current.detach() } catch { /* already detached */ }
-      markersInstanceRef.current = null
-    }
-
     // MA
     if (indicatorParams.ma.enabled) {
       indicatorParams.ma.periods.forEach((period, idx) => {
@@ -587,43 +560,6 @@ function ChartPanel({
       }
     }
   }, [candles, indicatorParams, syncTimeScales])
-
-  // markers 专用更新 —— 不重建图表，不重置视点
-  useEffect(() => {
-    const series = candleSeriesRef.current
-    if (!series) return
-    if (markersInstanceRef.current) {
-      try { markersInstanceRef.current.detach() } catch { /* already detached */ }
-      markersInstanceRef.current = null
-    }
-    if (markers.length > 0) {
-      const sorted = [...candles].sort((a, b) => a.time - b.time)
-      const candleTimes = sorted.map(c => c.time)
-      const validTimes = new Set(candleTimes)
-      // 마커 time이 정확히 일치하지 않으면 가장 가까운 캔들 time으로 스냅
-      const snapToCandle = (t: number): number => {
-        if (validTimes.has(t)) return t
-        let lo = 0, hi = candleTimes.length - 1
-        while (lo < hi) {
-          const mid = (lo + hi) >> 1
-          if (candleTimes[mid] < t) lo = mid + 1
-          else hi = mid
-        }
-        return candleTimes[lo] ?? t
-      }
-      const uniqueMap = new Map<string, { time: Time; position: string; color: string; shape: string; text: string }>()
-      for (const m of markers) {
-        const t = snapToCandle(m.time)
-        if (!validTimes.has(t)) continue
-        const key = `${t}|${m.position}|${m.shape}`
-        if (!uniqueMap.has(key)) {
-          uniqueMap.set(key, { time: t as Time, position: m.position, color: m.color, shape: m.shape, text: '' })
-        }
-      }
-      const lwtMarkers = Array.from(uniqueMap.values()).sort((a, b) => (a.time as number) - (b.time as number))
-      markersInstanceRef.current = createSeriesMarkers(series as any, lwtMarkers as any) as any
-    }
-  }, [markers, candles])
 
   // 成交量（含 Volume MA）：统一重建
   useEffect(() => {
@@ -977,7 +913,7 @@ function ChartPanel({
 
       {/* 主K線図 */}
       <div style={{ position: 'relative' }} onContextMenu={handleContextMenu}>
-        <div ref={mainContainerRef} style={{ height: testerVisible ? 260 : 380, width: '100%' }} />
+        <div ref={mainContainerRef} style={{ height: 380, width: '100%' }} />
         {/* 画线画布 — cursor模式时pointer-events:none，让图表正常拖动 */}
         <canvas
           ref={drawingCanvasRef}
@@ -1066,14 +1002,14 @@ function ChartPanel({
         <div style={{ padding: '4px 12px', fontSize: 10, color: 'var(--text-dim)' }}>
           成交量{indicatorParams.volume_ma.enabled ? ` · MA(${indicatorParams.volume_ma.period})` : ''}
         </div>
-        <div ref={volumeContainerRef} style={{ height: testerVisible ? 50 : 80, width: '100%' }} />
+        <div ref={volumeContainerRef} style={{ height: 80, width: '100%' }} />
       </div>
 
       {/* RSI */}
       {indicatorParams.rsi.enabled && (
         <div style={{ borderTop: '1px solid var(--border)' }}>
           <div style={{ padding: '4px 12px', fontSize: 10, color: 'var(--text-dim)' }}>RSI ({indicatorParams.rsi.period})</div>
-          <div ref={rsiContainerRef} style={{ height: testerVisible ? 70 : 110, width: '100%' }} />
+          <div ref={rsiContainerRef} style={{ height: 110, width: '100%' }} />
         </div>
       )}
 
@@ -1081,7 +1017,7 @@ function ChartPanel({
       {indicatorParams.macd.enabled && (
         <div style={{ borderTop: '1px solid var(--border)' }}>
           <div style={{ padding: '4px 12px', fontSize: 10, color: 'var(--text-dim)' }}>MACD ({indicatorParams.macd.fast},{indicatorParams.macd.slow},{indicatorParams.macd.signal})</div>
-          <div ref={macdContainerRef} style={{ height: testerVisible ? 70 : 110, width: '100%' }} />
+          <div ref={macdContainerRef} style={{ height: 110, width: '100%' }} />
         </div>
       )}
 
@@ -1089,7 +1025,7 @@ function ChartPanel({
       {indicatorParams.stochastic.enabled && (
         <div style={{ borderTop: '1px solid var(--border)' }}>
           <div style={{ padding: '4px 12px', fontSize: 10, color: 'var(--text-dim)' }}>Stochastic ({indicatorParams.stochastic.k_period},{indicatorParams.stochastic.k_smooth},{indicatorParams.stochastic.d_period})</div>
-          <div ref={stochContainerRef} style={{ height: testerVisible ? 70 : 110, width: '100%' }} />
+          <div ref={stochContainerRef} style={{ height: 110, width: '100%' }} />
         </div>
       )}
 
@@ -1097,7 +1033,7 @@ function ChartPanel({
       {indicatorParams.atr.enabled && (
         <div style={{ borderTop: '1px solid var(--border)' }}>
           <div style={{ padding: '4px 12px', fontSize: 10, color: 'var(--text-dim)' }}>ATR ({indicatorParams.atr.period})</div>
-          <div ref={atrContainerRef} style={{ height: testerVisible ? 60 : 100, width: '100%' }} />
+          <div ref={atrContainerRef} style={{ height: 100, width: '100%' }} />
         </div>
       )}
 
@@ -1141,9 +1077,11 @@ function PerpInfoPanel({ info, lastPrice }: { info: PerpInfo; lastPrice: number 
   }, [])
 
   const fr = info.fundingRate.current
-  const frColor = fr >= 0 ? 'var(--up)' : 'var(--down)'
-  const lsColor = info.longShortRatio >= 1 ? 'var(--up)' : 'var(--down)'
-  const oiUsd = lastPrice > 0 ? info.openInterest.contracts * lastPrice : 0
+  const ratio = info.longShortRatio
+  const openInterestBtc = info.openInterest.btc
+  const frColor = fr == null || fr >= 0 ? 'var(--up)' : 'var(--down)'
+  const lsColor = ratio == null ? 'var(--text-dim)' : ratio >= 1 ? 'var(--up)' : 'var(--down)'
+  const oiUsd = info.openInterest.usdValue ?? (lastPrice > 0 && openInterestBtc != null ? openInterestBtc * lastPrice : null)
 
   return (
     <div style={{
@@ -1153,8 +1091,8 @@ function PerpInfoPanel({ info, lastPrice }: { info: PerpInfo; lastPrice: number 
     }}>
       <div>
         <span style={{ color: 'var(--text-dim)' }}>资金费率 </span>
-        <span style={{ color: frColor, fontWeight: 600 }}>{(fr * 100).toFixed(4)}%</span>
-        {info.fundingRate.nextSettleAt > 0 && (
+        <span style={{ color: frColor, fontWeight: 600 }}>{fr == null ? '—' : `${(fr * 100).toFixed(4)}%`}</span>
+        {info.fundingRate.nextSettleAt != null && info.fundingRate.nextSettleAt > 0 && (
           <span style={{ color: 'var(--text-dim)', marginLeft: 6 }}>
             (下次 {fmtCountdown(info.fundingRate.nextSettleAt)})
           </span>
@@ -1162,15 +1100,13 @@ function PerpInfoPanel({ info, lastPrice }: { info: PerpInfo; lastPrice: number 
       </div>
       <div>
         <span style={{ color: 'var(--text-dim)' }}>未平仓量 </span>
-        <span style={{ color: 'var(--text)' }}>{fmtNum(info.openInterest.contracts, 0)} BTC</span>
-        {oiUsd > 0 && <span style={{ color: 'var(--text-dim)' }}> ({fmtUsdCompact(oiUsd)})</span>}
+        <span style={{ color: 'var(--text)' }}>{openInterestBtc == null ? '—' : `${fmtNum(openInterestBtc, 2)} BTC`}</span>
+        {oiUsd != null && oiUsd > 0 && <span style={{ color: 'var(--text-dim)' }}> ({fmtUsdCompact(oiUsd)})</span>}
       </div>
       <div>
         <span style={{ color: 'var(--text-dim)' }}>多空比 </span>
-        <span style={{ color: lsColor, fontWeight: 600 }}>{fmtNum(info.longShortRatio, 2)}</span>
-        <span style={{ color: 'var(--text-dim)', marginLeft: 4 }}>
-          ({info.longShortRatio >= 1 ? '多头优势' : '空头优势'})
-        </span>
+        <span style={{ color: lsColor, fontWeight: 600 }}>{ratio == null ? '—' : fmtNum(ratio, 2)}</span>
+        {ratio != null && <span style={{ color: 'var(--text-dim)', marginLeft: 4 }}>({ratio >= 1 ? '多头优势' : '空头优势'})</span>}
       </div>
       <span style={{ color: 'var(--text-dim)', marginLeft: 'auto', alignSelf: 'center' }}>
         {new Date(now).toLocaleTimeString('zh-CN')}
@@ -1432,232 +1368,6 @@ export default function ChartPage() {
     { tool: 'delete',     label: '✕', title: '删除选中' },
   ]
 
-  const [testerVisible, setTesterVisible] = useState(true)
-
-  // ── Strategy selector state ──────────────────────────────────────────────
-  const [builtinStrategies, setBuiltinStrategies] = useState<{ id: string; name: string }[]>([])
-  useEffect(() => {
-    fetch('/py-api/api/templates')
-      .then(r => r.json())
-      .then((data: { id: string; name: string; category?: string }[]) => setBuiltinStrategies(data))
-      .catch(() => {})
-  }, [])
-  const [selectedStrategy, setSelectedStrategy] = useState<string | null>(null)
-  const [activeStrategy, setActiveStrategy] = useState<string | null>(null)
-  const [strategyDropdownOpen, setStrategyDropdownOpen] = useState(false)
-  const [strategyLoading, setStrategyLoading] = useState(false)
-  const [chartMarkers, setChartMarkers] = useState<ChartMarker[]>([])
-  const [testerSummary, setTesterSummary] = useState<import('@/components/StrategyTesterPanel').BacktestSummary | null>(null)
-  const [testerTrades, setTesterTrades] = useState<import('@/components/StrategyTesterPanel').TradeRecord[]>([])
-  const [testerLogs, setTesterLogs] = useState<string[]>([])
-  const [testerBalance, setTesterBalance] = useState<{time:number;equity:number}[]>([])
-  const [testerBtId, setTesterBtId] = useState<string | null>(null)
-  const [testerEquity, setTesterEquity] = useState<{time:number;equity:number}[]>([])
-  const [testerRunning, setTesterRunning] = useState(false)
-  const [testerFtmoScan, setTesterFtmoScan] = useState<import('@/components/StrategyTesterPanel').FtmoScanResult | null>(null)
-  const strategyDropdownRef = useRef<HTMLDivElement>(null)
-
-  // ── Strategy settings modal ──────────────────────────────────────────────
-  const [settingsOpen, setSettingsOpen] = useState(false)
-  const [settingsStrategyId, setSettingsStrategyId] = useState<string | null>(null)
-  const [settingsCapital, setSettingsCapital] = useState(DEFAULT_INITIAL_CAPITAL)
-  const [settingsDateFrom, setSettingsDateFrom] = useState('20230101')
-  const [settingsDateTo, setSettingsDateTo] = useState('20260101')
-
-  // Close dropdown on outside click
-  useEffect(() => {
-    function handleClick(e: MouseEvent) {
-      if (strategyDropdownRef.current && !strategyDropdownRef.current.contains(e.target as Node)) {
-        setStrategyDropdownOpen(false)
-      }
-    }
-    document.addEventListener('mousedown', handleClick)
-    return () => document.removeEventListener('mousedown', handleClick)
-  }, [])
-
-  const handleApplyStrategy = useCallback(async (
-    strategyId: string,
-    opts?: { capital?: number; dateFrom?: string; dateTo?: string }
-  ) => {
-    setStrategyDropdownOpen(false)
-    setSettingsOpen(false)
-    setStrategyLoading(true)
-    setTesterRunning(true); setTesterLogs([]); setTesterSummary(null); setTesterTrades([]); setTesterEquity([]); setTesterBalance([]); setTesterFtmoScan(null); setChartMarkers([])
-    setActiveStrategy(strategyId)
-    setSelectedStrategy(strategyId)
-    setTesterVisible(true)
-
-    const capital  = opts?.capital  ?? settingsCapital
-    const dateFrom = opts?.dateFrom ?? settingsDateFrom
-    const dateTo   = opts?.dateTo   ?? settingsDateTo
-    const btParams = buildBacktestParameters({ capital, startDate: dateFrom, endDate: dateTo })
-
-    try {
-      // Step 1: fetch template code（禁用缓存，确保拉到最新策略代码）
-      const templateRes = await fetch(`/py-api/api/templates/${strategyId}/code?t=${Date.now()}`, { cache: 'no-store' })
-      if (!templateRes.ok) throw new Error('无法加载策略模板')
-      const { code } = await templateRes.json()
-
-      // Step 2: run backtest via stateless /api/backtest/dynamic (no auth, no DB)
-      setTesterLogs([`▶ 提交回测：${tf} | $${capital.toLocaleString()}`])
-
-      const btRes = await fetch(`/py-api/api/backtest/dynamic`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          code,
-          symbol: 'BTC/USDT',
-          timeframe: tf,
-          parameters: btParams,
-        }),
-      })
-      if (!btRes.ok) {
-        const errBody = await btRes.text()
-        throw new Error(`回测失败: ${errBody.slice(0, 200)}`)
-      }
-      const result = await btRes.json()
-
-      // Step 3: process results synchronously
-      const m = result.metrics
-      if (m) {
-        setTesterSummary({
-          // 表现
-          initial_capital:           m.initial_capital ?? capital,
-          end_value:                 m.end_value,
-          net_profit_pct:            m.total_return_pct ?? 0,
-          net_profit_abs:            m.net_profit_abs,
-          gross_profit_abs:          m.gross_profit_abs,
-          gross_loss_abs:            m.gross_loss_abs,
-          gross_profit_long:         m.gross_profit_long,
-          gross_loss_long:           m.gross_loss_long,
-          gross_profit_short:        m.gross_profit_short,
-          gross_loss_short:          m.gross_loss_short,
-          expectancy_abs:            m.expectancy_abs,
-          commission_paid:           m.commission_paid,
-          benchmark_return_pct:      m.benchmark_return_pct,
-          benchmark_return_abs:      m.benchmark_return_abs,
-          cagr_pct:                  m.cagr_pct,
-          max_drawdown_pct:          m.max_drawdown_pct ?? 0,
-          closed_max_drawdown_pct:   m.closed_max_drawdown_pct ?? null,
-          max_dd_peak_ts:            m.max_dd_peak_ts ?? null,
-          max_dd_trough_ts:          m.max_dd_trough_ts ?? null,
-          max_dd_recovery_ts:        m.max_dd_recovery_ts ?? null,
-          closed_max_dd_peak_ts:     m.closed_max_dd_peak_ts ?? null,
-          closed_max_dd_trough_ts:   m.closed_max_dd_trough_ts ?? null,
-          ftmo_drawdown_pct:         m.ftmo_drawdown_pct ?? null,
-          max_drawdown_duration_days: m.max_drawdown_duration_days,
-          avg_drawdown_duration_days: m.avg_drawdown_duration_days ?? null,
-          avg_drawdown_pct:           m.avg_drawdown_pct ?? null,
-          max_dd_profit_at_trough:    m.max_dd_profit_at_trough ?? null,
-          open_trade_pnl:            m.open_trade_pnl,
-          // 交易分析
-          total_trades:              m.total_trades ?? 0,
-          win_trades:                m.win_trades,
-          loss_trades:               m.loss_trades,
-          total_trades_long:         m.total_trades_long,
-          total_trades_short:        m.total_trades_short,
-          win_trades_long:           m.win_trades_long,
-          loss_trades_long:          m.loss_trades_long,
-          win_trades_short:          m.win_trades_short,
-          loss_trades_short:         m.loss_trades_short,
-          win_rate_pct:              m.win_rate_pct ?? 0,
-          avg_win_abs:               m.avg_win_abs,
-          avg_loss_abs:              m.avg_loss_abs,
-          avg_win_pct:               m.avg_win_pct,
-          avg_loss_pct:              m.avg_loss_pct,
-          max_win_abs:               m.max_win_abs,
-          max_loss_abs:              m.max_loss_abs,
-          max_win_pct:               m.max_win_pct,
-          max_loss_pct:              m.max_loss_pct,
-          payoff_ratio:              m.payoff_ratio,
-          avg_bars_all:              m.avg_bars_all,
-          avg_bars_win:              m.avg_bars_win,
-          avg_bars_loss:             m.avg_bars_loss,
-          max_consec_win:            m.max_consec_win ?? null,
-          max_consec_loss:           m.max_consec_loss ?? null,
-          // 风险调整
-          sharpe:                    m.sharpe,
-          sortino:                   m.sortino,
-          calmar:                    m.calmar,
-          omega:                     m.omega,
-          profit_factor:             m.profit_factor,
-          // 元信息
-          backtest_start:            m.backtest_start,
-          backtest_end:              m.backtest_end,
-          timeframe:                 m.timeframe,
-        })
-
-        // Build buy/sell markers from trades
-        // ISO 8601 T 형식으로 통일된 타임스탬프를 UTC로 파싱
-        const parseUtcTs = (s: unknown): number => {
-          if (!s) return 0
-          const str = String(s)
-          // 'T' 없으면 보완 (구형 데이터 호환)
-          const iso = str.includes('T') ? str : str.replace(' ', 'T')
-          // UTC임을 명시하기 위해 Z 접미사 추가 (없는 경우만)
-          const utc = iso.endsWith('Z') || iso.includes('+') ? iso : iso + 'Z'
-          return Math.floor(new Date(utc).getTime() / 1000)
-        }
-        const trades: import('@/components/StrategyTesterPanel').TradeRecord[] = (result.trades ?? []).map((t: Record<string, unknown>) => ({
-          entry_time:  parseUtcTs(t['Entry Timestamp']),
-          exit_time:   t['Exit Timestamp'] ? parseUtcTs(t['Exit Timestamp']) : undefined,
-          pair:        'BTC/USDT',
-          direction:   String(t['Direction'] ?? 'Long').toLowerCase() as 'long' | 'short',
-          entry_price: Number(t['Avg Entry Price'] ?? t['Entry Price'] ?? 0),
-          exit_price:  Number(t['Avg Exit Price']  ?? t['Exit Price']  ?? 0),
-          pnl_pct:     Number(t['Return'] ?? 0) * 100,
-          pnl_abs:     Number(t['PnL'] ?? 0),
-          size:        t['Size'] != null ? Number(t['Size']) : undefined,
-          signal:      t['Signal'] != null ? String(t['Signal']) : undefined,
-          exit_signal: t['ExitSignal'] != null ? String(t['ExitSignal']) : undefined,
-        }))
-        setTesterTrades(trades)
-        setTesterEquity((result.equity ?? []) as {time:number;equity:number}[])
-        setTesterBalance((result.balance ?? []) as {time:number;equity:number}[])
-        if (result.csv_token) setTesterBtId(result.csv_token)
-
-        // FTMO 扫描：用已有的 equity + trades 数据，不需要再跑一次回测
-        const initCap = m.initial_capital ?? capital
-        fetch('/py-api/api/backtest/ftmo_scan', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ code, symbol: 'BTC/USDT', timeframe: tf, parameters: btParams }),
-        })
-          .then(r => r.ok ? r.json() : null)
-          .then(data => { if (data?.ftmo_scan) setTesterFtmoScan(data.ftmo_scan) })
-          .catch(() => {})
-          void initCap
-
-        const markers: ChartMarker[] = []
-        trades.forEach(t => {
-          const isLong = t.direction === 'long'
-          // 开多：绿色箭头朝上；开空：红色箭头朝下
-          if (t.entry_time) markers.push({
-            time:     t.entry_time,
-            position: isLong ? 'belowBar' : 'aboveBar',
-            color:    isLong ? '#26a69a' : '#ef5350',
-            shape:    isLong ? 'arrowUp' : 'arrowDown',
-            text:     isLong ? '做多' : '做空',
-          })
-          // 平仓：紫色，多仓平仓在上方，空仓平仓在下方
-          if (t.exit_time) markers.push({
-            time:     t.exit_time,
-            position: isLong ? 'aboveBar' : 'belowBar',
-            color:    '#9c27b0',
-            shape:    isLong ? 'arrowDown' : 'arrowUp',
-            text:     '平仓',
-          })
-        })
-        setChartMarkers(markers)
-        setTesterLogs(p => [...p, `✓ 回测完成 — 净收益 ${m.total_return_pct >= 0 ? '+' : ''}${m.total_return_pct.toFixed(2)}% | ${m.total_trades} 笔交易`])
-      }
-    } catch (e: unknown) {
-      setTesterLogs(p => [...p, `✗ ${(e as Error).message}`])
-    } finally {
-      setStrategyLoading(false)
-      setTesterRunning(false)
-    }
-  }, [tf, settingsCapital, settingsDateFrom, settingsDateTo])
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
@@ -1724,99 +1434,7 @@ export default function ChartPage() {
           ))}
           </div>
 
-          {/* ƒx 策略库 下拉 */}
-          <div ref={strategyDropdownRef} style={{ position: 'relative' }}>
-            <button
-              onClick={() => setStrategyDropdownOpen(p => !p)}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 6,
-                padding: '5px 13px', borderRadius: 7, fontSize: 12, fontWeight: 700,
-                border: activeStrategy
-                  ? '1.5px solid var(--up)'
-                  : '1.5px solid rgba(247,147,26,0.7)',
-                background: activeStrategy
-                  ? 'rgba(38,166,154,0.15)'
-                  : 'rgba(247,147,26,0.1)',
-                color: activeStrategy ? 'var(--up)' : '#F7931A',
-                cursor: strategyLoading ? 'not-allowed' : 'pointer',
-                opacity: strategyLoading ? 0.6 : 1,
-                boxShadow: activeStrategy
-                  ? '0 0 8px rgba(38,166,154,0.25)'
-                  : '0 0 8px rgba(247,147,26,0.2)',
-                transition: 'all 0.15s',
-                whiteSpace: 'nowrap',
-              }}
-              onMouseEnter={e => {
-                if (!strategyLoading) e.currentTarget.style.boxShadow = activeStrategy
-                  ? '0 0 16px rgba(38,166,154,0.45)'
-                  : '0 0 16px rgba(247,147,26,0.45)'
-              }}
-              onMouseLeave={e => {
-                e.currentTarget.style.boxShadow = activeStrategy
-                  ? '0 0 8px rgba(38,166,154,0.25)'
-                  : '0 0 8px rgba(247,147,26,0.2)'
-              }}
-            >
-              <span style={{ fontStyle: 'italic', fontFamily: 'Georgia, serif', fontSize: 14, lineHeight: 1 }}>ƒx</span>
-              <span>{strategyLoading ? '运行中…' : activeStrategy ? builtinStrategies.find(s => s.id === activeStrategy)?.name : selectedStrategy ? builtinStrategies.find(s => s.id === selectedStrategy)?.name : '策略库'}</span>
-              <span style={{ fontSize: 9, opacity: 0.7 }}>{strategyDropdownOpen ? '▲' : '▼'}</span>
-            </button>
 
-            {strategyDropdownOpen && (
-              <div style={{
-                position: 'absolute', top: '110%', left: 0, zIndex: 60, minWidth: 200,
-                background: 'var(--bg-card, #1a2232)', border: '1px solid var(--border)',
-                borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
-                overflow: 'hidden',
-              }}>
-                <div style={{ padding: '8px 12px 4px', fontSize: 10, color: 'var(--text-mute)', fontWeight: 600, letterSpacing: '0.06em' }}>
-                  内置策略
-                </div>
-                {builtinStrategies.map(s => (
-                  <button
-                    key={s.id}
-                    onClick={() => setSelectedStrategy(s.id)}
-                    style={{
-                      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                      width: '100%', textAlign: 'left', padding: '9px 14px',
-                      background: selectedStrategy === s.id ? 'rgba(38,166,154,0.15)' : 'none',
-                      border: 'none', cursor: 'pointer',
-                      color: selectedStrategy === s.id ? 'var(--up)' : 'var(--text)',
-                      fontSize: 13,
-                    }}
-                    onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.06)')}
-                    onMouseLeave={e => (e.currentTarget.style.background = selectedStrategy === s.id ? 'rgba(38,166,154,0.15)' : 'none')}
-                  >
-                    <span>{s.name}</span>
-                    {activeStrategy === s.id && <span style={{ fontSize: 10, color: 'var(--up)' }}>● 已运行</span>}
-                  </button>
-                ))}
-                <div style={{ height: 1, background: 'var(--border)', margin: '4px 0' }} />
-                <div style={{ padding: '6px 10px 8px' }}>
-                  <button
-                    disabled={!selectedStrategy || strategyLoading}
-                    onClick={() => { if (selectedStrategy) handleApplyStrategy(selectedStrategy) }}
-                    style={{
-                      width: '100%', padding: '7px 0', borderRadius: 6, border: 'none',
-                      background: selectedStrategy && !strategyLoading ? 'var(--up)' : 'rgba(38,166,154,0.2)',
-                      color: selectedStrategy && !strategyLoading ? '#000' : 'var(--text-mute)',
-                      fontWeight: 700, fontSize: 13, cursor: selectedStrategy && !strategyLoading ? 'pointer' : 'not-allowed',
-                      transition: 'all 0.15s',
-                    }}
-                  >
-                    {strategyLoading ? '运行中…' : '▶ 运行回测'}
-                  </button>
-                </div>
-                <div style={{ height: 1, background: 'var(--border)', margin: '0 0 4px' }} />
-                <button
-                  onClick={() => { setStrategyDropdownOpen(false); setSelectedStrategy(null); setActiveStrategy(null); setChartMarkers([]); setTesterSummary(null); setTesterTrades([]); }}
-                  style={{ width: '100%', textAlign: 'left', padding: '8px 14px', background: 'none', border: 'none', color: 'var(--text-mute)', fontSize: 12, cursor: 'pointer' }}
-                >
-                  清除策略标记
-                </button>
-              </div>
-            )}
-          </div>
         </div>
 
         {/* 右：工具按钮 */}
@@ -1910,9 +1528,7 @@ export default function ChartPage() {
                     loadMoreCandles={() => loadCandles(tf, market, candles[0]?.time)}
                     isMain={true}
                     ticker={ticker}
-                    markers={chartMarkers}
-                    testerVisible={testerVisible}
-                  />
+                      />
                 )}
               </div>
               <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }} className="card">
@@ -1964,8 +1580,6 @@ export default function ChartPage() {
                   loadMoreCandles={() => loadCandles(tf, market, candles[0]?.time)}
                   isMain={true}
                   ticker={ticker}
-                  markers={chartMarkers}
-                  testerVisible={testerVisible}
                 />
               )}
             </div>
@@ -1974,157 +1588,7 @@ export default function ChartPage() {
 
       </div>
 
-      {/* ====== Strategy Tester Bottom Panel ====== */}
-      <StrategyTesterPanel
-        visible={testerVisible}
-        onClose={() => setTesterVisible(false)}
-        summary={testerSummary}
-        trades={testerTrades}
-        equity={testerEquity}
-        balance={testerBalance}
-        ftmoScan={testerFtmoScan}
-        strategyName={activeStrategy ? builtinStrategies.find(s => s.id === activeStrategy)?.name : undefined}
-        logs={testerLogs}
-        running={testerRunning}
-      />
 
-      {/* Re-open tester if closed */}
-      {!testerVisible && (
-        <div style={{ borderTop: '1px solid var(--border)', padding: '6px 12px' }}>
-          <button
-            onClick={() => setTesterVisible(true)}
-            style={{
-              fontSize: 11, padding: '3px 12px', borderRadius: 4,
-              background: 'transparent', border: '1px solid var(--border)',
-              color: 'var(--text-mute)', cursor: 'pointer',
-            }}
-          >
-            ▲ Strategy Tester
-          </button>
-        </div>
-      )}
-
-      {/* ====== Settings Modal ====== */}
-      {settingsOpen && settingsStrategyId && (
-        <div
-          style={{
-            position: 'fixed', inset: 0, zIndex: 200,
-            background: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(4px)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-          }}
-          onClick={e => { if (e.target === e.currentTarget) setSettingsOpen(false) }}
-        >
-          <div style={{
-            background: '#0d1117', border: '1px solid var(--border)',
-            borderRadius: 12, padding: '24px 28px', width: 380, maxWidth: '95vw',
-            boxShadow: '0 24px 60px rgba(0,0,0,0.7)',
-          }}>
-            {/* Header */}
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
-              <div>
-                <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text)' }}>
-                  ⚙️ 回测设置
-                </div>
-                <div style={{ fontSize: 11, color: 'var(--text-mute)', marginTop: 2 }}>
-                  {builtinStrategies.find(s => s.id === settingsStrategyId)?.name} · {tf}
-                </div>
-              </div>
-              <button
-                onClick={() => setSettingsOpen(false)}
-                style={{ background: 'none', border: 'none', color: 'var(--text-mute)', cursor: 'pointer', fontSize: 18, lineHeight: 1 }}
-              >×</button>
-            </div>
-
-            {/* Fields */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-              <div>
-                <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: 'var(--text-mute)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                  初始资金 (USDT)
-                </label>
-                <input
-                  type="number" min={100} step={1000} value={settingsCapital}
-                  onChange={e => setSettingsCapital(Number(e.target.value))}
-                  style={{
-                    width: '100%', padding: '9px 12px', borderRadius: 7, fontSize: 14,
-                    border: '1px solid var(--border)', background: '#0a0f16',
-                    color: 'var(--text)', outline: 'none', boxSizing: 'border-box',
-                  }}
-                />
-              </div>
-
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                <div>
-                  <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: 'var(--text-mute)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                    开始日期
-                  </label>
-                  <input
-                    type="date"
-                    value={`${settingsDateFrom.slice(0,4)}-${settingsDateFrom.slice(4,6)}-${settingsDateFrom.slice(6,8)}`}
-                    onChange={e => setSettingsDateFrom(e.target.value.replace(/-/g, ''))}
-                    style={{
-                      width: '100%', padding: '9px 10px', borderRadius: 7, fontSize: 13,
-                      border: '1px solid var(--border)', background: '#0a0f16',
-                      color: 'var(--text)', outline: 'none', colorScheme: 'dark',
-                    }}
-                  />
-                </div>
-                <div>
-                  <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: 'var(--text-mute)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                    结束日期
-                  </label>
-                  <input
-                    type="date"
-                    value={`${settingsDateTo.slice(0,4)}-${settingsDateTo.slice(4,6)}-${settingsDateTo.slice(6,8)}`}
-                    onChange={e => setSettingsDateTo(e.target.value.replace(/-/g, ''))}
-                    style={{
-                      width: '100%', padding: '9px 10px', borderRadius: 7, fontSize: 13,
-                      border: '1px solid var(--border)', background: '#0a0f16',
-                      color: 'var(--text)', outline: 'none', colorScheme: 'dark',
-                    }}
-                  />
-                </div>
-              </div>
-
-              <div style={{ padding: '10px 12px', borderRadius: 8, background: 'rgba(38,166,154,0.06)', border: '1px solid rgba(38,166,154,0.2)', fontSize: 11, color: 'var(--text-mute)' }}>
-                周期：<strong style={{ color: 'var(--text)' }}>{tf}</strong>（由图表顶栏控制）
-                　· 市场：<strong style={{ color: 'var(--text)' }}>永续合约</strong>
-              </div>
-            </div>
-
-            {/* Footer buttons */}
-            <div style={{ display: 'flex', gap: 10, marginTop: 22 }}>
-              <button
-                onClick={() => setSettingsOpen(false)}
-                style={{
-                  flex: 1, padding: '10px 0', borderRadius: 8, fontSize: 13, fontWeight: 600,
-                  background: 'transparent', border: '1px solid var(--border)',
-                  color: 'var(--text-mute)', cursor: 'pointer',
-                }}
-              >
-                取消
-              </button>
-              <button
-                onClick={() => {
-                  if (settingsStrategyId) {
-                    handleApplyStrategy(settingsStrategyId, {
-                      capital: settingsCapital,
-                      dateFrom: settingsDateFrom,
-                      dateTo: settingsDateTo,
-                    })
-                  }
-                }}
-                style={{
-                  flex: 2, padding: '10px 0', borderRadius: 8, fontSize: 13, fontWeight: 700,
-                  background: 'var(--up)', border: 'none', color: '#fff', cursor: 'pointer',
-                  boxShadow: '0 2px 12px rgba(38,166,154,0.4)',
-                }}
-              >
-                ▶ 运行回测
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   )
 }
