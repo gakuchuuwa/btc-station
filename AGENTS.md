@@ -149,38 +149,61 @@ diff = pf.value().iloc[-1] - (init_cash + realized)
 
 ---
 
-## Railway 后端部署（生产环境）
+## 后端部署（生产环境）—— Cloudflare Tunnel + 本机
 
-后端跑在 Railway，服务名 `btc-station-backend`，公网域名 `btc-station-backend-production.up.railway.app`。前端 `quant-lab.org`（Vercel）通过 `/py-api/*` 代理过去。
+**Railway 已于 2026-11-17 停用**（免费额度耗尽，该域名现在所有路由返回 404 且带 `x-railway-fallback: true`）。当前架构：
 
-### ⚠️ Railway 关联的是独立仓库
-
-本地 origin 是 `gakuchuuwa/btc-station`，但 **Railway 监听的是另一个独立仓库** `gakuchuuwa/btc-station-backend`，分支 `main`（不是 master）。本地 git 里这个仓库的 remote 名是 `railway`。
-
-任何后端修复必须**同时**推到两个仓库：
-```powershell
-git push origin master            # 主仓库
-git push railway master:main      # Railway 监听的仓库
+```
+浏览器 → quant-lab.org (Vercel) /py-api/*
+      → Cloudflare 边缘
+      → 隧道 btc-backend
+      → 本机 127.0.0.1:8000 (uvicorn main:app)
 ```
 
-如果只推到 `origin`，Railway 永远看不到改动。
+| 项 | 值 |
+|---|---|
+| 公网后端域名 | `https://api.quant-lab.org`（CNAME → 隧道） |
+| 隧道名 / ID | `btc-backend` / `63e3709c-d69b-4501-845a-31e8031827a0` |
+| 配置文件 | `C:\Users\GAKU\.cloudflared\config.yml` |
+| 本机监听 | `127.0.0.1:8000` |
+| Vercel 环境变量 | `BACKEND_URL=https://api.quant-lab.org`（Production） |
 
-### ⚠️ Railway Builder 必须是 Dockerfile
+`gakuchuuwa/btc-station-backend` 这个独立仓库（remote 名 `railway`）已随 Railway 一起废弃，**不要再往里推**。
 
-Railway 默认 Builder 是 **Railpack**，不读 `backend/Dockerfile`，会自己选最新 Python 版本（3.14）导致 numba 编译失败，或者看到根目录 `index.html` 就跑 Caddy 当成静态站点。
+### 常驻方式
 
-正确配置（在 Railway Settings → Build 里）：
-- **Builder**: `Dockerfile`
-- **Dockerfile Path**: `Dockerfile`（Root Directory 已设为 `/backend`）
-- **Branch**: `main`
+登录启动项 `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\BTC-Station-Public.vbs` 在用户登录后静默拉起 `scripts/daemon.ps1`，由它负责：
 
-详见 README 防坑指南第 17 条。
+1. 启动 uvicorn（`127.0.0.1:8000`）
+2. 启动 `cloudflared tunnel run btc-backend`
+3. 每 30 秒巡检，任一项挂掉自动重启
 
-### Railway 后端调试排查顺序
+巡检带 **90 秒冷却期**：后端冷启动（venv shim → 真 python → import vectorbt/numba）实测要 10~40 秒，冷却期内不判死，否则会起出多个实例互相抢端口。
 
-1. `curl -s -o /dev/null -w "%{http_code}\n" https://btc-station-backend-production.up.railway.app/api/templates` —— 502 说明应用没起来；200 说明后端正常
-2. 502 时**必须看 Deploy Logs**（不是 Build Logs），找 `Traceback` 行
-3. Build 失败时看 Build Logs，关注 `cp311`/`cp312`/`cp314`（Python 版本暗号）和"No matching distribution"
+日志在 `logs/`（已 gitignore）：`daemon.log`、`backend.log`、`backend.err.log`、`tunnel.err.log`。
+
+### ⚠️ 前提：本机必须开机并处于登录状态
+
+隧道跑在你自己电脑上。**关机 / 睡眠 / 未登录 = 线上后端不可用**（前端页面照常打开，但回测、策略保存、AI 聊天全部失败）。请把电源计划设为「从不睡眠」，并确认启动项没被安全软件禁用。
+
+### ⚠️ 改完后端代码要手动重启后端
+
+守护只在进程崩溃时拉起，不监听文件变化。改完 `backend/*.py` 后：
+
+```powershell
+# 精确按端口杀，30 秒内守护会自动重启
+$pid = (netstat -ano | Select-String ":8000.*LISTENING" | ForEach-Object { ($_ -split '\s+')[-1] } | Select-Object -First 1)
+Stop-Process -Id $pid -Force
+```
+
+**不要**用 `Get-Process python | Where-Object {$_.CommandLine -like '*uvicorn*'}` 这种模糊匹配——本机 VoiceStudio 也在跑 `python -m uvicorn main:app`，一杀就误伤。
+
+### 后端排查顺序
+
+1. `curl -s -o /dev/null -w "%{http_code}\n" https://api.quant-lab.org/api/templates` —— 200 正常；502 是本机后端没起
+2. 502 先看 `logs/daemon.log` 和 `logs/backend.err.log`
+3. 分层判断：本机 `http://127.0.0.1:8000/api/templates` 通但公网 502 → `cloudflared` 挂了；两边都不通 → 后端挂了
+4. 隧道本身有问题时：`cloudflared tunnel info btc-backend` 看 CONNECTIONS 是否为空
 
 ---
 
@@ -190,13 +213,13 @@ Railway 默认 Builder 是 **Railpack**，不读 `backend/Dockerfile`，会自�
 
 ### Vercel 关联的就是 origin（btc-station）
 
-跟 Railway 不同，**Vercel 监听的就是本地 origin** `gakuchuuwa/btc-station`，分支 `master`。所以前端改动只需要：
+**Vercel 监听的就是本地 origin** `gakuchuuwa/btc-station`，分支 `master`。所以前端改动只需要：
 
 ```powershell
 git push origin master   # Vercel 自动拉取并部署
 ```
 
-不需要额外推到 Railway 那个仓库（那个是 backend 独立仓库）。
+不需要额外推后端仓库（`railway` 那个已废弃，见上文「后端部署」）。
 
 ### Root Directory 必须是 `btc-station`
 

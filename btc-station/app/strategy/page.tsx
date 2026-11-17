@@ -307,7 +307,7 @@ export default function StrategyPage() {
        .filter((c, i, arr) => i === 0 || c.time !== arr[i-1].time)
   , [])
 
-  // K 线：走 Vercel /api/chart/klines（直连 OKX），不依赖 Railway CSV 缓存
+  // K 线：走 Vercel /api/chart/klines（直连 OKX），不依赖后端 CSV 缓存
   const fetchCandles = useCallback(async (interval: string) => {
     const gen = ++candlesLoadGen.current
     setCandlesLoading(true)

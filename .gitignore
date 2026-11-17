@@ -33,6 +33,9 @@ Thumbs.db
 # YoYo AI version control directory
 .yoyo/
 
+# === 本地公网后端守护运行日志 ===
+logs/
+
 # === 临时/备份/构建缓存 ===
 *.tsbuildinfo
 *.bak

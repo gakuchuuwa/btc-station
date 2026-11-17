@@ -205,7 +205,7 @@ vbt_end  = pf.value().iloc[-1] - init_cash      # VBT 末值 - 初始
 
 ### 16. OKX 历史 K 线只拉到几个月：`history-candles` vs `candles` 接口区别
 
-**症状**：Railway 后端日志打印 `Fetching 18000 candles ... (may take a while)` 但下一行立即 `Saved 300 rows`。前端 K 线只显示最近一两个月。
+**症状**：后端日志打印 `Fetching 18000 candles ... (may take a while)` 但下一行立即 `Saved 300 rows`。前端 K 线只显示最近一两个月。
 
 **根本原因**：OKX REST 有**两个**历史 K 线接口，CCXT 根据参数自动路由：
 | 接口 | 数据深度 | 触发方式 |
@@ -239,12 +239,12 @@ while all_ohlcv and len(all_ohlcv) < limit:
     time.sleep(self.exchange.rateLimit / 1000.0)
 ```
 
-**验证命令**（本地或 Railway 部署后）：
+**验证命令**（本地或生产环境都可以）：
 ```bash
-curl -s “https://btc-station-backend-production.up.railway.app/api/candles/4h” | \
-  python -c “import sys,json,datetime; d=json.load(sys.stdin)['candles']; \
+curl -s "https://api.quant-lab.org/api/candles/4h" | \
+  python -c "import sys,json,datetime; d=json.load(sys.stdin)['candles']; \
     print(len(d), datetime.datetime.fromtimestamp(d[0]['time'],datetime.UTC).date(), '->', \
-    datetime.datetime.fromtimestamp(d[-1]['time'],datetime.UTC).date())”
+    datetime.datetime.fromtimestamp(d[-1]['time'],datetime.UTC).date())"
 # 期望：14068 2019-12-16 -> <今天>（4h 周期 BTC/USDT:USDT 全历史）
 ```
 
@@ -252,22 +252,25 @@ curl -s “https://btc-station-backend-production.up.railway.app/api/candles/4h�
 
 ---
 
-### 17. Railway 部署：Builder 必须显式设为 Dockerfile，否则用 Railpack 自选 Python 版本
+### 17. 生产后端部署：Cloudflare Tunnel + 本机守护（原 Railway 方案已废弃）
 
-**症状**：明明 `backend/Dockerfile` 第一行 `FROM python:3.11-slim` 写死了 Python 版本，构建日志却显示 `Cannot install on Python version 3.14.3; only versions >=3.10,<3.14 are supported`，numba/vectorbt 编译失败。或者部署”成功”但实际跑的是 Caddy 静态服务器（HTTP 502，Deploy Logs 出现 `using config from file file: Caddyfile`）。
+**原问题（已不适用）**：Railway 默认 Builder 是 Railpack，不读 Dockerfile，会自选 Python 3.14 导致 numba 编译失败，或看到根目录 `index.html` 就跑 Caddy 当静态站点。
 
-**根本原因**：Railway 默认 Builder 是 **Railpack**（Railway 自研自动构建器），它**不读 Dockerfile**：
-- 看到根目录有 `index.html` → 当成静态网站，跑 Caddy
-- 看到 Python 项目 → 自己选 Python 版本（默认拉最新版，如 3.14）
+**现状（2026-11-17 起）**：Railway 免费额度耗尽，该服务已停用，不再使用。后端改跑在本机，经 Cloudflare Tunnel 对外：
 
-`backend/Dockerfile` 完全被忽略。
+```
+浏览器 → quant-lab.org (Vercel) /py-api/*
+      → Cloudflare 边缘 → 隧道 btc-backend
+      → 本机 127.0.0.1:8000 (uvicorn)
+```
 
-**修复方案**（一次性配置，永久生效）：
-1. 在 Railway 服务的 **Settings → Build → Builder** 卡片，从 `Railpack` 切换到 **`Dockerfile`**
-2. **Dockerfile Path** 填 `Dockerfile`（相对 Root Directory，已经是 `/backend`）
-3. 保存后会自动触发新部署
+**看到 502 时的排查顺序**（顺序很重要，别猜）：
+1. `curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8000/api/templates` —— 本机通不通
+2. 本机不通 → 后端挂了，看 `logs/backend.err.log` 和 `logs/daemon.log`
+3. 本机通但公网 502 → `cloudflared` 挂了，`Get-Process cloudflared` 确认
+4. 隧道状态：`cloudflared tunnel info btc-backend`，CONNECTIONS 为空说明没连上边缘
 
-**排查顺序**：Railway 构建日志里如果出现 `cp314` / `cp313`（说明用了高版本 Python）、或 Deploy Logs 里出现 `Caddyfile` / `admin endpoint disabled`（说明在跑 Caddy），第一时间检查 Builder 设置，**不要去改 Dockerfile**，因为根本没在用它。
+**不要再做的事**：不要往 `gakuchuuwa/btc-station-backend`（remote 名 `railway`）推代码，那个仓库随 Railway 一起废弃了。完整架构见 `AGENTS.md` 的「后端部署」章节。
 
 ---
 
@@ -293,13 +296,13 @@ curl -s “https://btc-station-backend-production.up.railway.app/api/candles/4h�
 
 ### 19. FastAPI / pandas 的 Optional Dependency 部署后才报错
 
-很多 Python 库会"按需装"某些依赖，本机开发时通过 `pip install xxx` 装过、`venv` 里还在，所以本地不报错；但 `requirements.txt` 没写，Railway 重新部署时容器是干净的，运行到对应代码才会崩。
+很多 Python 库会"按需装"某些依赖，本机开发时通过 `pip install xxx` 装过、`venv` 里还在，所以本地不报错；但 `requirements.txt` 没写，换个干净环境（重建 venv / 换机器部署）就会崩，运行到对应代码才暴露。
 
 #### 已踩过的两个具体例子
 
 **A. `python-multipart`（FastAPI 表单/文件上传）**
 
-症状：FastAPI 应用**启动时**崩溃（不是运行时），Deploy Logs：
+症状：FastAPI 应用**启动时**崩溃（不是运行时），启动日志：
 ```
 RuntimeError: Form data requires "python-multipart" to be installed.
 ```
@@ -330,19 +333,19 @@ grep -rE "^(import|from) " *.py optimizer/ strategies/ | grep -v "^.*: *#" \
 
 ---
 
-### 20. Railway 海外节点访问 OKX 限流（code 50011）比本地严
+### 20. OKX 历史 K 线限流（code 50011）导致反向分页半路停
 
-**症状**：本地 `data_feeder` 用 100ms 间隔反向分页能拉到 14000+ 根；同样代码部署到 Railway，拉一半就出现：
+**症状**：反向分页能拉到 14000+ 根，但中途出现：
 ```
 Reverse pagination hit error, stop: okx {"msg":"Too Many Requests","code":"50011"}
 Saved 12600 rows to data/BTC_USDT_4h.csv  ← 半路停了
 ```
 
-**根本原因**：OKX `/api/v5/market/history-candles` 限流是按 IP 算的。Railway 新加坡机房的出口 IP 是共享的，大量其他 OKX 客户端也在用同一段 IP，导致 Railway 上请求频率明明不快也容易触发 50011。
+**根本原因**：OKX `/api/v5/market/history-candles` 按 IP 限流。出口 IP 被共享（云机房共享 IP 尤其严重）时，请求频率不快也容易触发 50011。本地家宽相对宽松，但不是绝对安全。
 
 **修复方案**（已实施于 `backend/data_feeder.py`）：
 
-1. **拉取间隔从 100ms 加到 500ms**
+1. **拉取间隔 500ms**（100ms 一定会被限流）
 2. **遇到 50011 不直接 break**，改为指数退避重试 4 次（1s / 2s / 4s / 8s）
 
 ```python
@@ -361,16 +364,16 @@ for attempt in range(4):
         break
 ```
 
-**验证**：Deploy Logs 应该出现 `OKX 限流 (attempt N/4)，等待 Ns 后重试...` 但**最终 `Saved 14068 rows`**。
+**验证**：日志出现 `OKX 限流 (attempt N/4)，等待 Ns 后重试...`，但**最终 `Saved 14068 rows`**。
 
-**排查顺序**：当 Railway 上数据明显少于本地时，先看 Deploy Logs 是否有 `Too Many Requests` / `50011`，有就是限流问题。
+**排查顺序**：数据明显少于预期时，先看日志有无 `Too Many Requests` / `50011`。
 
 ---
 
 ### 21. 后台 syncer 和 API 路由并发写同一个 CSV → 数据被覆盖
 
 **症状**：
-- Deploy Logs 显示 `Saved 12600 rows to data/BTC_USDT_4h.csv`，几秒后又出现 `Saved 6600 rows to data/BTC_USDT_4h.csv`——**少的覆盖了多的**。
+- 后端日志显示 `Saved 12600 rows to data/BTC_USDT_4h.csv`，几秒后又出现 `Saved 6600 rows to data/BTC_USDT_4h.csv`——**少的覆盖了多的**。
 - 前端拿到的 K 线起点跳来跳去，比预期的浅得多。
 
 **根本原因**（本项目特定）：
@@ -398,21 +401,19 @@ if df.empty:
 
 **前端配合**：前端拿到 503 应该几秒后重试（不要直接报错给用户）。本项目目前依赖浏览器手动刷新，**这是后续可改进项**。
 
-**排查顺序**：Deploy Logs 看到同一个 CSV 文件被多次 `Saved`、且数字大小不一致，必然是并发写盘问题。
+**排查顺序**：后端日志里看到同一个 CSV 文件被多次 `Saved`、且数字大小不一致，必然是并发写盘问题。
 
 ---
 
-### 22. Railway 容器无持久磁盘 → 每次部署都要重新拉 14000 根 K 线
+### 22. 数据文件现在持久化在本地，不再是每次部署重拉
 
-**症状**：每次 push 触发 Railway 重新部署后，前端 K 线消失几分钟（503），等 syncer 重新拉完才恢复。
+**原问题（已消失）**：Railway 容器无状态，每次部署 `data/historical/*.csv` 全丢，要从零拉 OKX，单 4h 周期就要 1-2 分钟，期间接口 503。
 
-**根本原因**：Railway 默认容器是无状态的，部署/重启时 `data/historical/*.csv` 全部丢失。每次都从零拉 OKX → 加上限流重试，单 4h 周期就要 1-2 分钟。
+**现状**：后端跑在本机，`backend/data/*.csv` 就在硬盘上，改了代码重启后端也不会丢数据。目前已有的数据：
+- `BTC_USDT_SWAP_4h.csv`（~0.9 MB，永续 4h）
+- `BTC_USDT_SWAP_1h.csv`（~3.5 MB）
+- `BTC_USDT_4h.csv` / `BTC_USDT_1h.csv`（现货）
 
-**两个改进方向**（暂未实施，列在这里作为后续 TODO）：
-
-1. **Railway Volume 持久化**：在 Railway Settings 加一个 Volume，挂载到容器内 `/app/data`。这样 CSV 跨部署保留，只有首次部署慢。
-2. **更早返回部分数据**：API 路由不直接 503，可以返回 `get_local_data` 当前已有的数据（哪怕只有 300 根），加一个 `partial: true` 字段让前端继续轮询。
-
-**注意**：如果项目以后要支持多个交易对/多周期，CSV 重新拉的代价会成倍放大，**强烈建议先做 Volume 持久化再扩量**。
+**随之而来的新注意点**：数据不会自动更新。`main.py` 的 lifespan 会在启动时后台跑 `preload_cache` 补拉增量，所以**隔几天重启一次后端**能让数据保持新鲜。如果发现回测的最后一根 K 线停在几天前，先重启后端。
 
 ---

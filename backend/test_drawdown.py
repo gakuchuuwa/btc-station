@@ -1,4 +1,4 @@
-"""快速验证 Railway 后端 max_drawdown_pct 和 closed_max_drawdown_pct"""
+"""快速验证后端 max_drawdown_pct 和 closed_max_drawdown_pct（生产：Cloudflare 隧道 / 本地）"""
 import json, urllib.request
 
 # 先读取本地策略代码
@@ -13,7 +13,7 @@ payload = json.dumps({
 }).encode()
 
 req = urllib.request.Request(
-    "https://btc-station-backend-production.up.railway.app/api/backtest/dynamic",
+    "https://api.quant-lab.org/api/backtest/dynamic",
     data=payload,
     headers={"Content-Type": "application/json"},
 )

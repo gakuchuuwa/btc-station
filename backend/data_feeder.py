@@ -68,8 +68,8 @@ class DataFeeder:
             # 后续批次：用 since 反向往过去拉
             # 关键：OKX 公共接口 /market/candles 只有最近约 8 个月数据；要拿更早的历史
             # 必须走 /market/history-candles，CCXT 在传 since（不传 until）时会自动路由到该接口
-            # Railway 等海外节点访问 OKX 限流更严，遇到 50011 Too Many Requests 必须退避重试
-            batch_interval_sec = 0.5  # 拉取间隔 500ms（本地 100ms 在 Railway 上会触发限流）
+            # 访问 OKX 公共接口限流较严，遇到 50011 Too Many Requests 必须退避重试
+            batch_interval_sec = 0.5  # 拉取间隔 500ms（再快会触发 OKX 限流）
             while all_ohlcv and len(all_ohlcv) < limit:
                 earliest_ms = all_ohlcv[0][0]
                 next_since = earliest_ms - 300 * tf_ms

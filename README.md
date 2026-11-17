@@ -177,6 +177,26 @@ A free, open-source Bitcoin quantitative backtesting & analysis workbench. Built
 
 ---
 
+## 生产环境怎么跑（2026-11-17 起）
+
+本机既当开发机也当生产后端。线上 `quant-lab.org` 的后端请求由 Cloudflare 隧道转回这台电脑：
+
+```
+浏览器 → quant-lab.org (Vercel) /py-api/*
+      → Cloudflare 边缘 → 隧道 btc-backend
+      → 本机 127.0.0.1:8000 (uvicorn)
+```
+
+- 后端公网地址：`https://api.quant-lab.org`
+- 常驻方式：登录启动项 → `scripts/daemon.ps1` → 起 uvicorn + cloudflared，挂掉自动重启
+- 日志：`logs/daemon.log`、`logs/backend.err.log`、`logs/tunnel.err.log`
+
+**原来跑在 Railway，2026-11-17 停用**（免费额度耗尽）。完整架构与排查顺序见 `AGENTS.md` 的「后端部署（生产环境）」章节。
+
+⚠️ 电脑关机、睡眠或未登录，线上后端就不可用；改完后端代码要重启后端进程，守护不会自动热加载。
+
+---
+
 ## 唯一正确运行方式
 
 必须同时启动后端和前端。不要只启动其中一个。

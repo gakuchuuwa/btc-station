@@ -1,4 +1,4 @@
-/** 通过 Next.js /api/chart/klines 从 OKX 拉取 K 线（不依赖 Railway 后端 CSV） */
+/** 通过 Next.js /api/chart/klines 从 OKX 拉取 K 线（不依赖后端 CSV 缓存） */
 
 export interface ChartCandle {
   time: number

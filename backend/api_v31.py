@@ -429,7 +429,7 @@ async def submit_backtest(body: BacktestSubmit, user_id: str = Depends(current_u
 
     task_id = str(uuid.uuid4())
 
-    # Run backtest in background thread (Celery used only when Redis available on Railway)
+    # Run backtest in a plain background thread (本项目不用 Celery / Redis)
     import threading
 
     def _run_in_thread():
